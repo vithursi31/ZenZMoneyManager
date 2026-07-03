@@ -1,0 +1,44 @@
+#eclipse project files
+*.project
+*.classpath
+*.settings
+
+#intellij project files and directories
+*.iml
+*.ipr
+*.iws
+.idea/
+
+#build targets
+target/
+
+
+#linux unsaved files
+*~
+.DS_Store
+
+#netbeans files
+nbproject/
+
+#logs
+logs/
+
+
+#node modules
+package-lock.json
+node_modules/
+
+
+
+#coding agents
+.agents/
+.claude/
+.gemini/
+.vscode/
+.cursor/
+.antigravity/
+.codex
+
+# playwright
+test-results/
+playwright-report/svcs/core/src/main/resources/google.properties
