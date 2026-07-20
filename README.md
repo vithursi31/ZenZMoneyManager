@@ -1,8 +1,28 @@
-# ZenZHabits Build Guide
+# ZenZ Money Manager Build Guide
 
 Please note that this project requires a 64 bit Ubuntu Linux machine to build the project.
 
 This project is a Spring Boot 3.4.4 multi-module Maven build (`svcs/common`, `svcs/core`) on Java 17, backed by PostgreSQL 14 + Redis 7.
+
+## What's in this repo
+
+ZenZ Money Manager is a personal finance application (see the product
+documentation under [`docs/`](docs/) — [features list](docs/features-list.md),
+[domain model](docs/domain/domain-documentation.md), and [roadmap](docs/roadmap.md)).
+
+The backend currently implements the **authentication foundation**; the finance
+domain (accounts, transactions, budgets, goals, etc.) is built on top of it phase
+by phase per the roadmap. What's in place today:
+
+- Email/password **registration** (with email verification) and **login** (JWT).
+- **Google**, **Apple**, and **Facebook** OAuth sign-in.
+- **Refresh-token** endpoint, JWT request filter, password hashing/validation, and
+  password reset.
+
+The `app_user` / `user_roles` schema and auth code are the only domain currently
+present. A portable, framework-free walkthrough of how the auth flow is wired
+lives in [`svcs/AUTH_FLOW_PORTABLE.md`](svcs/AUTH_FLOW_PORTABLE.md) — a reference
+guide for re-implementing or extending it.
 
 ---
 
@@ -11,8 +31,8 @@ This project is a Spring Boot 3.4.4 multi-module Maven build (`svcs/common`, `sv
 For someone who already has Java 17, Maven 3.8+, and Docker installed:
 
 ```bash
-git clone <repo-url> zenzhabits
-cd zenzhabits
+git clone <repo-url> zenzmoney
+cd zenzmoney
 
 # 1. Start Postgres + Redis
 docker compose up -d
@@ -138,8 +158,8 @@ docker --version
 ## Clone the Repository
 
 ```bash
-git clone <repo-url> zenzhabits
-cd zenzhabits
+git clone <repo-url> zenzmoney
+cd zenzmoney
 ```
 
 
@@ -157,8 +177,8 @@ docker compose up -d
 
 This launches:
 
- - **postgres-zenzhabit** — `bitnami/postgresql:14.4.0` on `localhost:5434` (mapped to container's 5432), DB/user/pass = `zenzhabit`/`zenzhabit`/`zenzhabit`
- - **redis-zenzhabit** — `bitnami/redis:7.2.4` on `localhost:6379`, no password
+ - **postgres-zenzmoney** — `bitnami/postgresql:14.4.0` on `localhost:5434` (mapped to container's 5432), DB/user/pass = `zenzmoney`/`zenzmoney`/`zenzmoney`
+ - **redis-zenzmoney** — `bitnami/redis:7.2.4` on `localhost:6379`, no password
 
 Check they're running:
 
@@ -182,37 +202,37 @@ If you prefer not to use compose, create the two containers manually with matchi
 ```bash
 # Postgres
 docker create \
-  --name=postgres-zenzhabit \
+  --name=postgres-zenzmoney \
   -p 5434:5432 \
-  -e POSTGRESQL_USERNAME=zenzhabit \
-  -e POSTGRESQL_PASSWORD=zenzhabit \
-  -e POSTGRESQL_DATABASE=zenzhabit \
+  -e POSTGRESQL_USERNAME=zenzmoney \
+  -e POSTGRESQL_PASSWORD=zenzmoney \
+  -e POSTGRESQL_DATABASE=zenzmoney \
   bitnami/postgresql:14.4.0
 
-docker start postgres-zenzhabit
+docker start postgres-zenzmoney
 
 # Redis
 docker create \
-  --name=redis-zenzhabit \
+  --name=redis-zenzmoney \
   -p 6379:6379 \
   -e ALLOW_EMPTY_PASSWORD=yes \
   bitnami/redis:7.2.4
 
-docker start redis-zenzhabit
+docker start redis-zenzmoney
 ```
 
 To recreate from scratch:
 
 ```bash
-docker stop  postgres-zenzhabit redis-zenzhabit
-docker rm    postgres-zenzhabit redis-zenzhabit
+docker stop  postgres-zenzmoney redis-zenzmoney
+docker rm    postgres-zenzmoney redis-zenzmoney
 # then re-run the create + start commands above
 ```
 
 ### Connect to verify
 
 ```bash
-psql -h localhost -p 5434 -U zenzhabit -W      # password: zenzhabit
+psql -h localhost -p 5434 -U zenzmoney -W      # password: zenzmoney
 redis-cli -h localhost -p 6379 ping            # should reply: PONG
 ```
 
@@ -250,7 +270,7 @@ mvn -pl svcs/core -am clean install -Dmaven.test.skip=true
     mvn -pl svcs/core spring-boot:run
     ```
 
-    …or open the project in IntelliJ IDEA and run **`com.habit.core.CoreApplication`** (right-click → Run).
+    …or open the project in IntelliJ IDEA and run **`com.zenzmoney.core.CoreApplication`** (right-click → Run).
 
  3. The app listens on **http://localhost:8080**. The default Spring profile is `loc` (set in `application.properties`: `spring.profiles.default=loc`).
 
@@ -288,7 +308,7 @@ mvn clean install -P dev -Dmaven.test.skip=true
 To activate at runtime instead:
 
 ```bash
-java -jar svcs/core/target/habit-core-0.0.1-SNAPSHOT.jar --spring.profiles.active=dev
+java -jar svcs/core/target/zenzmoney-core-0.0.1-SNAPSHOT.jar --spring.profiles.active=dev
 ```
 
 
@@ -305,7 +325,7 @@ The `dev` and `prd` profiles read configuration from env vars. At minimum:
 
 | Variable | Purpose |
 |---|---|
-| `DATABASE_URL` | JDBC URL, e.g. `jdbc:postgresql://host:5432/zenzhabit` |
+| `DATABASE_URL` | JDBC URL, e.g. `jdbc:postgresql://host:5432/zenzmoney` |
 | `DATABASE_USERNAME` | Postgres user |
 | `DATABASE_PASSWORD` | Postgres password |
 | `REDIS_HOST` | Redis host |
@@ -322,20 +342,24 @@ See `svcs/core/src/main/resources/application.properties` (shared base) and `svc
 
 ## Database Migrations
 
-Schema is managed by Flyway. Migrations live in `svcs/core/src/main/resources/db/migration/` (e.g. `V1__initial_schema.sql`, `V2__auth_schema.sql`) and run automatically on application startup.
+Schema is managed by Flyway. Migrations live in `svcs/core/src/main/resources/db/migration/` and run automatically on application startup. The current baseline is `V1__auth_schema.sql` (the `app_user` and `user_roles` tables). Finance-domain migrations (accounts, transactions, budgets, goals, …) are added as later `V2+` scripts as those features land — see the [roadmap](docs/roadmap.md).
 
 
 ## Module Layout
 
 ```
 svcs/
-├── common/          # shared domain, DTOs, exceptions (com.habit.common)
-└── core/            # Spring Boot app — web, security, persistence (com.habit.core)
-    ├── src/main/java/com/habit/core/CoreApplication.java       # main class
+├── AUTH_FLOW_PORTABLE.md   # portable reference guide for the auth flow
+├── common/          # shared domain (BaseEntity, Role), DTOs, exceptions, utils (com.zenzmoney.common)
+└── core/            # Spring Boot app — web, security, persistence (com.zenzmoney.core)
+    ├── src/main/java/com/zenzmoney/core/CoreApplication.java       # main class
+    │   ├── entity/, repository/                                # User + UserRepository (auth only, for now)
+    │   ├── service/, service/oauth/                            # login, registration, JWT, Google/Apple/Facebook
+    │   └── web/                                                # controllers, filters, DTOs, advice
     ├── src/main/resources/                                     # shared (always on classpath)
     │   ├── application.properties                              # base config
     │   ├── google.properties, logback-spring.xml
-    │   ├── db/migration/                                       # Flyway scripts
+    │   ├── db/migration/                                       # Flyway scripts (V1__auth_schema.sql)
     │   └── templates/, static/
     └── src/main/profile/                                       # per-profile overrides
         ├── loc/resources/application-loc.properties
@@ -343,10 +367,14 @@ svcs/
         └── prd/resources/application-prd.properties
 ```
 
+As finance features land (per the [roadmap](docs/roadmap.md)), new entities,
+repositories, services, and Flyway migrations are added under `core` — the auth
+layer stays as-is.
+
 
 ## Troubleshooting
 
-- **App can't connect to Postgres** — confirm the container is up (`docker ps | grep postgres-zenzhabit`) and reachable on port `5434` (`psql -h localhost -p 5434 -U zenzhabit -W`).
+- **App can't connect to Postgres** — confirm the container is up (`docker ps | grep postgres-zenzmoney`) and reachable on port `5434` (`psql -h localhost -p 5434 -U zenzmoney -W`).
 - **`docker compose: command not found`** — install the Docker Compose plugin: `sudo apt install docker-compose-plugin`.
 - **Port already in use (5434 / 6379 / 8080)** — find the conflicting process (`sudo lsof -i :5434`) and stop it, or change the host-side port in `docker-compose.yml` (and match it in `svcs/core/src/main/profile/loc/resources/application-loc.properties`).
 - **Flyway "migration checksum mismatch"** — only safe in dev: `docker compose down -v && docker compose up -d` for a clean DB, then rebuild.

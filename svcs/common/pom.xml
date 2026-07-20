@@ -5,13 +5,13 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>com.habit</groupId>
-        <artifactId>habit-svcs</artifactId>
+        <groupId>com.zenzmoney</groupId>
+        <artifactId>zenzmoney-svcs</artifactId>
         <version>0.0.1-SNAPSHOT</version>
     </parent>
 
-    <artifactId>habit-common</artifactId>
-    <name>Habit Common</name>
+    <artifactId>zenzmoney-common</artifactId>
+    <name>ZenZ Money Common</name>
     <description>Shared library — domain types, DTOs, utilities</description>
 
     <dependencies>

@@ -5,20 +5,20 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>com.habit</groupId>
-        <artifactId>habit-svcs</artifactId>
+        <groupId>com.zenzmoney</groupId>
+        <artifactId>zenzmoney-svcs</artifactId>
         <version>0.0.1-SNAPSHOT</version>
     </parent>
 
-    <artifactId>habit-core</artifactId>
-    <name>Habit Core</name>
+    <artifactId>zenzmoney-core</artifactId>
+    <name>ZenZ Money Core</name>
     <description>Main Spring Boot application</description>
 
     <dependencies>
         <!-- Internal -->
         <dependency>
-            <groupId>com.habit</groupId>
-            <artifactId>habit-common</artifactId>
+            <groupId>com.zenzmoney</groupId>
+            <artifactId>zenzmoney-common</artifactId>
         </dependency>
 
         <!-- Spring Boot Starters -->

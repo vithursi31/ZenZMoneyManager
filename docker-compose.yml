@@ -3,19 +3,19 @@ version: "3.8"
 services:
   postgres:
     image: bitnami/postgresql:14.4.0
-    container_name: postgres-zenzhabit
+    container_name: postgres-zenzmoney
     ports:
       - "5434:5432"
     environment:
-      POSTGRESQL_USERNAME: zenzhabit
-      POSTGRESQL_PASSWORD: zenzhabit
-      POSTGRESQL_DATABASE: zenzhabit
+      POSTGRESQL_USERNAME: zenzmoney
+      POSTGRESQL_PASSWORD: zenzmoney
+      POSTGRESQL_DATABASE: zenzmoney
     volumes:
       - postgres-data:/bitnami/postgresql
 
   redis:
     image: bitnami/redis:7.2.4
-    container_name: redis-zenzhabit
+    container_name: redis-zenzmoney
     ports:
       - "6379:6379"
     environment:

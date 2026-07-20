@@ -28,7 +28,7 @@ It complements the product-level [Features List](../features-list.md) and
 # Part 0 — Foundations
 
 Every domain entity follows the conventions established by
-`com.habit.common.domain.BaseEntity`.
+`com.zenzmoney.common.domain.BaseEntity`.
 
 ## 0.1 Design conventions
 

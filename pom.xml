@@ -11,12 +11,12 @@
         <relativePath/>
     </parent>
 
-    <groupId>com.habit</groupId>
-    <artifactId>habit-parent</artifactId>
+    <groupId>com.zenzmoney</groupId>
+    <artifactId>zenzmoney-parent</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <packaging>pom</packaging>
-    <name>Habit</name>
-    <description>Habit application parent POM</description>
+    <name>ZenZ Money Manager</name>
+    <description>ZenZ Money Manager application parent POM</description>
 
     <modules>
         <module>svcs</module>
@@ -32,8 +32,8 @@
     <dependencyManagement>
         <dependencies>
             <dependency>
-                <groupId>com.habit</groupId>
-                <artifactId>habit-common</artifactId>
+                <groupId>com.zenzmoney</groupId>
+                <artifactId>zenzmoney-common</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
