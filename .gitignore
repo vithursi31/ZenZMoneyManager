@@ -12,6 +12,11 @@
 #build targets
 target/
 
+#deployment secrets (never commit real .env; .env.example is the tracked template)
+.env
+*.env
+!.env.example
+
 
 #linux unsaved files
 *~

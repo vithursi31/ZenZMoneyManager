@@ -1,0 +1,99 @@
+# Production compose for a single always-on host (e.g. an Oracle Cloud Always
+# Free VM). Runs the app + Postgres + Redis together on one internal Docker
+# network, so the app reaches the DB/cache by service name — no public DB ports.
+#
+# Usage on the server:
+#   cp .env.example .env      # then edit .env with real secrets
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# Only the app's port 8080 is published to the host. Postgres/Redis stay on the
+# internal network and are NOT exposed to the internet.
+
+services:
+  postgres:
+    image: bitnami/postgresql:14.4.0
+    container_name: postgres-zenzmoney
+    restart: unless-stopped
+    environment:
+      POSTGRESQL_USERNAME: ${POSTGRES_USER}
+      POSTGRESQL_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRESQL_DATABASE: ${POSTGRES_DB}
+    volumes:
+      - postgres-data:/bitnami/postgresql
+    networks:
+      - zenz-net
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}", "-d", "${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: bitnami/redis:7.2.4
+    container_name: redis-zenzmoney
+    restart: unless-stopped
+    environment:
+      ALLOW_EMPTY_PASSWORD: "yes"
+    volumes:
+      - redis-data:/bitnami/redis/data
+    networks:
+      - zenz-net
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: zenzmoney-core:latest
+    container_name: zenzmoney-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      # Activate the env-var-driven profile (dev or prd both read from env).
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-prd}
+      # DB — reached by the compose service name "postgres" on the internal network.
+      DATABASE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      DATABASE_USERNAME: ${POSTGRES_USER}
+      DATABASE_PASSWORD: ${POSTGRES_PASSWORD}
+      # Redis — reached by service name "redis".
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      # App / auth config.
+      JWT_SECRET: ${JWT_SECRET}
+      APP_BASE_URL: ${APP_BASE_URL}
+      # SMTP (optional — leave blank to log links to console instead of emailing).
+      MAIL_HOST: ${MAIL_HOST:-}
+      MAIL_PORT: ${MAIL_PORT:-587}
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-no-reply@zenzmoney.local}
+      # OAuth (optional — fill the ones you use).
+      GOOGLE_APP_ID: ${GOOGLE_APP_ID:-}
+      GOOGLE_APP_SECRET: ${GOOGLE_APP_SECRET:-}
+      GOOGLE_REDIRECT_URL: ${GOOGLE_REDIRECT_URL:-}
+      GOOGLE_IOS_APP_ID: ${GOOGLE_IOS_APP_ID:-}
+      GOOGLE_ANDROID_APP_ID: ${GOOGLE_ANDROID_APP_ID:-}
+      APPLE_CLIENT_ID: ${APPLE_CLIENT_ID:-}
+      APPLE_CLIENT_ID_WEB: ${APPLE_CLIENT_ID_WEB:-}
+      APPLE_TEAM_ID: ${APPLE_TEAM_ID:-}
+      APPLE_KEY_ID: ${APPLE_KEY_ID:-}
+      APPLE_PRIVATE_KEY: ${APPLE_PRIVATE_KEY:-}
+      FACEBOOK_APP_ID: ${FACEBOOK_APP_ID:-}
+      FACEBOOK_APP_SECRET: ${FACEBOOK_APP_SECRET:-}
+      FACEBOOK_REDIRECT_URL: ${FACEBOOK_REDIRECT_URL:-}
+      FACEBOOK_GRAPH_VERSION: ${FACEBOOK_GRAPH_VERSION:-v19.0}
+    ports:
+      - "8080:8080"
+    networks:
+      - zenz-net
+
+volumes:
+  postgres-data:
+  redis-data:
+
+networks:
+  zenz-net:
+    driver: bridge
