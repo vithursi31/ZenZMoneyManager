@@ -177,8 +177,8 @@ docker compose up -d
 
 This launches:
 
- - **postgres-zenzmoney** — `bitnami/postgresql:14.4.0` on `localhost:5434` (mapped to container's 5432), DB/user/pass = `zenzmoney`/`zenzmoney`/`zenzmoney`
- - **redis-zenzmoney** — `bitnami/redis:7.2.4` on `localhost:6379`, no password
+ - **postgres-zenzmoney** — `bitnami/postgresql:14.4.0` on `localhost:5454` (mapped to container's 5432), DB/user/pass = `zenzmoney`/`zenzmoney`/`zenzmoney`
+ - **redis-zenzmoney** — `bitnami/redis:7.2.4` on `localhost:6363`, no password
 
 Check they're running:
 
@@ -203,7 +203,7 @@ If you prefer not to use compose, create the two containers manually with matchi
 # Postgres
 docker create \
   --name=postgres-zenzmoney \
-  -p 5434:5432 \
+  -p 5454:5432 \
   -e POSTGRESQL_USERNAME=zenzmoney \
   -e POSTGRESQL_PASSWORD=zenzmoney \
   -e POSTGRESQL_DATABASE=zenzmoney \
@@ -214,7 +214,7 @@ docker start postgres-zenzmoney
 # Redis
 docker create \
   --name=redis-zenzmoney \
-  -p 6379:6379 \
+  -p 6363:6379 \
   -e ALLOW_EMPTY_PASSWORD=yes \
   bitnami/redis:7.2.4
 
@@ -232,8 +232,8 @@ docker rm    postgres-zenzmoney redis-zenzmoney
 ### Connect to verify
 
 ```bash
-psql -h localhost -p 5434 -U zenzmoney -W      # password: zenzmoney
-redis-cli -h localhost -p 6379 ping            # should reply: PONG
+psql -h localhost -p 5454 -U zenzmoney -W      # password: zenzmoney
+redis-cli -h localhost -p 6363 ping            # should reply: PONG
 ```
 
 These settings match `svcs/core/src/main/profile/loc/resources/application-loc.properties` — no app config changes needed.
@@ -374,7 +374,7 @@ layer stays as-is.
 
 ## Troubleshooting
 
-- **App can't connect to Postgres** — confirm the container is up (`docker ps | grep postgres-zenzmoney`) and reachable on port `5434` (`psql -h localhost -p 5434 -U zenzmoney -W`).
+- **App can't connect to Postgres** — confirm the container is up (`docker ps | grep postgres-zenzmoney`) and reachable on port `5454` (`psql -h localhost -p 5454 -U zenzmoney -W`).
 - **`docker compose: command not found`** — install the Docker Compose plugin: `sudo apt install docker-compose-plugin`.
-- **Port already in use (5434 / 6379 / 8080)** — find the conflicting process (`sudo lsof -i :5434`) and stop it, or change the host-side port in `docker-compose.yml` (and match it in `svcs/core/src/main/profile/loc/resources/application-loc.properties`).
+- **Port already in use (5454 / 6379 / 8080)** — find the conflicting process (`sudo lsof -i :5454`) and stop it, or change the host-side port in `docker-compose.yml` (and match it in `svcs/core/src/main/profile/loc/resources/application-loc.properties`).
 - **Flyway "migration checksum mismatch"** — only safe in dev: `docker compose down -v && docker compose up -d` for a clean DB, then rebuild.
