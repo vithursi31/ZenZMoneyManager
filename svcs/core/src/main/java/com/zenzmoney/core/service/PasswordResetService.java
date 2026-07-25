@@ -1,22 +1,18 @@
 package com.zenzmoney.core.service;
 
 import com.zenzmoney.common.exception.BadRequestException;
-import com.zenzmoney.common.exception.UnauthorizedException;
 import com.zenzmoney.core.entity.User;
+import com.zenzmoney.core.entity.Verification.Purpose;
 import com.zenzmoney.core.repository.UserRepository;
 import com.zenzmoney.core.util.EmailValidator;
 import com.zenzmoney.core.util.PasswordValidator;
 import com.zenzmoney.core.web.dto.AuthenticationResponse;
-import io.jsonwebtoken.Claims;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 
 @Service
@@ -28,18 +24,18 @@ public class PasswordResetService {
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenService jwtTokenService;
     private final EmailSender emailSender;
-    private final String appBaseUrl;
+    private final OtpService otpService;
 
     public PasswordResetService(UserRepository userRepository,
                                 PasswordEncoder passwordEncoder,
                                 JwtTokenService jwtTokenService,
                                 EmailSender emailSender,
-                                @Value("${zenzmoney.app.base-url:http://localhost:8080}") String appBaseUrl) {
+                                OtpService otpService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtTokenService = jwtTokenService;
         this.emailSender = emailSender;
-        this.appBaseUrl = appBaseUrl;
+        this.otpService = otpService;
     }
 
     @Transactional
@@ -60,30 +56,27 @@ public class PasswordResetService {
             return;
         }
 
-        String token = jwtTokenService.generatePasswordResetToken(user.getId());
-        String link = appBaseUrl + "/reset-password?token="
-                + URLEncoder.encode(token, StandardCharsets.UTF_8);
-        emailSender.sendPasswordResetLink(email, link);
+        String code = otpService.issue(email, Purpose.RESET_PASSWORD);
+        emailSender.sendPasswordResetCode(email, code);
     }
 
     @Transactional
-    public AuthenticationResponse resetPassword(String token, String newPassword) {
+    public AuthenticationResponse resetPassword(String emailRaw, String code, String newPassword) {
+        String email = emailRaw == null ? null : emailRaw.toLowerCase().trim();
+        EmailValidator.validate(email)
+                .ifPresent(m -> { throw new BadRequestException(m); });
         PasswordValidator.validate(newPassword)
                 .ifPresent(m -> { throw new BadRequestException(m); });
 
-        Claims claims = jwtTokenService.extractClaims(token);
-        if (!JwtTokenService.TYPE_RESET.equals(jwtTokenService.extractTokenType(claims))) {
-            throw new UnauthorizedException("INVALID_TOKEN", "Not a password-reset token");
-        }
-
-        String userId = claims.getSubject();
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new UnauthorizedException("INVALID_TOKEN", "User not found"));
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new BadRequestException("No account found for that email"));
 
         if (!"password".equals(user.getAuthMode())) {
             throw new BadRequestException(
                     "This account uses " + user.getAuthMode() + " login and cannot reset a password");
         }
+
+        otpService.verify(email, code, Purpose.RESET_PASSWORD);
 
         user.setPasswordHash(passwordEncoder.encode(newPassword));
         user.setSystemGeneratedPassword(false);

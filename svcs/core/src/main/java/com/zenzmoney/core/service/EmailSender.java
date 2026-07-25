@@ -2,7 +2,7 @@ package com.zenzmoney.core.service;
 
 public interface EmailSender {
 
-    void sendVerificationLink(String to, String link);
+    void sendVerificationCode(String to, String code);
 
-    void sendPasswordResetLink(String to, String link);
+    void sendPasswordResetCode(String to, String code);
 }

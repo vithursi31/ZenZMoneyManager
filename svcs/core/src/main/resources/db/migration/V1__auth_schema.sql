@@ -28,3 +28,20 @@ CREATE TABLE user_roles (
     role    VARCHAR(50) NOT NULL,
     PRIMARY KEY (user_id, role)
 );
+
+CREATE TABLE verification (
+    id              VARCHAR(36) PRIMARY KEY,
+    email           VARCHAR(255) NOT NULL,
+    code            VARCHAR(10) NOT NULL,
+    purpose         VARCHAR(30) NOT NULL,
+    status          VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    expires_at      BIGINT NOT NULL,
+    attempts        INT NOT NULL DEFAULT 0,
+    created_time    BIGINT,
+    modified_time   BIGINT,
+    created_by      VARCHAR(120),
+    modified_by     VARCHAR(120),
+    version         BIGINT
+);
+
+CREATE INDEX idx_verification_lookup ON verification(email, purpose, status);

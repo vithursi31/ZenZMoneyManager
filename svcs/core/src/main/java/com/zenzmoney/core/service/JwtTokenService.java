@@ -20,30 +20,22 @@ public class JwtTokenService {
 
     public static final String TYPE_ACCESS  = "access";
     public static final String TYPE_REFRESH = "refresh";
-    public static final String TYPE_VERIFY  = "verify-email";
-    public static final String TYPE_RESET   = "reset-password";
 
     private static final String CLAIM_TYPE = "type";
 
     private final SecretKey signingKey;
     private final long accessTokenTtlMs;
     private final long refreshTokenTtlMs;
-    private final long emailVerifyTtlMs;
-    private final long passwordResetTtlMs;
     private final UserRepository userRepository;
 
     public JwtTokenService(
             @Value("${zenzmoney.jwt.secret:default-secret-key-change-in-production-must-be-at-least-256-bits-long}") String secret,
             @Value("${zenzmoney.jwt.access-token-expiration:3600000}") long accessTokenTtlMs,
             @Value("${zenzmoney.jwt.refresh-token-expiration:2592000000}") long refreshTokenTtlMs,
-            @Value("${zenzmoney.jwt.email-verify-expiration:86400000}") long emailVerifyTtlMs,
-            @Value("${zenzmoney.jwt.password-reset-expiration:1800000}") long passwordResetTtlMs,
             UserRepository userRepository) {
         this.signingKey = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
         this.accessTokenTtlMs = accessTokenTtlMs;
         this.refreshTokenTtlMs = refreshTokenTtlMs;
-        this.emailVerifyTtlMs = emailVerifyTtlMs;
-        this.passwordResetTtlMs = passwordResetTtlMs;
         this.userRepository = userRepository;
     }
 
@@ -53,14 +45,6 @@ public class JwtTokenService {
 
     public String generateRefreshToken(String email) {
         return build(email, TYPE_REFRESH, refreshTokenTtlMs);
-    }
-
-    public String generateEmailVerificationToken(String userId) {
-        return build(userId, TYPE_VERIFY, emailVerifyTtlMs);
-    }
-
-    public String generatePasswordResetToken(String userId) {
-        return build(userId, TYPE_RESET, passwordResetTtlMs);
     }
 
     private String build(String subject, String type, long ttlMs) {
@@ -77,8 +61,6 @@ public class JwtTokenService {
     /**
      * Parses + verifies signature/expiry. For access and refresh tokens,
      * also rejects if the user no longer exists or the account is expired.
-     * Verify-email tokens skip the user lookup (the user may not yet exist
-     * at parse time — but in our flow they do; we still let pending users in).
      */
     public Claims extractClaims(String token) {
         Claims claims;

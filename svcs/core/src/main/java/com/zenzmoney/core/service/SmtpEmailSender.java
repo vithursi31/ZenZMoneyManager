@@ -22,40 +22,42 @@ public class SmtpEmailSender implements EmailSender {
     }
 
     @Override
-    public void sendVerificationLink(String to, String link) {
+    public void sendVerificationCode(String to, String code) {
         SimpleMailMessage msg = new SimpleMailMessage();
         msg.setFrom(fromEmail);
         msg.setTo(to);
-        msg.setSubject("Verify your ZenZ Money Manager email");
+        msg.setSubject("Your ZenZ Money Manager verification code");
         msg.setText("Welcome to ZenZ Money Manager!\n\n"
-                + "Please verify your email by clicking the link below (valid for 24 hours):\n\n"
-                + link + "\n\n"
+                + "Your email verification code is:\n\n"
+                + "    " + code + "\n\n"
+                + "Enter it in the app to finish setting up your account (valid for 10 minutes).\n\n"
                 + "If you did not create this account, you can ignore this message.\n");
         try {
             mailSender.send(msg);
-            log.info("Sent verification email to {}", to);
+            log.info("Sent verification code to {}", to);
         } catch (Exception e) {
-            log.error("Failed to send verification email to {}: {}", to, e.getMessage());
-            log.info("[DEV FALLBACK] Verification link for {}: {}", to, link);
+            log.error("Failed to send verification code to {}: {}", to, e.getMessage());
+            log.info("[DEV FALLBACK] Verification code for {}: {}", to, code);
         }
     }
 
     @Override
-    public void sendPasswordResetLink(String to, String link) {
+    public void sendPasswordResetCode(String to, String code) {
         SimpleMailMessage msg = new SimpleMailMessage();
         msg.setFrom(fromEmail);
         msg.setTo(to);
-        msg.setSubject("Reset your ZenZ Money Manager password");
+        msg.setSubject("Your ZenZ Money Manager password reset code");
         msg.setText("We received a request to reset your ZenZ Money Manager password.\n\n"
-                + "Click the link below to choose a new password (valid for 30 minutes):\n\n"
-                + link + "\n\n"
+                + "Your password reset code is:\n\n"
+                + "    " + code + "\n\n"
+                + "Enter it in the app along with your new password (valid for 10 minutes).\n\n"
                 + "If you did not request this, you can safely ignore this message — your password will not change.\n");
         try {
             mailSender.send(msg);
-            log.info("Sent password-reset email to {}", to);
+            log.info("Sent password-reset code to {}", to);
         } catch (Exception e) {
-            log.error("Failed to send password-reset email to {}: {}", to, e.getMessage());
-            log.info("[DEV FALLBACK] Password-reset link for {}: {}", to, link);
+            log.error("Failed to send password-reset code to {}: {}", to, e.getMessage());
+            log.info("[DEV FALLBACK] Password-reset code for {}: {}", to, code);
         }
     }
 }

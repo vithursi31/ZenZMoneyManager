@@ -16,14 +16,13 @@ import com.zenzmoney.core.web.dto.GoogleAuthRequest;
 import com.zenzmoney.core.web.dto.RegisterRequest;
 import com.zenzmoney.core.web.dto.RegisterResponse;
 import com.zenzmoney.core.web.dto.ResetPasswordRequest;
+import com.zenzmoney.core.web.dto.VerifyEmailRequest;
 import io.jsonwebtoken.Claims;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
@@ -55,9 +54,10 @@ public class AuthController {
         return ResponseEntity.ok(ApiResponse.success(registrationService.register(req)));
     }
 
-    @GetMapping("/verify-email")
-    public ResponseEntity<ApiResponse<AuthenticationResponse>> verifyEmail(@RequestParam("token") String token) {
-        return ResponseEntity.ok(ApiResponse.success(registrationService.verifyEmail(token)));
+    @PostMapping("/verify-email")
+    public ResponseEntity<ApiResponse<AuthenticationResponse>> verifyEmail(@RequestBody VerifyEmailRequest req) {
+        return ResponseEntity.ok(ApiResponse.success(
+                registrationService.verifyEmail(req.getEmail(), req.getCode())));
     }
 
     @PostMapping("/authenticate")
@@ -93,7 +93,7 @@ public class AuthController {
     public ResponseEntity<ApiResponse<AuthenticationResponse>> resetPassword(
             @RequestBody ResetPasswordRequest req) {
         return ResponseEntity.ok(ApiResponse.success(
-                passwordResetService.resetPassword(req.getToken(), req.getNewPassword())));
+                passwordResetService.resetPassword(req.getEmail(), req.getCode(), req.getNewPassword())));
     }
 
     @PostMapping("/refresh-token")
