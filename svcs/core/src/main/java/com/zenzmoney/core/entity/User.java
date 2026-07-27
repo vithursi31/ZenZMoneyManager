@@ -57,6 +57,14 @@ public class User extends BaseEntity {
     @Column(nullable = false, length = 50)
     private String timezone = "UTC";
 
+    /** ISO-4217; the user's single active currency (§0.3). Null until onboarding sets it. */
+    @Column(name = "active_currency", length = 3)
+    private String activeCurrency;
+
+    /** BCP-47 preferred language, e.g. en, ta, si (F-1.24). */
+    @Column(length = 10)
+    private String language;
+
     private boolean locked;
 
     @Column(name = "last_login_time")

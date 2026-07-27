@@ -30,20 +30,22 @@ insight — all in the user's language and chosen currency, behind a secure lock
 |---|---|---|---|
 | **F-1.1** | Accounts | Create and manage the places money lives: cash wallet, bank accounts, savings accounts, credit cards. Each account has a type, currency, and a running balance. | 📋 |
 | **F-1.2** | Account balance tracking | Each account's current balance is derived from the ledger (opening balance ± transactions), so totals are always accurate. See [domain-documentation.md §1.10](domain/domain-documentation.md#110-balance-derivation-invariant). | 📋 |
+| **F-1.2b** | Balance reconciliation | Reconcile an account's app balance against its real-world balance. When they differ (e.g. missed or forgotten transactions), the user enters the actual balance and the app records a **balance adjustment** — an ordinary income/expense transaction for the difference, to a reserved *Adjustment* category. The balance stays **derived from the ledger** (never edited directly, [§1.10](domain/domain-documentation.md#110-balance-derivation-invariant)), so totals and reports stay consistent and the correction is fully auditable. No new entity or transaction type — an adjustment is just a `Transaction`. | 📋 |
 | **F-1.3** | Transfers between accounts | Move money between the user's own accounts (e.g. *transfer $500 from Bank A to Cash Wallet*) without it counting as income or expense. | 📋 |
 
 ### 2. Transactions (income & expense)
 
 | ID | Feature | Description | Status |
 |---|---|---|---|
-| **F-1.4** | Expense transactions | Record expenses against an account with amount, category, date, payee, and note. | 📋 |
+| **F-1.4** | Expense transactions | Record expenses against an account with amount, category, date, payee (a [Payee](domain/domain-documentation.md#15b-payee) entity, F-1.6b), and note. | 📋 |
 | **F-1.5** | Income transactions (first-class) | Record income with dedicated income categories (Salary, Business, Freelance, Investments, Gifts). Income is a first-class transaction type, not an afterthought. | 📋 |
 | **F-1.5b** | Duplicate transaction | One-tap duplicate of an existing transaction for fast repeated entry. | 📋 |
 | **F-1.6** | Categories & sub-categories | Create, update, and manage income/expense categories with one level of sub-categories, icons, and colors. New users start with a seeded default set (see [domain-documentation.md §1.5](domain/domain-documentation.md#15-category)). | 📋 |
+| **F-1.6b** | Payees (merchants/payers) | Payees are a first-class, user-owned entity (not free text): auto-created on first use, deduped by normalized name, with autocomplete and "total spent at X" reporting. Used by manual entry, chat (F-1.9a), and OCR (F-1.9c). See [domain-documentation.md §1.5b](domain/domain-documentation.md#15b-payee). | 📋 |
 | **F-1.7** | Recurring transactions (income & expense) | Templates that auto-generate transactions on a cadence — e.g. *salary $3000 on the 25th monthly*, or monthly rent. Works for both income and expense. | 📋 |
 | **F-1.8** | Transaction editing & history | Edit, delete, and annotate transactions (notes/comments); full history per account/category. Balances re-derive on every edit or delete. | 📋 |
 | **F-1.9** | Attach receipts / images | Attach one or more images/receipts to any transaction, manually or from a scan. See [domain-documentation.md §3.5](domain/domain-documentation.md#35-attachment-receipts--ocr). | 📋 |
-| **F-1.19** | Search & filter transactions | Find transactions by free text and filter by date range, category, account, amount, and payee/tag. | 📋 |
+| **F-1.19** | Search & filter transactions | Find transactions by free text and filter by date range, category, account, amount, and payee ([entity](domain/domain-documentation.md#15b-payee), by `payeeId`) / tag. | 📋 |
 
 ### 3. Planning, saving & debt
 
@@ -58,7 +60,7 @@ insight — all in the user's language and chosen currency, behind a secure lock
 
 | ID | Feature | Description | Status |
 |---|---|---|---|
-| **F-1.9a** | Chat-based transaction entry (NLP) | Add and update transactions in natural language — *"I spent $20 on food"* creates a $20 Food expense. The system parses type/amount/category/date and confirms before saving. See [domain-documentation.md Part 3](domain/domain-documentation.md#part-3--ingestion--ai-mvp--p2). | 📋 |
+| **F-1.9a** | Chat-based transaction entry (NLP) | Add income and expense transactions by typing plain language — *"I spent $15 at Keells for tea things"* → a $15 Groceries expense (payee **Keells**, note *"tea things"*); *"got salary 3000"* → a Salary income. A **self-hosted model (Qwen2.5 via Ollama)** extracts intent / type / amount / category-guess / date-phrase / payee / note; the **backend** does all the resolution — amount→minor units in the user's active currency, guess→a real [Category](domain/domain-documentation.md#15-category), date-phrase→an exact timestamp in the user's timezone, and payee-name→a [Payee](domain/domain-documentation.md#15b-payee) row. The flow is **two-step**: the message returns a **draft** (no ledger write); the user **confirms** before it is saved (hard write gate, [§3.7](domain/domain-documentation.md#37-privacy-safety--language)). If the model is unsure or a field is missing, the assistant asks a **clarifying question** instead of guessing. Conversations are logged (`ChatMessage`, [§3.4](domain/domain-documentation.md#34-chatmessage)) so a saved transaction traces back to what was typed. See [domain-documentation.md Part 3](domain/domain-documentation.md#part-3--ingestion--ai-mvp--p2) and the [implementation plan](features/chat-transaction-entry-plan.md). | 📋 |
 | **F-1.9b** | Auto-category detection | AI infers the category (and sub-category) from merchant/keywords — *"Spent $15 at Starbucks"* → Food & Drinks → Coffee — and the user can correct it; corrections improve future matching. | 📋 |
 | **F-1.9c** | Bill / receipt scanning (OCR) | Scan a receipt/bill; the system extracts merchant, date, and total and pre-fills an expense for confirmation. | 📋 |
 | **F-1.10** | AI-powered insights & reports | Natural-language insights from the user's data — spending trends, anomalies, budget risk, saving suggestions — in reports and the dashboard. | 📋 |
@@ -156,3 +158,4 @@ phase and the domain docs.
 |---|---|
 | 2026-07-20 | Initial version: savings goals in MVP; single-active-currency model; NLP/OCR/AI/voice catalogued. |
 | 2026-07-20 | Major expansion: accounts/transfers/income detailed; transaction edit/duplicate/search/attachments; auto-category detection (F-1.9b) & financial assistant (F-1.10b); dashboard split into summary/analysis/reports with net worth; **debt/loan management (F-1.16)** and **subscription tracking (F-1.17)** added to MVP; **security** features (app lock, encryption, login history, sessions) added to MVP; notifications, export/import, onboarding promoted to committed MVP. Phase 3 sharing detailed (permissions, shared budgets, individual-vs-family reports). New proposals added. |
+| 2026-07-26 | Added **Payees** as a first-class entity (**F-1.6b**); transaction `payee` becomes a `payeeId` FK, not free text (domain §1.5b; F-1.4 / F-1.19 updated). Detailed **chat-based entry (F-1.9a)**: self-hosted Qwen2.5 via Ollama, two-step draft→confirm gate, clarification-on-uncertainty, backend field resolution, conversation logging — see the [chat entry plan](features/chat-transaction-entry-plan.md). Added **balance reconciliation (F-1.2b)** via adjustment transactions (no new entity/type). |

@@ -106,6 +106,7 @@ This is the core personal ledger — the tables every other part builds on.
 |---|---|---|
 | `Account` | ✔ | A place money lives — cash, bank, card, savings, wallet. |
 | `Category` | ✔ | A hierarchical label for income/expense classification. |
+| `Payee` | ✔ | A named merchant/person a transaction is paid to or received from. |
 | `Transaction` | ✔ | The core ledger record — income, expense, or transfer. |
 | `Budget` | ✔ | A spending cap for a category over a recurring period. |
 | `RecurringTransaction` | ✔ | A template that generates future transactions on a cadence. |
@@ -118,6 +119,7 @@ This is the core personal ledger — the tables every other part builds on.
 erDiagram
     APP_USER ||--o{ ACCOUNT : owns
     APP_USER ||--o{ CATEGORY : owns
+    APP_USER ||--o{ PAYEE : owns
     APP_USER ||--o{ TRANSACTION : owns
     APP_USER ||--o{ BUDGET : owns
     APP_USER ||--o{ RECURRING_TRANSACTION : owns
@@ -128,9 +130,11 @@ erDiagram
     CATEGORY ||--o{ TRANSACTION : classifies
     CATEGORY ||--o{ CATEGORY : "parent of"
     CATEGORY ||--o{ BUDGET : "budgeted by"
+    PAYEE    ||--o{ TRANSACTION : "paid to / received from"
 
     ACCOUNT              ||--o{ RECURRING_TRANSACTION : "source of"
     CATEGORY             ||--o{ RECURRING_TRANSACTION : classifies
+    PAYEE                ||--o{ RECURRING_TRANSACTION : "paid to"
     RECURRING_TRANSACTION ||--o{ TRANSACTION : generates
 
     ACCOUNT      ||--o| SAVINGS_GOAL : backs
@@ -161,12 +165,19 @@ erDiagram
         string kind
         string parent_id FK
     }
+    PAYEE {
+        string id PK
+        string user_id FK
+        string name
+        string normalized_name
+    }
     TRANSACTION {
         string id PK
         string user_id FK
         string account_id FK
         string type
         string category_id FK
+        string payee_id FK
         bigint amount
         string currency
         string transfer_account_id FK
@@ -274,6 +285,37 @@ A hierarchical label used to classify transactions. Owned by one user.
   - **Expense** (`kind = EXPENSE`): Food & Drinks, Groceries, Transport, Housing, Utilities, Entertainment, Health, Shopping, Education, Subscriptions, Other.
   These are ordinary user-owned `Category` rows (fully editable/deletable), not a system table — seeding just copies a template into the user's own categories.
 
+## 1.5b Payee
+
+A named **merchant or person** a transaction is paid to (expense) or received from
+(income). Owned by one user. Modeled as an entity — rather than a free-text string
+on the transaction — so that payee is a **first-class filter/report dimension**
+(F-1.19): "total spent at Keells", payee autocomplete, and dedup of
+"Keells" / "keells" / "Keells Super" into one row.
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | `String` (UUID) | PK. |
+| `userId` | `String` | Owner. Not null, indexed. |
+| `name` | `String(300)` | Display name as first entered, e.g. "Keells". Not null. |
+| `normalizedName` | `String(300)` | Lower-cased/trimmed/whitespace-collapsed key for matching and uniqueness. Not null. |
+| `color` | `String(20)` | Optional UI hint. |
+| `icon` | `String(50)` | Optional UI hint. |
+
+**Rules**
+- **Uniqueness:** at most one payee per (`userId`, `normalizedName`) — enforced by a
+  unique index. Resolving "Keells" and "keells" collapses to the same row.
+- **Resolve-or-create:** every transaction-writing path (manual entry, chat/NLP
+  capture F-1.9a, OCR F-1.9c) resolves a typed payee name to a `Payee` via a
+  service (`resolveOrCreate`): normalize → find by (`userId`, `normalizedName`) →
+  else create. Payees are never entered as opaque strings on the transaction.
+- **Optional on a transaction:** `TRANSFER` and unnamed one-off entries
+  ("$5 for burger") have **no** payee (`payeeId` null). The item/description in such
+  cases goes to the transaction's `note`, not to a payee.
+- A payee referenced by any transaction cannot be hard-deleted; it can be **merged**
+  into another payee (mirrors category merge, Phase 2 F-2.4) or left unused.
+- Scoped by `user_id` like every owned entity (§1.12); no cross-user payees.
+
 ## 1.6 Transaction
 
 The core ledger record. Every movement of money is one transaction row.
@@ -289,8 +331,8 @@ The core ledger record. Every movement of money is one transaction row.
 | `currency` | `String(3)` | ISO-4217. Equals the owner's active currency ([§0.3](#03-one-active-currency-per-user)); in the MVP every account shares it, so it always matches the account currency. |
 | `transferAccountId` | `String` | FK → `account`. Set **only** when `type = TRANSFER`. |
 | `txnDate` | `long` | Epoch millis of the transaction date. Not null, indexed. |
-| `payee` | `String(300)` | Optional merchant/payer. |
-| `note` | `String(500)` | Optional. |
+| `payeeId` | `String` | Optional FK → `payee` ([§1.5b](#15b-payee)). The merchant/payer as an entity, not free text. Null for TRANSFER and unnamed one-off entries. Indexed (drives payee filtering, F-1.19). |
+| `note` | `String(500)` | Optional free-text description / item (e.g. "burger", "tea things"). |
 | `tags` | `jsonb` | Optional string array. |
 | `recurringId` | `String` | Nullable FK → `recurring_transaction` if auto-generated. |
 
@@ -301,7 +343,7 @@ The core ledger record. Every movement of money is one transaction row.
 - Editing or deleting a transaction re-derives affected account balances ([§1.10](#110-balance-derivation-invariant)).
 - **Duplicating** a transaction (F-1.5b) creates a new row copying all fields except `id`/timestamps, defaulting `txnDate` to now. The copy is an independent transaction.
 - **Attachments** (receipts/images) link via the `Attachment` entity ([§3.5](#35-attachment-receipts--ocr)); a transaction may have zero or more, added manually or produced by OCR.
-- **Search & filter** (F-1.19) over transactions (date range, category, account, amount, payee, tag, free text) is a first-class MVP capability; the indexed `txnDate`, `userId`, `accountId`, and `categoryId` columns support it.
+- **Search & filter** (F-1.19) over transactions (date range, category, account, amount, payee, tag, free text) is a first-class MVP capability; the indexed `txnDate`, `userId`, `accountId`, `categoryId`, and `payeeId` columns support it. Payee filtering is by `payeeId` ([§1.5b](#15b-payee)), not free-text match.
 
 ## 1.7 Budget
 
@@ -344,7 +386,7 @@ A template that generates `Transaction` rows on a schedule. Works for both incom
 | `nextRunDate` | `long` | Epoch millis of the next generation. Not null, indexed. |
 | `endDate` | `long` | Nullable; stop generating after this. |
 | `active` | `boolean` | Default `true`. |
-| `payee` | `String(300)` | Copied onto generated transactions. |
+| `payeeId` | `String` | Optional FK → `payee` ([§1.5b](#15b-payee)). Copied onto generated transactions. |
 | `note` | `String(500)` | Copied onto generated transactions. |
 
 **Rules**
@@ -418,6 +460,47 @@ currentBalance = openingBalance
 
 - The service layer updates `currentBalance` inside the same transaction that creates/edits/deletes a `Transaction`.
 - A recompute endpoint/job can rebuild it from the ledger if drift is ever detected (defensive; the ledger is the source of truth).
+
+> **Two kinds of "drift" — don't confuse them.** The recompute above fixes
+> *internal* drift (stored `currentBalance` vs. the sum of the ledger). It does
+> **not** address the app's balance diverging from the user's **real bank
+> balance** — that is reconciliation ([§1.10b](#110b-reconciliation)).
+
+## 1.10b Reconciliation
+
+Over time a user's tracked balance can diverge from their **real-world** account
+balance — usually because some transactions were never entered (a forgotten cash
+expense, a bank fee). Reconciliation brings the two back into agreement (F-1.2b).
+
+**The balance is never edited directly.** `currentBalance` is derived
+([§1.10](#110-balance-derivation-invariant)); typing a new value would (a) be
+overwritten by the next recompute and (b) desync the balance from the ledger, so
+spending/income reports would no longer add up. Instead, reconciliation records a
+**balance adjustment**: an ordinary `Transaction` for the difference.
+
+```
+difference = actual_real_balance − app_current_balance
+  difference < 0  → app shows MORE than reality (missed expenses)  → EXPENSE adjustment
+  difference > 0  → app shows LESS than reality (missed income)    → INCOME  adjustment
+  difference = 0  → already reconciled; nothing to record
+```
+
+The adjustment is a normal INCOME/EXPENSE row assigned to a reserved
+**"Adjustment"** (or "Uncategorized") category — **no new entity and no new
+`TransactionType`**. Because it flows through the ledger like any other
+transaction, the balance corrects itself via [§1.10](#110-balance-derivation-invariant),
+net worth stays right, total spending/income stays honest (the money really did
+move), and the correction is fully auditable — the user can later re-categorize or
+split it if they remember what it was.
+
+**Example.** Opening $5000; app shows $1200; the bank actually shows $600. The
+user reconciles to $600 → the app records an **EXPENSE of $600** (`1200 − 600`) to
+the Adjustment category, and `currentBalance` derives to $600. Reversed (app $600,
+bank $1200) it records an **INCOME of $600**.
+
+**UX (not domain):** a "reconcile" action takes the user's stated real balance,
+computes the difference, and creates the adjustment for them — they never do the
+subtraction by hand.
 
 ## 1.11 Net worth (derived)
 
@@ -758,8 +841,8 @@ inline (`jsonb`) on the message/attachment that produced it.
 | `categoryGuess` | `String` | Raw label the model proposed (e.g. "food") before matching. |
 | `accountId` | `String` | Target account; defaults to the user's default account. |
 | `txnDate` | `long` | Resolved date ("yesterday" → epoch millis). Defaults to now. |
-| `payee` | `String` | Optional merchant/payer. |
-| `note` | `String` | Optional free text. |
+| `payeeName` | `String` | Optional merchant/payer **name** as extracted. Stays a name at the draft stage; resolved to a `payee` row ([§1.5b](#15b-payee)) via resolve-or-create only when the draft is confirmed. |
+| `note` | `String` | Optional free-text description / item (e.g. "burger", "tea things"). |
 | `confidence` | `double` | 0–1 model confidence; drives the confirm-vs-clarify branch. |
 | `missingFields` | `string[]` | Fields the parser could not fill (prompts clarification). |
 | `rawInput` | `String` | The original text/transcript for auditing. |
