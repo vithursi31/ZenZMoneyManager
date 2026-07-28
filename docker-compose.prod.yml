@@ -47,6 +47,22 @@ services:
     networks:
       - zenz-net
 
+  # Self-hosted Qwen2.5 for chat transaction entry (F-1.9a). Opt-in — the weights
+  # are several GB and want RAM the app also needs, so it starts only with:
+  #   docker compose -f docker-compose.prod.yml --profile llm up -d
+  #   docker compose -f docker-compose.prod.yml exec ollama ollama pull $LLM_MODEL
+  # No published port: only the app reaches it, over the internal network. If it is
+  # not running the app still starts — chat entry degrades to "try again".
+  ollama:
+    image: ollama/ollama:0.32.5
+    container_name: ollama-zenzmoney
+    restart: unless-stopped
+    profiles: ["llm"]
+    volumes:
+      - ollama-data:/root/.ollama
+    networks:
+      - zenz-net
+
   app:
     build:
       context: .
@@ -93,6 +109,10 @@ services:
       FACEBOOK_APP_SECRET: ${FACEBOOK_APP_SECRET:-}
       FACEBOOK_REDIRECT_URL: ${FACEBOOK_REDIRECT_URL:-}
       FACEBOOK_GRAPH_VERSION: ${FACEBOOK_GRAPH_VERSION:-v19.0}
+      # Self-hosted LLM — reached by service name "ollama" when that profile is up.
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://ollama:11434}
+      LLM_MODEL: ${LLM_MODEL:-qwen2.5:1.5b-instruct}
+      LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS:-20000}
     ports:
       - "8080:8080"
     networks:
@@ -101,6 +121,7 @@ services:
 volumes:
   postgres-data:
   redis-data:
+  ollama-data:
 
 networks:
   zenz-net:

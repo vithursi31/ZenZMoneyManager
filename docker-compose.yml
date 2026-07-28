@@ -23,6 +23,22 @@ services:
     volumes:
       - redis-data:/bitnami/redis/data
 
+  # Self-hosted Qwen2.5 for chat transaction entry (F-1.9a).
+  # Opt-in: the image plus model weights are several GB, so it only starts with
+  # the "llm" profile and a plain `docker compose up -d` stays light.
+  #   docker compose --profile llm up -d
+  #   docker compose exec ollama ollama pull qwen2.5:1.5b-instruct
+  # The app reaches it on localhost:11434 (the default in application.properties).
+  ollama:
+    image: ollama/ollama:0.32.5
+    container_name: ollama-zenzmoney
+    profiles: ["llm"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+
 volumes:
   postgres-data:
   redis-data:
+  ollama-data:
