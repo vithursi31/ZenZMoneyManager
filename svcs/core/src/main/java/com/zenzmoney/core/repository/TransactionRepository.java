@@ -51,4 +51,25 @@ public interface TransactionRepository
     @Query("SELECT COALESCE(SUM(t.amount), 0) FROM Transaction t "
             + "WHERE t.transferAccountId = :accountId")
     long sumTransferInByAccountId(@Param("accountId") String accountId);
+
+    // --- budget spend (§1.7): EXPENSE totals within a period window [from, to) ---
+
+    /** Σ EXPENSE for one category in the window (a category budget). */
+    @Query("SELECT COALESCE(SUM(t.amount), 0) FROM Transaction t "
+            + "WHERE t.userId = :userId AND t.categoryId = :categoryId "
+            + "AND t.type = com.zenzmoney.common.domain.TransactionType.EXPENSE "
+            + "AND t.txnDate >= :from AND t.txnDate < :to")
+    long sumExpenseByCategoryInWindow(@Param("userId") String userId,
+                                      @Param("categoryId") String categoryId,
+                                      @Param("from") long from,
+                                      @Param("to") long to);
+
+    /** Σ EXPENSE across all categories in the window (an overall budget). */
+    @Query("SELECT COALESCE(SUM(t.amount), 0) FROM Transaction t "
+            + "WHERE t.userId = :userId "
+            + "AND t.type = com.zenzmoney.common.domain.TransactionType.EXPENSE "
+            + "AND t.txnDate >= :from AND t.txnDate < :to")
+    long sumExpenseInWindow(@Param("userId") String userId,
+                            @Param("from") long from,
+                            @Param("to") long to);
 }

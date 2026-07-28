@@ -55,6 +55,15 @@ public class RecurringTransaction extends BaseEntity {
     @Column(name = "next_run_date", nullable = false)
     private long nextRunDate;
 
+    /**
+     * The user-picked day-of-month (1–31) the schedule anchors to, for MONTHLY/YEARLY
+     * cadence. Persisted so a "31st" template clamps to a short month's last day yet
+     * returns to the 31st afterwards, instead of walking back off the clamped date
+     * (§1.8). Irrelevant for DAILY/WEEKLY.
+     */
+    @Column(name = "anchor_day", nullable = false)
+    private int anchorDay = 1;
+
     /** Nullable; stop generating after this. */
     @Column(name = "end_date")
     private Long endDate;

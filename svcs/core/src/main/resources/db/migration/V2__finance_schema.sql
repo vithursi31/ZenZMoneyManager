@@ -118,6 +118,7 @@ CREATE TABLE recurring_transaction (
     transfer_account_id   VARCHAR(36),
     cadence               VARCHAR(50) NOT NULL,
     next_run_date         BIGINT NOT NULL,
+    anchor_day            INT NOT NULL DEFAULT 1,
     end_date              BIGINT,
     active                BOOLEAN NOT NULL DEFAULT TRUE,
     payee_id              VARCHAR(36),

@@ -8,6 +8,7 @@ import com.zenzmoney.common.exception.BadRequestException;
 import com.zenzmoney.common.exception.NotFoundException;
 import com.zenzmoney.core.entity.Account;
 import com.zenzmoney.core.entity.Category;
+import com.zenzmoney.core.entity.RecurringTransaction;
 import com.zenzmoney.core.entity.Transaction;
 import com.zenzmoney.core.repository.AccountRepository;
 import com.zenzmoney.core.repository.CategoryRepository;
@@ -105,6 +106,27 @@ public class TransactionService {
                 .sorted(Comparator.comparingLong(Transaction::getTxnDate).reversed())
                 .map(TransactionResponse::of)
                 .toList();
+    }
+
+    /**
+     * Generates one ledger row from a recurring template (§1.8), dated at {@code runDate},
+     * and re-derives affected balances — the same validation and balance rules as a normal
+     * transaction. The template's already-resolved {@code payeeId} is copied directly, and
+     * {@code recurringId} links the row back to its template. Called by the scheduler within
+     * the template's transaction, so the generation and the template's {@code nextRunDate}
+     * advance commit atomically.
+     */
+    @Transactional
+    public TransactionResponse generateFromRecurring(RecurringTransaction template, long runDate) {
+        Transaction txn = new Transaction();
+        apply(txn, template.getUserId(), template.getType(), template.getAccountId(),
+                template.getCategoryId(), template.getAmount(), template.getTransferAccountId(),
+                runDate, null, template.getNote(), null);
+        txn.setPayeeId(template.getPayeeId());     // template payee is already resolved
+        txn.setRecurringId(template.getId());
+        Transaction saved = transactionRepository.save(txn);
+        recomputeAffected(saved);
+        return TransactionResponse.of(saved);
     }
 
     // --- internals ---
