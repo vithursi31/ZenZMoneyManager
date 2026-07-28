@@ -14,4 +14,7 @@ public interface RecurringTransactionRepository extends JpaRepository<RecurringT
 
     /** Drives the generation job: active templates whose next run is due. */
     List<RecurringTransaction> findByActiveTrueAndNextRunDateLessThanEqual(long now);
+
+    /** True if any recurring template references this payee. */
+    boolean existsByPayeeId(String payeeId);
 }

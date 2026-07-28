@@ -107,6 +107,12 @@ Hybrid model, both paths converging on Spring Security's `SecurityContext`:
 
 > **Authorization is method-level, not URL-level — this is the single most important web-layer fact.** [SecurityConfig](svcs/core/src/main/java/com/zenzmoney/core/config/SecurityConfig.java) sets `.anyRequest().permitAll()` on purpose and relies on `@EnableMethodSecurity(jsr250Enabled = true)` + **`@RolesAllowed`** on each handler. **A new controller method with no `@RolesAllowed` is wide open to anonymous callers.** Every non-public endpoint needs `@RolesAllowed({"USER","ADMIN"})` (or `"ADMIN"`), and — per the ownership invariant — must also scope its query by the caller's `user_id`. Roles are `ANONYMOUS`, `USER`, `ADMIN` ([Role](svcs/common/src/main/java/com/zenzmoney/common/domain/Role.java)); resolve the caller via [AuthUtil](svcs/core/src/main/java/com/zenzmoney/core/web/util/AuthUtil.java).
 
+> **Who is ADMIN?** Every registered / OAuth user is granted **`USER`** only (`setRoles(Set.of(Role.USER))` in `RegistrationService` / `OAuthLoginService`). **No code path assigns `ADMIN`** — there is no promotion endpoint, bootstrap, or migration seed (deliberate, single-author project). So `ADMIN`-gated routes (`/api/v1/admin/**`, the `/admin` page) are unreachable until an admin is designated **manually**:
+> ```sql
+> INSERT INTO user_roles (user_id, role) VALUES ('<user-id>', 'ADMIN');
+> ```
+> The role is loaded into the JWT principal on the user's next login (`AppUserDetailsService` maps it to `ROLE_ADMIN`). When admin management is needed, replace this note with the chosen mechanism (config-driven bootstrap or an admin-only role endpoint).
+
 - **Access denied** splits by path: `/api/**` gets a JSON `ApiResponse.error("E1014", …)`; anything else redirects to `/error/403`.
 - **CORS** comes from [CorsConfig](svcs/core/src/main/java/com/zenzmoney/core/config/CorsConfig.java).
 - **Vestigial:** `/stripe/webhook` is permitted in `SecurityConfig` and skipped by the CSP filter, but there is no Stripe code in this repo. Don't build on it; remove it or implement it deliberately.

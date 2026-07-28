@@ -62,8 +62,9 @@ public class RecurringTransaction extends BaseEntity {
     @Column(nullable = false)
     private boolean active = true;
 
-    @Column(length = 300)
-    private String payee;
+    /** Optional FK → payee (§1.5b). Copied onto generated transactions. */
+    @Column(name = "payee_id", length = 36)
+    private String payeeId;
 
     @Column(length = 500)
     private String note;

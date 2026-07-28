@@ -45,6 +45,22 @@ CREATE TABLE category (
 CREATE INDEX idx_category_user ON category(user_id);
 CREATE INDEX idx_category_parent ON category(parent_id);
 
+CREATE TABLE payee (
+    id                VARCHAR(36) PRIMARY KEY,
+    user_id           VARCHAR(36) NOT NULL,
+    name              VARCHAR(300) NOT NULL,
+    normalized_name   VARCHAR(300) NOT NULL,
+    color             VARCHAR(20),
+    icon              VARCHAR(50),
+    created_time      BIGINT,
+    modified_time     BIGINT,
+    created_by        VARCHAR(120),
+    modified_by       VARCHAR(120),
+    version           BIGINT
+);
+CREATE INDEX idx_payee_user ON payee(user_id);
+CREATE UNIQUE INDEX idx_payee_user_normalized ON payee(user_id, normalized_name);
+
 CREATE TABLE transaction (
     id                    VARCHAR(36) PRIMARY KEY,
     user_id               VARCHAR(36) NOT NULL,
@@ -55,7 +71,7 @@ CREATE TABLE transaction (
     currency              VARCHAR(3) NOT NULL,
     transfer_account_id   VARCHAR(36),
     txn_date              BIGINT NOT NULL,
-    payee                 VARCHAR(300),
+    payee_id              VARCHAR(36),
     note                  VARCHAR(500),
     tags                  JSONB,
     recurring_id          VARCHAR(36),
@@ -69,6 +85,7 @@ CREATE INDEX idx_transaction_user ON transaction(user_id);
 CREATE INDEX idx_transaction_account ON transaction(account_id);
 CREATE INDEX idx_transaction_transfer_account ON transaction(transfer_account_id);
 CREATE INDEX idx_transaction_category ON transaction(category_id);
+CREATE INDEX idx_transaction_payee ON transaction(payee_id);
 CREATE INDEX idx_transaction_txn_date ON transaction(txn_date);
 
 CREATE TABLE budget (
@@ -103,7 +120,7 @@ CREATE TABLE recurring_transaction (
     next_run_date         BIGINT NOT NULL,
     end_date              BIGINT,
     active                BOOLEAN NOT NULL DEFAULT TRUE,
-    payee                 VARCHAR(300),
+    payee_id              VARCHAR(36),
     note                  VARCHAR(500),
     created_time          BIGINT,
     modified_time         BIGINT,

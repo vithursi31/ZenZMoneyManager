@@ -55,8 +55,9 @@ public class Transaction extends BaseEntity {
     @Column(name = "txn_date", nullable = false)
     private long txnDate;
 
-    @Column(length = 300)
-    private String payee;
+    /** Optional FK → payee (§1.5b). Null for TRANSFER and unnamed one-off entries. */
+    @Column(name = "payee_id", length = 36)
+    private String payeeId;
 
     @Column(length = 500)
     private String note;

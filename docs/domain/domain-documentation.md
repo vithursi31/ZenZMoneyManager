@@ -227,7 +227,7 @@ Defined in `com.<pkg>.common.domain` (replacing `HabitStatus`), stored as
 
 ```java
 public enum AccountType      { CASH, BANK, CARD, SAVINGS, WALLET }
-public enum AccountStatus    { ACTIVE, ARCHIVED }
+public enum AccountStatus    { ACTIVE, ARCHIVED, DELETED }
 public enum CategoryKind     { INCOME, EXPENSE }
 public enum TransactionType  { INCOME, EXPENSE, TRANSFER }
 public enum BudgetPeriod     { WEEKLY, MONTHLY, YEARLY }
@@ -258,7 +258,7 @@ A place where money is held. Owned by one user.
 - An account's `currency` mirrors the owner's active currency ([§0.3](#03-one-active-currency-per-user)). New accounts are created in the user's active currency and are not individually re-denominated; changing currency is a user-level switch.
 - **Credit cards** are an `AccountType.CARD` that may carry a **negative** `currentBalance`, counted as a liability in net worth ([§1.11](#111-net-worth-derived)). Statement cycles / minimum payments / limits are not modeled yet.
 - Archiving (`status = ARCHIVED`) hides the account from pickers but preserves history. Archived accounts cannot receive new transactions.
-- Deleting an account is only allowed when it has no transactions; otherwise it must be archived.
+- Deleting an account is a **soft delete**: `status = DELETED` and the row is **retained** in the database (for audit / recovery), then hidden from every listing and operation (a soft-deleted account reads as *not found*). Delete is only allowed when the account has **no transactions**; an account with history must be **archived** instead. Rows are never physically removed by the API — this keeps foreign keys from transactions/goals valid and preserves the audit trail. Derived figures (balances, net worth) exclude `DELETED` accounts.
 
 ## 1.5 Category
 

@@ -13,4 +13,10 @@ public interface CategoryRepository extends JpaRepository<Category, String> {
     Optional<Category> findByIdAndUserId(String id, String userId);
 
     List<Category> findByUserIdAndParentId(String userId, String parentId);
+
+    /** True if the user has any sub-category under this parent. */
+    boolean existsByUserIdAndParentId(String userId, String parentId);
+
+    /** For seed-defaults idempotency: does the user have any category yet? */
+    boolean existsByUserId(String userId);
 }

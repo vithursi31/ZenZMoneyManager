@@ -17,6 +17,10 @@ target/
 *.env
 !.env.example
 
+#api curl-script credentials (docs/api/.env.local); .env.local.example is the tracked template
+.env.local
+!.env.local.example
+
 
 #linux unsaved files
 *~
