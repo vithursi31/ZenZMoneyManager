@@ -5,6 +5,7 @@ import com.zenzmoney.common.exception.TooManyRequestsException;
 import com.zenzmoney.core.entity.Verification;
 import com.zenzmoney.core.entity.Verification.Purpose;
 import com.zenzmoney.core.entity.Verification.Status;
+import com.zenzmoney.core.logging.AppLog;
 import com.zenzmoney.core.repository.VerificationRepository;
 import com.zenzmoney.core.service.ratelimit.RateLimitPolicy;
 import com.zenzmoney.core.service.ratelimit.RateLimitResult;
@@ -29,6 +30,13 @@ import java.util.Optional;
 public class OtpService {
 
     private static final Logger log = LoggerFactory.getLogger(OtpService.class);
+
+    /**
+     * Issuance and verification outcomes go to audit.log — this is the trail that shows a
+     * code-guessing or reset-abuse attempt. The code itself is never logged, only its purpose and
+     * outcome; a logged code would turn read access to the log into account takeover.
+     */
+    private static final Logger audit = AppLog.AUDIT;
 
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final int MAX_ATTEMPTS = 5;
@@ -72,6 +80,8 @@ public class OtpService {
         RateLimitResult rl = rateLimitService.tryConsumeOrDeny("otp:" + email, OTP_POLICY);
         if (!rl.allowed()) {
             log.warn("OTP request rate-limit exceeded for {} (purpose={})", email, purpose);
+            audit.warn("OTP issuance denied for {} (purpose={}) — rate limit exceeded, retry after {}s",
+                    email, purpose, rl.retryAfterSeconds());
             throw new TooManyRequestsException(RATE_LIMIT_CODE,
                     "Too many verification code requests. You can request up to 3 codes per 10 minutes, "
                             + "5 per hour, and 10 per day. Please wait before trying again.",
@@ -91,6 +101,7 @@ public class OtpService {
         v.setAttempts(0);
         verificationRepository.save(v);
 
+        audit.info("OTP issued for {} (purpose={}, expires in {}ms)", email, purpose, ttl);
         return v.getCode();
     }
 
@@ -108,24 +119,33 @@ public class OtpService {
         Verification v = verificationRepository
                 .findFirstByEmailAndPurposeAndStatusOrderByCreatedTimeDesc(
                         email, purpose.name(), Status.PENDING.name())
-                .orElseThrow(() -> new BadRequestException("No pending verification code. Request a new one."));
+                .orElseThrow(() -> {
+                    audit.info("OTP verification failed for {} (purpose={}) — no pending code", email, purpose);
+                    return new BadRequestException("No pending verification code. Request a new one.");
+                });
 
         if (v.getExpiresAt() < System.currentTimeMillis()) {
+            audit.info("OTP verification failed for {} (purpose={}) — code expired", email, purpose);
             throw new BadRequestException("Verification code has expired. Request a new one.");
         }
 
         if (v.getAttempts() >= MAX_ATTEMPTS) {
+            audit.warn("OTP verification failed for {} (purpose={}) — attempt cap of {} reached",
+                    email, purpose, MAX_ATTEMPTS);
             throw new BadRequestException("Too many incorrect attempts. Request a new code.");
         }
 
         if (!v.getCode().equals(purposeCode.trim())) {
             v.setAttempts(v.getAttempts() + 1);
             verificationRepository.save(v);
+            audit.warn("OTP verification failed for {} (purpose={}) — wrong code (attempt {} of {})",
+                    email, purpose, v.getAttempts(), MAX_ATTEMPTS);
             throw new BadRequestException("Incorrect verification code");
         }
 
         v.setStatus(Status.UTILIZED.name());
         verificationRepository.save(v);
+        audit.info("OTP verified for {} (purpose={})", email, purpose);
     }
 
     private void supersedePending(String email, Purpose purpose) {

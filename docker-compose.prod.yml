@@ -115,6 +115,21 @@ services:
       LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS:-20000}
     ports:
       - "8080:8080"
+    # Logs on the host, not in the container's writable layer. Without this bind mount
+    # every `up -d --build` recreates the container and takes debug.log, error.log and the
+    # whole archived/ history with it — including audit.log, the file an incident is
+    # reconstructed from. Also what makes off-host archiving runnable at all: ./logs/archived/*.gz
+    # is reachable from the host shell (see CLAUDE.md, Checking Logs).
+    # DEPLOYMENT_DIRECTORY is unset in the image, so ${DEPLOYMENT_DIRECTORY:-.}/logs in
+    # logback-spring.xml resolves against WORKDIR /app.
+    #
+    # ONE-TIME SETUP on the server, before the first `up`: a bind mount keeps the HOST
+    # directory's ownership and overrides the image's chown, and the container runs as
+    # non-root UID 1001 (see Dockerfile). Left root-owned, Logback cannot open the files
+    # and the app starts with file logging silently dead:
+    #   mkdir -p logs && sudo chown -R 1001:1001 logs
+    volumes:
+      - ./logs:/app/logs
     networks:
       - zenz-net
 

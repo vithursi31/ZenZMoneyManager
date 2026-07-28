@@ -3,8 +3,11 @@ package com.zenzmoney.core.web.filter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zenzmoney.common.dto.ApiResponse;
 import com.zenzmoney.common.exception.UnauthorizedException;
+import com.zenzmoney.core.logging.AppLog;
 import com.zenzmoney.core.service.JwtTokenService;
 import io.jsonwebtoken.Claims;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -24,6 +27,15 @@ import java.util.Set;
 
 @Component
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
+
+    private static final Logger log = LoggerFactory.getLogger(JwtAuthenticationFilter.class);
+
+    /**
+     * Token rejections are audited, not just logged: a run of them is either a client bug or someone
+     * probing with forged tokens, and telling those apart after the fact needs the history. The token
+     * itself is never logged — it is a live credential until it expires.
+     */
+    private static final Logger audit = AppLog.AUDIT;
 
     private final JwtTokenService jwtTokenService;
     private final UserDetailsService userDetailsService;
@@ -71,6 +83,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             Claims claims = jwtTokenService.extractClaims(token);
             String type = jwtTokenService.extractTokenType(claims);
             if (!JwtTokenService.TYPE_ACCESS.equals(type)) {
+                // A refresh token presented as an access token. Deliberate misuse or a client bug —
+                // either way it is the one token-type confusion this filter exists to stop.
+                audit.warn("Token rejected on {}: required access token, got '{}' (subject={})",
+                        path, type, claims.getSubject());
                 writeError(response, "INVALID_TOKEN",
                         "Required access token but found '" + type + "'");
                 return;
@@ -82,11 +98,16 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             UsernamePasswordAuthenticationToken auth =
                     new UsernamePasswordAuthenticationToken(details, null, details.getAuthorities());
             SecurityContextHolder.getContext().setAuthentication(auth);
+            log.debug("Authenticated {} for {}", email, path);
 
             chain.doFilter(request, response);
         } catch (UnauthorizedException e) {
+            audit.warn("Token rejected on {}: {} — {}", path, e.getErrorCode(), e.getMessage());
             writeError(response, e.getErrorCode(), e.getMessage());
         } catch (Exception e) {
+            // Malformed, expired, or wrong-signature token: e.getMessage() describes the failure and
+            // carries no secret, so it is safe to record. A burst of these is worth noticing.
+            audit.warn("Token rejected on {}: {}", path, e.getMessage());
             writeError(response, "INVALID_TOKEN", e.getMessage());
         }
     }

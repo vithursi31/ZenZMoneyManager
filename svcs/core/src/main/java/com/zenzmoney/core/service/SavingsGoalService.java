@@ -18,6 +18,8 @@ import com.zenzmoney.core.web.dto.CreateContributionRequest;
 import com.zenzmoney.core.web.dto.CreateGoalRequest;
 import com.zenzmoney.core.web.dto.GoalResponse;
 import com.zenzmoney.core.web.dto.UpdateGoalRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -34,6 +36,9 @@ import java.util.List;
  */
 @Service
 public class SavingsGoalService {
+
+    /** Mutations only. Contributions are money movements, so they log their amount. */
+    private static final Logger log = LoggerFactory.getLogger(SavingsGoalService.class);
 
     private final SavingsGoalRepository goalRepository;
     private final GoalContributionRepository contributionRepository;
@@ -71,6 +76,9 @@ public class SavingsGoalService {
         goal.setColor(req.getColor());
         goal.setIcon(req.getIcon());
         SavingsGoal saved = goalRepository.save(goal);
+        log.info("Savings goal created: {} target={} {} on account {} (goal {}, user {})",
+                saved.getName(), saved.getTargetAmount(), saved.getCurrency(),
+                saved.getAccountId(), saved.getId(), userId);
         return GoalResponse.of(saved, 0);   // no contributions yet
     }
 
@@ -104,6 +112,8 @@ public class SavingsGoalService {
         if (req.getColor() != null) goal.setColor(req.getColor());
         if (req.getIcon() != null) goal.setIcon(req.getIcon());
         goalRepository.save(goal);
+        log.info("Savings goal updated: {} target={} {} (goal {}, user {})",
+                goal.getName(), goal.getTargetAmount(), goal.getCurrency(), id, goal.getUserId());
         return reevaluateAndRespond(goal);   // a raised/lowered target can change ACHIEVED
     }
 
@@ -112,6 +122,7 @@ public class SavingsGoalService {
         SavingsGoal goal = requireOwned(id, currentUser.requireUserId());
         goal.setStatus(GoalStatus.ARCHIVED);
         goalRepository.save(goal);
+        log.info("Savings goal archived: {} (goal {}, user {})", goal.getName(), id, goal.getUserId());
         return withProgress(goal);
     }
 
@@ -127,6 +138,9 @@ public class SavingsGoalService {
             throw new BadRequestException("Goal has contributions and cannot be deleted; archive it instead.");
         }
         goalRepository.delete(goal);
+        // Hard delete, allowed only because the goal was unfunded — this line is the last record.
+        log.info("Savings goal deleted: {} target={} {} (goal {}, user {})",
+                goal.getName(), goal.getTargetAmount(), goal.getCurrency(), id, goal.getUserId());
     }
 
     // --- contributions ---
@@ -161,6 +175,9 @@ public class SavingsGoalService {
         GoalContribution saved = contributionRepository.save(c);
 
         reevaluateStatus(goal);
+        log.info("Goal contribution added: {} {} to goal {} (contribution {}, txn={}, user {})",
+                saved.getAmount(), goal.getCurrency(), goalId, saved.getId(),
+                transactionId == null ? "none" : transactionId, userId);
         return ContributionResponse.of(saved);
     }
 
@@ -179,6 +196,8 @@ public class SavingsGoalService {
         GoalContribution c = contributionRepository.findByIdAndGoalId(contributionId, goalId)
                 .orElseThrow(() -> new NotFoundException("Contribution not found"));
         contributionRepository.delete(c);
+        log.info("Goal contribution deleted: {} {} from goal {} (contribution {}, user {})",
+                c.getAmount(), goal.getCurrency(), goalId, contributionId, goal.getUserId());
         reevaluateStatus(goal);   // removing funds can drop a goal back from ACHIEVED
     }
 

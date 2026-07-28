@@ -11,6 +11,8 @@ import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.MediaType;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
@@ -33,6 +35,16 @@ import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 public class AppleAuthConnector {
+
+    /**
+     * Provider calls are logged here, at the one public entry point, rather than around each
+     * outbound request: a failure surfaces as UnauthorizedException and is translated once in
+     * GlobalExceptionHandler, but that line cannot say WHICH provider call broke or how slow it was.
+     * A provider outage and a misconfigured client id look identical to the caller; they do not look
+     * identical here. Never log the identity token or authorization code — both are live credentials.
+     */
+    private static final Logger log = LoggerFactory.getLogger(AppleAuthConnector.class);
+
 
     private static final String APPLE_AUTH_URL = "https://appleid.apple.com/auth/token";
     private static final String APPLE_KEYS_URL = "https://appleid.apple.com/auth/keys";
@@ -78,8 +90,18 @@ public class AppleAuthConnector {
         if (clientId == null || clientId.isBlank()) {
             throw new UnauthorizedException("CONFIG_MISSING", "Apple client id is not configured");
         }
-        validateIdToken(req.getIdentityToken(), clientId);
-        return exchangeAuthorizationCode(req.getAuthorizationCode(), clientId);
+        long startedAt = System.currentTimeMillis();
+        try {
+            validateIdToken(req.getIdentityToken(), clientId);
+            AppleAuthResp resp = exchangeAuthorizationCode(req.getAuthorizationCode(), clientId);
+            log.debug("Apple verification succeeded in {}ms (mobile={})",
+                    System.currentTimeMillis() - startedAt, req.isMobileApp());
+            return resp;
+        } catch (RuntimeException e) {
+            log.warn("Apple verification failed in {}ms (mobile={}): {}",
+                    System.currentTimeMillis() - startedAt, req.isMobileApp(), e.getMessage());
+            throw e;
+        }
     }
 
     private void validateIdToken(String idToken, String clientId) {

@@ -5,6 +5,8 @@ import com.zenzmoney.core.web.dto.FacebookAuthRequest;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.MediaType;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 
@@ -12,6 +14,16 @@ import java.util.Map;
 
 @Service
 public class FacebookAuthConnector {
+
+    /**
+     * Provider calls are logged here, at the one public entry point, rather than around each
+     * outbound request: a failure surfaces as UnauthorizedException and is translated once in
+     * GlobalExceptionHandler, but that line cannot say WHICH provider call broke or how slow it was.
+     * A provider outage and a misconfigured client id look identical to the caller; they do not look
+     * identical here. Never log the token or auth code being verified — it is a live credential.
+     */
+    private static final Logger log = LoggerFactory.getLogger(FacebookAuthConnector.class);
+
 
     private static final String GRAPH_HOST = "graph.facebook.com";
 
@@ -34,13 +46,23 @@ public class FacebookAuthConnector {
         }
         requireConfig();
 
-        String accessToken = switch (req.getType()) {
-            case AccessToken -> req.getValue();
-            case AuthCode    -> exchangeCodeForAccessToken(req.getValue(), req.getRedirectUri());
-        };
+        long startedAt = System.currentTimeMillis();
+        try {
+            String accessToken = switch (req.getType()) {
+                case AccessToken -> req.getValue();
+                case AuthCode    -> exchangeCodeForAccessToken(req.getValue(), req.getRedirectUri());
+            };
 
-        verifyAccessToken(accessToken);
-        return fetchProfile(accessToken);
+            verifyAccessToken(accessToken);
+            FacebookAuthResp resp = fetchProfile(accessToken);
+            log.debug("Facebook {} verification succeeded in {}ms",
+                    req.getType(), System.currentTimeMillis() - startedAt);
+            return resp;
+        } catch (RuntimeException e) {
+            log.warn("Facebook {} verification failed in {}ms: {}",
+                    req.getType(), System.currentTimeMillis() - startedAt, e.getMessage());
+            throw e;
+        }
     }
 
     private void requireConfig() {

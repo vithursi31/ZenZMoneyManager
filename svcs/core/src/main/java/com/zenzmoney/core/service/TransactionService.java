@@ -16,6 +16,8 @@ import com.zenzmoney.core.repository.TransactionRepository;
 import com.zenzmoney.core.web.dto.CreateTransactionRequest;
 import com.zenzmoney.core.web.dto.TransactionResponse;
 import com.zenzmoney.core.web.dto.UpdateTransactionRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -33,6 +35,14 @@ import java.util.Set;
  */
 @Service
 public class TransactionService {
+
+    /**
+     * Ledger writes are logged at INFO with the amount in minor units and the currency, because a
+     * balance that looks wrong is reconstructed from this: the transaction that moved it, and the
+     * derivation that followed. Amounts are the user's own money, not a secret — but note and payee
+     * text is free-form user input and is deliberately not logged.
+     */
+    private static final Logger log = LoggerFactory.getLogger(TransactionService.class);
 
     private final TransactionRepository transactionRepository;
     private final AccountRepository accountRepository;
@@ -60,6 +70,9 @@ public class TransactionService {
                 req.getTransferAccountId(), req.getTxnDate(), req.getPayeeName(), req.getNote(), req.getTags());
         Transaction saved = transactionRepository.save(txn);
         recomputeAffected(saved);
+        log.info("Transaction created: {} {} {} on account {} (txn {}, user {})",
+                saved.getType(), saved.getAmount(), saved.getCurrency(),
+                saved.getAccountId(), saved.getId(), userId);
         return TransactionResponse.of(saved);
     }
 
@@ -76,6 +89,9 @@ public class TransactionService {
 
         affected.addAll(affectedAccounts(saved));        // plus the accounts it now touches
         affected.forEach(this::recompute);
+        log.info("Transaction updated: {} {} {} on account {} (txn {}, user {}, rederived {} account(s))",
+                saved.getType(), saved.getAmount(), saved.getCurrency(),
+                saved.getAccountId(), saved.getId(), userId, affected.size());
         return TransactionResponse.of(saved);
     }
 
@@ -86,6 +102,10 @@ public class TransactionService {
         Set<String> affected = affectedAccounts(txn);
         transactionRepository.delete(txn);
         affected.forEach(this::recompute);
+        // A hard delete — the row is gone, so this line is the only remaining record that it existed.
+        log.info("Transaction deleted: {} {} {} on account {} (txn {}, user {})",
+                txn.getType(), txn.getAmount(), txn.getCurrency(),
+                txn.getAccountId(), id, userId);
     }
 
     @Transactional(readOnly = true)
@@ -126,6 +146,11 @@ public class TransactionService {
         txn.setRecurringId(template.getId());
         Transaction saved = transactionRepository.save(txn);
         recomputeAffected(saved);
+        // Money moved without a user in the request — the scheduler did it. The template id is what
+        // links this back to why, and scheduler.log carries the run that triggered it.
+        log.info("Transaction generated from recurring template {}: {} {} {} on account {} (txn {}, user {})",
+                template.getId(), saved.getType(), saved.getAmount(), saved.getCurrency(),
+                saved.getAccountId(), saved.getId(), template.getUserId());
         return TransactionResponse.of(saved);
     }
 
@@ -194,7 +219,13 @@ public class TransactionService {
         long expense = transactionRepository.sumAmountByAccountIdAndType(accountId, TransactionType.EXPENSE);
         long transferOut = transactionRepository.sumAmountByAccountIdAndType(accountId, TransactionType.TRANSFER);
         long transferIn = transactionRepository.sumTransferInByAccountId(accountId);
-        acc.setCurrentBalance(acc.getOpeningBalance() + income - expense - transferOut + transferIn);
+        long derived = acc.getOpeningBalance() + income - expense - transferOut + transferIn;
+        // DEBUG: the inputs to the derivation, so a wrong cached balance can be checked against the
+        // ledger sums that produced it rather than re-deriving by hand (§1.10).
+        log.debug("Balance re-derived for account {}: opening={} + in={} - out={} - xferOut={} + xferIn={} = {} (was {})",
+                accountId, acc.getOpeningBalance(), income, expense, transferOut, transferIn,
+                derived, acc.getCurrentBalance());
+        acc.setCurrentBalance(derived);
         accountRepository.save(acc);
     }
 

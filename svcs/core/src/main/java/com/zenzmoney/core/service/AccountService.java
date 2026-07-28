@@ -10,6 +10,8 @@ import com.zenzmoney.core.repository.TransactionRepository;
 import com.zenzmoney.core.web.dto.AccountResponse;
 import com.zenzmoney.core.web.dto.CreateAccountRequest;
 import com.zenzmoney.core.web.dto.UpdateAccountRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -24,6 +26,9 @@ import java.util.List;
  */
 @Service
 public class AccountService {
+
+    /** Mutations only. Reads are already covered by the per-request line MdcContextFilter writes. */
+    private static final Logger log = LoggerFactory.getLogger(AccountService.class);
 
     private final AccountRepository accountRepository;
     private final TransactionRepository transactionRepository;
@@ -53,7 +58,11 @@ public class AccountService {
         account.setSortOrder(req.getSortOrder());
         account.setStatus(AccountStatus.ACTIVE);
 
-        return AccountResponse.of(accountRepository.save(account));
+        Account saved = accountRepository.save(account);
+        log.info("Account created: {} type={} currency={} opening={} (account {}, user {})",
+                saved.getName(), saved.getType(), saved.getCurrency(),
+                saved.getOpeningBalance(), saved.getId(), user.getId());
+        return AccountResponse.of(saved);
     }
 
     @Transactional(readOnly = true)
@@ -82,6 +91,8 @@ public class AccountService {
         if (req.getColor() != null) account.setColor(req.getColor());
         if (req.getIcon() != null) account.setIcon(req.getIcon());
         if (req.getSortOrder() != null) account.setSortOrder(req.getSortOrder());
+        log.info("Account updated: {} (account {}, user {})",
+                account.getName(), id, account.getUserId());
         return AccountResponse.of(accountRepository.save(account));
     }
 
@@ -89,6 +100,9 @@ public class AccountService {
     public AccountResponse archive(String id) {
         Account account = requireOwned(id);
         account.setStatus(AccountStatus.ARCHIVED);
+        log.info("Account archived: {} (account {}, user {}, balance {} {})",
+                account.getName(), id, account.getUserId(),
+                account.getCurrentBalance(), account.getCurrency());
         return AccountResponse.of(accountRepository.save(account));
     }
 
@@ -108,6 +122,8 @@ public class AccountService {
         }
         account.setStatus(AccountStatus.DELETED);
         accountRepository.save(account);
+        log.info("Account soft-deleted: {} (account {}, user {})",
+                account.getName(), id, account.getUserId());
     }
 
     /** Owned, non-deleted account; a soft-deleted account reads as not found. */

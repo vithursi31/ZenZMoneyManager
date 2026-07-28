@@ -208,6 +208,51 @@ class IntentResolverTest {
                 "Veterinary", "spent 40 at the vet"));
     }
 
+    // --- direction: the user's own verb beats the model's txnType ---
+
+    /**
+     * The regression this exists for: qwen2.5:1.5b answered EXPENSE and INCOME for
+     * this same message on consecutive runs, and an INCOME reading turns a taxi fare
+     * into money received.
+     */
+    @Test
+    void type_prefersTheUsersVerbOverAModelThatFlippedTheDirection() {
+        assertEquals(TransactionType.EXPENSE,
+                IntentResolver.resolveType(TransactionType.INCOME, "paid 250 for uber yesterday"));
+        assertEquals(TransactionType.INCOME,
+                IntentResolver.resolveType(TransactionType.EXPENSE, "received 3000 salary"));
+    }
+
+    @Test
+    void type_fillsADirectionTheModelLeftNull() {
+        assertEquals(TransactionType.EXPENSE, IntentResolver.resolveType(null, "bought medicine for 800"));
+        assertEquals(TransactionType.INCOME, IntentResolver.resolveType(null, "earned 500 freelancing"));
+    }
+
+    @Test
+    void type_keepsTheModelsAnswerWhenTheMessageNamesNoDirection() {
+        assertEquals(TransactionType.EXPENSE, IntentResolver.resolveType(TransactionType.EXPENSE, "uber 250"));
+        assertNull(IntentResolver.resolveType(null, "uber 250"));
+    }
+
+    /** Both directions named is genuine ambiguity — an override would be a coin toss. */
+    @Test
+    void type_keepsTheModelsAnswerWhenTheMessageNamesBothDirections() {
+        assertEquals(TransactionType.INCOME,
+                IntentResolver.resolveType(TransactionType.INCOME, "paid my salary into savings"));
+    }
+
+    @Test
+    void type_neverOverridesATransfer() {
+        assertEquals(TransactionType.TRANSFER,
+                IntentResolver.resolveType(TransactionType.TRANSFER, "paid 500 into my savings"));
+    }
+
+    @Test
+    void type_matchesWholeWordsOnly() {
+        assertNull(IntentResolver.resolveType(null, "paycheck arrived"), "'pay' must not match inside 'paycheck'");
+    }
+
     // --- the whole draft ---
 
     @Test
@@ -305,6 +350,61 @@ class IntentResolverTest {
 
         assertFalse(draft.isComplete());
         assertTrue(draft.getMissingFields().contains("transfer"), "transfers are out of scope (§2)");
+    }
+
+    @Test
+    void resolve_appliesTheUsersVerbToTheDraftNotJustTheModelsType() {
+        User user = user("u1", "USD", "UTC");
+        when(accountRepository.findByUserId("u1")).thenReturn(List.of(account("a1", "Cash", "USD", 0)));
+        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+                category("c-transport", "Transport", CategoryKind.EXPENSE)));
+
+        ParsedIntent draft = resolver.resolve(user, "paid 250 for uber yesterday",
+                extraction(IntentType.CREATE_TRANSACTION, TransactionType.INCOME,
+                        "250", "Transport", "yesterday", "Uber", null, 1.0));
+
+        assertEquals(TransactionType.EXPENSE, draft.getTxnType());
+        assertEquals("c-transport", draft.getCategoryId(), "the kind filter now matches, so the guess survives");
+        assertTrue(draft.isComplete(), () -> "unexpected missing: " + draft.getMissingFields());
+    }
+
+    /**
+     * With no verb to settle it, a model that pairs INCOME with an expense category is
+     * self-contradictory. Asking about the direction is the useful question; asking
+     * "which category?" after silently dropping a good guess is not.
+     */
+    @Test
+    void resolve_asksAboutDirectionWhenTheGuessKindContradictsTheType() {
+        User user = user("u1", "USD", "UTC");
+        when(accountRepository.findByUserId("u1")).thenReturn(List.of(account("a1", "Cash", "USD", 0)));
+        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+                category("c-food", "Food & Drinks", CategoryKind.EXPENSE),
+                category("c-salary", "Salary", CategoryKind.INCOME)));
+
+        ParsedIntent draft = resolver.resolve(user, "coffee 500",
+                extraction(IntentType.CREATE_TRANSACTION, TransactionType.INCOME,
+                        "500", "Food & Drinks", "today", null, "coffee", 1.0));
+
+        assertFalse(draft.isComplete());
+        assertTrue(draft.getMissingFields().contains("type"));
+        assertFalse(draft.getMissingFields().contains("category"), "the direction is what's in doubt");
+        assertNull(draft.getTxnType(), "an unconfirmable direction must not sit in the draft");
+    }
+
+    @Test
+    void resolve_leavesAnUnmatchedGuessAloneRatherThanCallingItAContradiction() {
+        User user = user("u1", "USD", "UTC");
+        when(accountRepository.findByUserId("u1")).thenReturn(List.of(account("a1", "Cash", "USD", 0)));
+        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+                category("c-salary", "Salary", CategoryKind.INCOME)));
+
+        ParsedIntent draft = resolver.resolve(user, "got 3000 consulting fee",
+                extraction(IntentType.CREATE_TRANSACTION, TransactionType.INCOME,
+                        "3000", "Consulting", "today", null, null, 0.9));
+
+        assertEquals(TransactionType.INCOME, draft.getTxnType());
+        assertTrue(draft.getMissingFields().contains("category"), "an unknown label is unusable, not contradictory");
+        assertFalse(draft.getMissingFields().contains("type"));
     }
 
     @Test

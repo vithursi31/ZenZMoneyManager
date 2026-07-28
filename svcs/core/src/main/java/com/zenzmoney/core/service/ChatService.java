@@ -24,6 +24,8 @@ import com.zenzmoney.core.web.dto.ChatRequest;
 import com.zenzmoney.core.web.dto.CreateTransactionRequest;
 import com.zenzmoney.core.web.dto.TransactionResponse;
 import org.springframework.beans.factory.annotation.Value;
+import com.zenzmoney.core.logging.AppLog;
+import org.slf4j.Logger;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -43,6 +45,13 @@ import java.util.UUID;
  */
 @Service
 public class ChatService {
+
+    /**
+     * Routed to llm.log alongside OllamaExtractionClient, so one file holds the whole extraction
+     * path: the message went in, what came back, and whether the user accepted the draft. The
+     * message text itself is NOT logged — it is free-form user input about their own finances.
+     */
+    private static final Logger log = AppLog.LLM;
 
     private static final String RATE_LIMIT_CODE = "E1052";
 
@@ -114,10 +123,17 @@ public class ChatService {
                 .sorted(String.CASE_INSENSITIVE_ORDER)
                 .toList();
 
+        long startedAt = System.currentTimeMillis();
         LlmExtraction extraction = llmClient.extract(message, categoryNames);
         ParsedIntent draft = intentResolver.resolve(user, message, extraction);
 
         ChatMessageStatus status = statusFor(extraction, draft);
+        // Shape of the outcome, not the content: message length rather than the message, so a
+        // confidence or resolution regression is diagnosable without logging what the user typed.
+        log.info("Chat extraction: status={} intent={} confidence={} failed={} chars={} categories={} in {}ms (user {}, session {})",
+                status, extraction.getIntent(), extraction.getConfidence(), extraction.isFailed(),
+                message.length(), categoryNames.size(),
+                System.currentTimeMillis() - startedAt, user.getId(), sessionId);
         record(user, sessionId, ChatRole.USER, message, null, ChatMessageStatus.RECEIVED);
         ChatMessage assistantTurn =
                 record(user, sessionId, ChatRole.ASSISTANT, replyFor(extraction, draft, status),
@@ -161,6 +177,9 @@ public class ChatService {
         turn.setStatus(ChatMessageStatus.CONFIRMED);
         turn.setTransactionId(transaction.getId());
         chatMessageRepository.save(turn);
+        // The ledger write itself is logged by TransactionService; this records that a *chat draft*
+        // was what produced it, which is the link the txn line cannot carry.
+        log.info("Chat draft confirmed to ledger: message {} -> txn {}", messageId, transaction.getId());
         return transaction;
     }
 
@@ -173,6 +192,8 @@ public class ChatService {
         }
         turn.setStatus(ChatMessageStatus.REJECTED);
         chatMessageRepository.save(turn);
+        // Rejections are the signal that extraction quality is off — worth counting over time.
+        log.info("Chat draft rejected: message {}", messageId);
     }
 
     @Transactional(readOnly = true)

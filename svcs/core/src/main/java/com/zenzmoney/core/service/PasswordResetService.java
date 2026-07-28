@@ -3,6 +3,7 @@ package com.zenzmoney.core.service;
 import com.zenzmoney.common.exception.BadRequestException;
 import com.zenzmoney.core.entity.User;
 import com.zenzmoney.core.entity.Verification.Purpose;
+import com.zenzmoney.core.logging.AppLog;
 import com.zenzmoney.core.repository.UserRepository;
 import com.zenzmoney.core.util.EmailValidator;
 import com.zenzmoney.core.util.PasswordValidator;
@@ -19,6 +20,13 @@ import java.util.Optional;
 public class PasswordResetService {
 
     private static final Logger log = LoggerFactory.getLogger(PasswordResetService.class);
+
+    /**
+     * Reset is the documented account-takeover surface (see the Security Posture notes), so both
+     * ends of the flow are audited: the email a code was requested for, and the email whose password
+     * actually changed. If those ever disagree, the server-side identity binding has been broken.
+     */
+    private static final Logger audit = AppLog.AUDIT;
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
@@ -56,6 +64,7 @@ public class PasswordResetService {
             return;
         }
 
+        audit.info("Password reset code requested for {}", email);
         String code = otpService.issue(email, Purpose.RESET_PASSWORD);
         emailSender.sendPasswordResetCode(email, code);
     }
@@ -88,6 +97,11 @@ public class PasswordResetService {
         user.setEmailVerified(true);
         user.setLastLoginTime(System.currentTimeMillis());
         userRepository.save(user);
+
+        // The email here is the one the OTP was validated against, and the user was resolved from
+        // that same email — the pair in this line is what proves the binding held.
+        audit.warn("Password reset completed for {} (user {}) — lock cleared, session issued",
+                email, user.getId());
 
         return new AuthenticationResponse(
                 jwtTokenService.generateAccessToken(user.getEmail()),

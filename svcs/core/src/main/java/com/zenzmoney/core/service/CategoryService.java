@@ -10,6 +10,8 @@ import com.zenzmoney.core.repository.TransactionRepository;
 import com.zenzmoney.core.web.dto.CategoryResponse;
 import com.zenzmoney.core.web.dto.CreateCategoryRequest;
 import com.zenzmoney.core.web.dto.UpdateCategoryRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,6 +25,9 @@ import java.util.List;
  */
 @Service
 public class CategoryService {
+
+    /** Mutations only. Reads are already covered by the per-request line MdcContextFilter writes. */
+    private static final Logger log = LoggerFactory.getLogger(CategoryService.class);
 
     /** Default categories seeded at onboarding (§1.5). */
     private static final List<String> SEED_INCOME = List.of(
@@ -70,7 +75,12 @@ public class CategoryService {
         category.setColor(req.getColor());
         category.setIcon(req.getIcon());
         category.setSortOrder(req.getSortOrder());
-        return CategoryResponse.of(categoryRepository.save(category));
+        Category saved = categoryRepository.save(category);
+        log.info("Category created: {} kind={} parent={} (category {}, user {})",
+                saved.getName(), saved.getKind(),
+                saved.getParentId() == null ? "none" : saved.getParentId(),
+                saved.getId(), userId);
+        return CategoryResponse.of(saved);
     }
 
     @Transactional(readOnly = true)
@@ -98,6 +108,8 @@ public class CategoryService {
         if (req.getColor() != null) category.setColor(req.getColor());
         if (req.getIcon() != null) category.setIcon(req.getIcon());
         if (req.getSortOrder() != null) category.setSortOrder(req.getSortOrder());
+        log.info("Category updated: {} (category {}, user {})",
+                category.getName(), id, category.getUserId());
         return CategoryResponse.of(categoryRepository.save(category));
     }
 
@@ -120,6 +132,9 @@ public class CategoryService {
             throw new BadRequestException("Category is used by a budget and cannot be deleted.");
         }
         categoryRepository.delete(category);
+        // Hard delete, allowed only because nothing referenced it — this line is the last record.
+        log.info("Category deleted: {} kind={} (category {}, user {})",
+                category.getName(), category.getKind(), id, userId);
     }
 
     /**
@@ -131,6 +146,7 @@ public class CategoryService {
     public List<CategoryResponse> seedDefaults() {
         String userId = currentUser.requireUserId();
         if (categoryRepository.existsByUserId(userId)) {
+            log.debug("Default categories not seeded for user {} — it already has categories", userId);
             return list();
         }
         int order = 0;
@@ -141,6 +157,8 @@ public class CategoryService {
         for (String name : SEED_EXPENSE) {
             save(userId, name, CategoryKind.EXPENSE, order++);
         }
+        log.info("Seeded {} default categories for user {}",
+                SEED_INCOME.size() + SEED_EXPENSE.size(), userId);
         return list();
     }
 

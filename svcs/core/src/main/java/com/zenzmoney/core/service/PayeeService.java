@@ -9,6 +9,8 @@ import com.zenzmoney.core.repository.TransactionRepository;
 import com.zenzmoney.core.web.dto.CreatePayeeRequest;
 import com.zenzmoney.core.web.dto.PayeeResponse;
 import com.zenzmoney.core.web.dto.UpdatePayeeRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,6 +25,9 @@ import java.util.List;
  */
 @Service
 public class PayeeService {
+
+    /** Mutations only. Reads are already covered by the per-request line MdcContextFilter writes. */
+    private static final Logger log = LoggerFactory.getLogger(PayeeService.class);
 
     private final PayeeRepository payeeRepository;
     private final TransactionRepository transactionRepository;
@@ -60,7 +65,11 @@ public class PayeeService {
                     p.setUserId(userId);
                     p.setName(name);
                     p.setNormalizedName(normalized);
-                    return payeeRepository.save(p).getId();
+                    String id = payeeRepository.save(p).getId();
+                    // DEBUG, not INFO: this fires as a side effect of transaction entry, so at INFO
+                    // it would double every ledger write with a line nobody asked about.
+                    log.debug("Payee auto-created on first use: {} (payee {}, user {})", name, id, userId);
+                    return id;
                 });
     }
 
@@ -77,7 +86,9 @@ public class PayeeService {
         payee.setNormalizedName(normalized);
         if (req.getColor() != null) payee.setColor(req.getColor());
         if (req.getIcon() != null) payee.setIcon(req.getIcon());
-        return PayeeResponse.of(payeeRepository.save(payee));
+        Payee saved = payeeRepository.save(payee);
+        log.info("Payee created: {} (payee {}, user {})", saved.getName(), saved.getId(), userId);
+        return PayeeResponse.of(saved);
     }
 
     @Transactional(readOnly = true)
@@ -111,6 +122,7 @@ public class PayeeService {
         }
         if (req.getColor() != null) payee.setColor(req.getColor());
         if (req.getIcon() != null) payee.setIcon(req.getIcon());
+        log.info("Payee updated: {} (payee {}, user {})", payee.getName(), id, userId);
         return PayeeResponse.of(payeeRepository.save(payee));
     }
 
@@ -125,6 +137,8 @@ public class PayeeService {
             throw new BadRequestException("Payee is used by transactions and cannot be deleted.");
         }
         payeeRepository.delete(payee);
+        // Hard delete, allowed only because nothing referenced it — this line is the last record.
+        log.info("Payee deleted: {} (payee {}, user {})", payee.getName(), id, payee.getUserId());
     }
 
     private Payee requireOwned(String id, String userId) {

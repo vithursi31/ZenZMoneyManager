@@ -5,8 +5,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zenzmoney.common.domain.IntentType;
 import com.zenzmoney.common.domain.TransactionType;
+import com.zenzmoney.core.logging.AppLog;
 import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
@@ -35,7 +35,8 @@ import java.util.Map;
 @Service
 public class OllamaExtractionClient implements LlmExtractionClient {
 
-    private static final Logger log = LoggerFactory.getLogger(OllamaExtractionClient.class);
+    /** Routed to llm.log — this path costs compute, so its failures are read on their own. */
+    private static final Logger log = AppLog.LLM;
 
     private static final String CHAT_PATH = "/api/chat";
 

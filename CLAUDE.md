@@ -21,6 +21,7 @@ Product docs — read these before designing any finance feature:
 | [docs/roadmap.md](docs/roadmap.md) | Phase sequencing and what is deliberately unscheduled. |
 | [docs/features/chat-transaction-entry-plan.md](docs/features/chat-transaction-entry-plan.md) | Implementation plan for F-1.9a (NLP transaction entry). |
 | [svcs/AUTH_FLOW_PORTABLE.md](svcs/AUTH_FLOW_PORTABLE.md) | Framework-free walkthrough of the whole auth flow. |
+| [docs/production-release.md](docs/production-release.md) | The prd release process — pre-flight gates, versioning/tagging, build, deploy, verify, rollback. Read with [DEPLOYMENT.md](DEPLOYMENT.md), which is the one-time infrastructure runbook. |
 
 ### Domain invariants that constrain every change
 
@@ -211,16 +212,35 @@ Verify: `psql -h localhost -p 5454 -U zenzmoney -W` (password `zenzmoney`), `red
 
 **Read the logs and the DB before theorising — runtime evidence ranks with the code as a source of truth.** When something misbehaves, find the failing request in the log and inspect the DB state *first*, rather than reasoning from a hypothesis about what should happen. The same discipline verifies a fix: after the change, read the log and confirm the expected lines appear and the unwanted ones are gone.
 
-[logback-spring.xml](svcs/core/src/main/resources/logback-spring.xml) is profile-split:
+[logback-spring.xml](svcs/core/src/main/resources/logback-spring.xml) writes to `${DEPLOYMENT_DIRECTORY:-.}/logs/` in **every** profile except `test` (which is console-only) — `./logs` locally, `/app/logs` in the container. Console stays attached everywhere too, so `docker compose -f docker-compose.prod.yml logs -f app` is not empty.
 
-- **`loc`** — console only, root `INFO`; `com.zenzmoney` at `DEBUG` and Spring Security at `DEBUG` via `application-loc.properties`. There is **no log file locally** — capture the console output.
-- **`dev` / `prd`** — rolling files at `${DEPLOYMENT_DIRECTORY:-.}/logs/`: `debug.log` (all levels — a superset) and `error.log` (ERROR only). Start with `debug.log`. In the container that resolves to `/app/logs`.
+**Start with `debug.log`** — the `com.zenzmoney` logger runs at `DEBUG` and that appender has no threshold filter, so it is a **superset** holding the INFO/WARN/ERROR lines too. `info.log` and `error.log` are narrower slices of the same stream. Do **not** set `logging.level.com.zenzmoney` in a properties file: it overrides the logback config and silently narrows `debug.log` out of being a superset.
+
+Specialised concerns route to their own file through a named channel in [AppLog](svcs/core/src/main/java/com/zenzmoney/core/logging/AppLog.java) — `audit.log` (registration, login, OTP, password reset), `scheduler.log`, `llm.log`. These are `additivity="false"`, so **their lines appear only in those files and are not in `debug.log`** — grepping `debug.log` for a login attempt finds nothing by design. Reach for a channel only when the lines are worth reading away from request noise; a plain `LoggerFactory.getLogger(Foo.class)` lands under `com.zenzmoney` and is the right default.
+
+Every line carries the MDC correlation id and user (`… - <cid> - <user> - <msg>`), set once at the edge by [MdcContextFilter](svcs/core/src/main/java/com/zenzmoney/core/web/filter/MdcContextFilter.java). **The cid is what joins a request across files** — grep it in `debug.log` and `audit.log` to see the request trace and the security event together. Clients may pass `X-Correlation-Id`; the response echoes back whichever id was used, so a bug report can quote one.
+
+**Never log a secret.** `audit.log` is retained a year, so a credential there has a year-long exposure window — no passwords, tokens, hashes, or OTP codes. The OTP send-failure fallback that prints a live code is gated behind `zenzmoney.app.log-code-on-send-failure`, on in `loc` only.
 
 ```bash
 docker compose -f docker-compose.prod.yml logs -f app     # on the server
 ```
 
 `DEPLOYMENT_DIRECTORY` is host-specific — read it from the environment, never hard-code a path.
+
+### Rotation, retention, and archiving
+
+Each file rolls on a **daily boundary or at 10MB**, whichever comes first, and is gzipped into `logs/archived/`. Live files and compressed history sit in **separate directories** on purpose, so moving archives off-host is a plain `mv archived/*.gz <dest>` that cannot touch the file the app is appending to. **`archived/` does not exist until the first roll** — a fresh deployment has no archive directory for up to a day, which is normal.
+
+| File | Keep | Cap | | File | Keep | Cap |
+|---|---|---|---|---|---|---|
+| `debug.log` | 14d | 500MB | | `audit.log` | 365d | 1GB |
+| `info.log` | 30d | 500MB | | `scheduler.log` | 30d | 200MB |
+| `error.log` | 90d | 500MB | | `llm.log` | 30d | 200MB |
+
+Logback **deletes archives past the window without asking**, and there is no off-host destination configured — so today those windows *are* the history limit. Anything that must outlive one has to be moved off the VM first (`rsync --remove-source-files` over the existing SSH access, or a bucket if one gets provisioned). Use `mv`, not `cp`: copies still count against `totalSizeCap`, so Logback deletes them anyway and the next backup re-uploads whatever survived.
+
+**The host `logs/` directory must be writable by UID 1001.** A bind mount keeps the host directory's ownership and overrides the image's `chown`, and the container runs as non-root `appuser`. Left root-owned, Logback cannot open its files and **the app starts with file logging silently dead** — it comes up healthy, which is what makes this easy to miss. Before the first `up`: `mkdir -p logs && sudo chown -R 1001:1001 logs`.
 
 ## Deployment
 
@@ -247,6 +267,7 @@ The full runbook (VM creation, firewall's two layers, secrets, day-2 ops, backup
 - **Money never touches a float.** Minor-unit `long` end to end — request DTO, entity, aggregate, response. A `double` or `BigDecimal` amount in a diff is a defect.
 - **Scope every query by the authenticated user.** A finder without `user_id` in a request path is an authorization bug even when the UI would never send another user's id.
 - **Every new endpoint gets `@RolesAllowed`** (or is a deliberate, reviewed addition to `PUBLIC_PATHS`). URL rules are permissive by design; the annotation is the control.
+- **A feature ships with its logs.** A new service, endpoint, scheduled job, or external call is not done until you can tell from the log files what it did and why it failed — you will be reading them at 2am with no debugger. Concretely: **every state change gets a line** (create/update/delete, money moved, status transitioned) at `INFO` with the ids and the minor-unit amounts involved; **every failure path** gets `WARN` (expected/recoverable — a validation refusal, a provider timeout) or `ERROR` (unexpected — the thing that should never happen); **every external call** (SMTP, OAuth provider, LLM) logs its outcome and duration, since a slow dependency and a broken one look identical from the outside. Reads need nothing — [MdcContextFilter](svcs/core/src/main/java/com/zenzmoney/core/web/filter/MdcContextFilter.java) already records method, path, status, and duration for every request. Security-relevant events go to the `audit` channel in [AppLog](svcs/core/src/main/java/com/zenzmoney/core/logging/AppLog.java); pick the level by *who is at fault* (a client mistake is `DEBUG`, an abuse signal is `WARN`), and use parameterised `{}` messages, never string concatenation. **Log the shape, not the content**: ids, counts, amounts, enum values, durations — never a password, token, OTP, or bcrypt hash, and not free-form user text (a transaction note or chat message is the user's private financial detail, so log its length instead). A diff that adds a service with no logging is incomplete in review; see *Checking Logs* for where the lines land.
 - **Rate-limit every user-triggered action that sends email or costs money/compute** — OTP issuance, invites, password reset, and later the AI/OCR paths. Use [RedisRateLimitService](svcs/core/src/main/java/com/zenzmoney/core/service/ratelimit/RedisRateLimitService.java) with `tryConsumeOrDeny` (fail **closed**) for abuse-sensitive paths and `tryConsume` (fail **open**) only where availability genuinely beats throttling. Never lean on a provider's cap as the guardrail.
 - **Bind identity server-side across every step of a multi-step flow.** The OTP is issued and verified per `(email, purpose)`, and the reset resolves the user from that same email — so a client can't validate one account's code and reset another's. Preserve that property in any change to registration, verification, or reset.
 - **Flyway is the only schema authority** (see the `ddl-auto` gotcha above).
@@ -291,8 +312,10 @@ Default branch is **`main`** (`origin` = `vithursi31/ZenZMoneyManager`). History
 
 ## Release Process
 
-There is no release tooling yet and **no tags in this repo**. The pom stays at `0.0.1-SNAPSHOT` — do not bump it, and do not suggest `mvn release:prepare`/`release:perform`.
+**The full process — gates, tagging, build, deploy, verify, rollback — is [docs/production-release.md](docs/production-release.md).** Read it before releasing; the summary below is orientation only.
 
-When a release process is needed, the intended shape is **date-based git tags** — `YYYY-MM-DD-rN`, e.g. `2026-07-27-r1`, same-day hotfix `-r2` — because they sort naturally and read as dates rather than pretending to be semantic versions.
+There is no release tooling and **no tags in this repo yet**. The pom stays at `0.0.1-SNAPSHOT` — do not bump it, and do not suggest `mvn release:prepare`/`release:perform`. Releases are identified by **date-based git tags** — `YYYY-MM-DD-rN`, e.g. `2026-07-29-r1`, same-day hotfix `-r2` — because they sort naturally and read as dates rather than pretending to be semantic versions.
 
-Pre-release verification is the local test suite: the `prd` build skips tests, so `mvn test -pl svcs/core -am` on `loc` is what actually gates a release. Then build (`mvn clean install -P prd -Dmaven.test.skip=true`) and deploy per [DEPLOYMENT.md](DEPLOYMENT.md) — **only when explicitly asked**.
+Pre-release verification is the local test suite: the `prd` build skips tests, so `mvn test -pl svcs/core -am` on `loc` is what actually gates a release — and there is no staging environment, so that gate is the entire safety net. Then build (`mvn clean install -P prd -Dmaven.test.skip=true`) and deploy per [DEPLOYMENT.md](DEPLOYMENT.md) — **only when explicitly asked**.
+
+Two properties of this setup decide most release questions: **Flyway is forward-only** (no undo scripts), so a release carrying a migration cannot be cleanly rolled back — you roll forward with a corrective `V<n+1>`, or restore a `pg_dump` and lose the delta. And the image is always `zenzmoney-core:latest`, so rolling back means a rebuild unless the previous image was tagged first.

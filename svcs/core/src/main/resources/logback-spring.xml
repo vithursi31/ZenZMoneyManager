@@ -1,58 +1,203 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Logging layout follows the same rules as the mindmapai services:
+
+  - Rotated files are gzipped into a separate ${LOG_DIR}/archived/ directory, so the
+    live *.log files and the compressed history never share a directory. Off-host
+    backup is then a single `mv archived/*.gz <destination>` with no risk of touching
+    the file the app is currently writing. Retention and archiving: CLAUDE.md, Checking Logs.
+  - Rolls on BOTH a daily boundary and a 10MB size cap (%i is the intra-day index).
+  - Every pattern carries the MDC correlation id and user (%X{cid} / %X{user}) so one
+    request can be followed across files; MdcContextFilter populates them.
+  - debug.log is a genuine SUPERSET: the com.zenzmoney logger runs at DEBUG and the
+    appender carries no threshold filter, so INFO/WARN/ERROR land there too. info.log
+    and error.log hold only their narrower level slices.
+  - Specialised concerns route to their own file via a named logger (see AppLog):
+    audit.log, scheduler.log, llm.log.
+
+  Two deliberate departures from mindmapai:
+  - Retention is bounded (maxHistory + totalSizeCap). mindmapai's size-rolled files set
+    no maxHistory, so they grow until someone runs the manual off-host backup; the
+    production host here is a small always-on VM where that fills the disk. Archive
+    off-host before the window closes if history must be kept beyond it.
+  - SizeAndTimeBasedRollingPolicy replaces mindmapai's TimeBasedRollingPolicy +
+    SizeAndTimeBasedFNATP pairing, which is deprecated in the Logback 1.5 that
+    Spring Boot 3.4 ships. Same rolling behaviour, current API.
+
+  The file appenders are declared INSIDE the profile block on purpose: Logback starts an
+  appender when it parses the element, so a top-level RollingFileAppender would create
+  its log file even under the test profile that never references it.
+-->
 <configuration>
     <property name="LOG_DIR" value="${DEPLOYMENT_DIRECTORY:-.}/logs"/>
-    <property name="LOG_PATTERN" value="%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"/>
+    <property name="ARCHIVE_DIR" value="${LOG_DIR}/archived"/>
+    <property name="LOG_PATTERN"
+              value="%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %X{cid} - %X{user} - %msg%n"/>
 
-    <!-- Console appender (local dev) -->
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
             <pattern>${LOG_PATTERN}</pattern>
         </encoder>
     </appender>
 
-    <!-- Debug file (all levels) -->
-    <appender name="DEBUG_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
-        <file>${LOG_DIR}/debug.log</file>
-        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
-            <fileNamePattern>${LOG_DIR}/debug.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
-            <maxFileSize>50MB</maxFileSize>
-            <maxHistory>14</maxHistory>
-            <totalSizeCap>500MB</totalSizeCap>
-        </rollingPolicy>
-        <encoder>
-            <pattern>${LOG_PATTERN}</pattern>
-        </encoder>
-    </appender>
+    <springProfile name="loc | dev | prd">
+        <!-- Superset file: every level the application logger emits, no threshold filter. -->
+        <appender name="DEBUG_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+            <file>${LOG_DIR}/debug.log</file>
+            <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+                <fileNamePattern>${ARCHIVE_DIR}/debug.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+                <maxFileSize>10MB</maxFileSize>
+                <maxHistory>14</maxHistory>
+                <totalSizeCap>500MB</totalSizeCap>
+            </rollingPolicy>
+            <encoder>
+                <pattern>${LOG_PATTERN}</pattern>
+            </encoder>
+        </appender>
 
-    <!-- Error file -->
-    <appender name="ERROR_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
-        <file>${LOG_DIR}/error.log</file>
-        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
-            <level>ERROR</level>
-        </filter>
-        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
-            <fileNamePattern>${LOG_DIR}/error.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
-            <maxFileSize>50MB</maxFileSize>
-            <maxHistory>30</maxHistory>
-            <totalSizeCap>500MB</totalSizeCap>
-        </rollingPolicy>
-        <encoder>
-            <pattern>${LOG_PATTERN}</pattern>
-        </encoder>
-    </appender>
+        <appender name="INFO_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+            <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+                <level>INFO</level>
+            </filter>
+            <file>${LOG_DIR}/info.log</file>
+            <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+                <fileNamePattern>${ARCHIVE_DIR}/info.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+                <maxFileSize>10MB</maxFileSize>
+                <maxHistory>30</maxHistory>
+                <totalSizeCap>500MB</totalSizeCap>
+            </rollingPolicy>
+            <encoder>
+                <pattern>${LOG_PATTERN}</pattern>
+            </encoder>
+        </appender>
 
-    <!-- Local profile: console only -->
-    <springProfile name="loc">
-        <root level="INFO">
+        <appender name="ERROR_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+            <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+                <level>ERROR</level>
+            </filter>
+            <file>${LOG_DIR}/error.log</file>
+            <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+                <fileNamePattern>${ARCHIVE_DIR}/error.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+                <maxFileSize>10MB</maxFileSize>
+                <maxHistory>90</maxHistory>
+                <totalSizeCap>500MB</totalSizeCap>
+            </rollingPolicy>
+            <encoder>
+                <pattern>${LOG_PATTERN}</pattern>
+            </encoder>
+        </appender>
+
+        <!-- Security-relevant events (registration, login, OTP, password reset).
+             Longest retention: this is the file you read after an incident. -->
+        <appender name="AUDIT_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+            <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+                <level>INFO</level>
+            </filter>
+            <file>${LOG_DIR}/audit.log</file>
+            <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+                <fileNamePattern>${ARCHIVE_DIR}/audit.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+                <maxFileSize>10MB</maxFileSize>
+                <maxHistory>365</maxHistory>
+                <totalSizeCap>1GB</totalSizeCap>
+            </rollingPolicy>
+            <encoder>
+                <pattern>${LOG_PATTERN}</pattern>
+            </encoder>
+        </appender>
+
+        <appender name="SCHEDULER_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+            <file>${LOG_DIR}/scheduler.log</file>
+            <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+                <fileNamePattern>${ARCHIVE_DIR}/scheduler.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+                <maxFileSize>10MB</maxFileSize>
+                <maxHistory>30</maxHistory>
+                <totalSizeCap>200MB</totalSizeCap>
+            </rollingPolicy>
+            <encoder>
+                <pattern>${LOG_PATTERN}</pattern>
+            </encoder>
+        </appender>
+
+        <!-- LLM/extraction calls (F-1.9a). Its own file because this path costs compute
+             and is the one to inspect when chat transaction entry misbehaves. -->
+        <appender name="LLM_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+            <file>${LOG_DIR}/llm.log</file>
+            <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+                <fileNamePattern>${ARCHIVE_DIR}/llm.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+                <maxFileSize>10MB</maxFileSize>
+                <maxHistory>30</maxHistory>
+                <totalSizeCap>200MB</totalSizeCap>
+            </rollingPolicy>
+            <encoder>
+                <pattern>${LOG_PATTERN}</pattern>
+            </encoder>
+        </appender>
+
+        <!-- additivity=false: application lines go to the level-sliced files and the
+             console exactly once, never duplicated through root. -->
+        <logger name="com.zenzmoney" level="DEBUG" additivity="false">
             <appender-ref ref="CONSOLE"/>
-        </root>
+            <appender-ref ref="DEBUG_FILE"/>
+            <appender-ref ref="INFO_FILE"/>
+            <appender-ref ref="ERROR_FILE"/>
+        </logger>
+
+        <logger name="audit" level="INFO" additivity="false">
+            <appender-ref ref="AUDIT_FILE"/>
+        </logger>
+
+        <logger name="scheduler" level="DEBUG" additivity="false">
+            <appender-ref ref="SCHEDULER_FILE"/>
+            <appender-ref ref="ERROR_FILE"/>
+        </logger>
+
+        <logger name="llm" level="DEBUG" additivity="false">
+            <appender-ref ref="LLM_FILE"/>
+            <appender-ref ref="ERROR_FILE"/>
+        </logger>
+
+        <!-- Local: console plus files, so the same `grep debug.log` workflow that the
+             mindmapai services rely on also works here. ${DEPLOYMENT_DIRECTORY:-.}
+             resolves to ./logs in the working directory. -->
+        <springProfile name="loc">
+            <root level="INFO">
+                <appender-ref ref="CONSOLE"/>
+                <appender-ref ref="DEBUG_FILE"/>
+                <appender-ref ref="ERROR_FILE"/>
+            </root>
+        </springProfile>
+
+        <!-- Dev/Prd: the files are the record of truth. Console stays attached so
+             `docker compose -f docker-compose.prod.yml logs -f app` is not empty.
+             Root at ERROR keeps third-party noise out of the files; application lines
+             come from the com.zenzmoney logger above, which is at DEBUG. -->
+        <springProfile name="dev | prd">
+            <root level="ERROR">
+                <appender-ref ref="CONSOLE"/>
+                <appender-ref ref="DEBUG_FILE"/>
+                <appender-ref ref="ERROR_FILE"/>
+            </root>
+        </springProfile>
     </springProfile>
 
-    <!-- Dev/Prd profiles: file appenders -->
-    <springProfile name="dev | prd">
-        <root level="INFO">
-            <appender-ref ref="DEBUG_FILE"/>
-            <appender-ref ref="ERROR_FILE"/>
+    <!-- Tests: console only, no files. Before this block the test profile matched no
+         springProfile at all, so root ended up with zero appenders and every log line
+         from a @SpringBootTest was silently dropped. -->
+    <springProfile name="test">
+        <logger name="com.zenzmoney" level="DEBUG" additivity="false">
+            <appender-ref ref="CONSOLE"/>
+        </logger>
+        <logger name="audit" level="INFO" additivity="false">
+            <appender-ref ref="CONSOLE"/>
+        </logger>
+        <logger name="scheduler" level="DEBUG" additivity="false">
+            <appender-ref ref="CONSOLE"/>
+        </logger>
+        <logger name="llm" level="DEBUG" additivity="false">
+            <appender-ref ref="CONSOLE"/>
+        </logger>
+        <root level="WARN">
+            <appender-ref ref="CONSOLE"/>
         </root>
     </springProfile>
 </configuration>

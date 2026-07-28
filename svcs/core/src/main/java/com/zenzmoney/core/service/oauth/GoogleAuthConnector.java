@@ -6,6 +6,8 @@ import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.MediaType;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
@@ -18,6 +20,16 @@ import java.util.Set;
 
 @Service
 public class GoogleAuthConnector {
+
+    /**
+     * Provider calls are logged here, at the one public entry point, rather than around each
+     * outbound request: a failure surfaces as UnauthorizedException and is translated once in
+     * GlobalExceptionHandler, but that line cannot say WHICH provider call broke or how slow it was.
+     * A provider outage and a misconfigured client id look identical to the caller; they do not look
+     * identical here. Never log the token or auth code being verified — it is a live credential.
+     */
+    private static final Logger log = LoggerFactory.getLogger(GoogleAuthConnector.class);
+
 
     private static final String TOKEN_URL     = "https://oauth2.googleapis.com/token";
     private static final String TOKENINFO_URL = "https://oauth2.googleapis.com/tokeninfo";
@@ -47,6 +59,20 @@ public class GoogleAuthConnector {
         if (req.getType() == null) {
             throw new UnauthorizedException("VALIDATION_FAILED", "Missing Google auth type");
         }
+        long startedAt = System.currentTimeMillis();
+        try {
+            GoogleAuthResp resp = dispatch(req);
+            log.debug("Google {} verification succeeded in {}ms",
+                    req.getType(), System.currentTimeMillis() - startedAt);
+            return resp;
+        } catch (RuntimeException e) {
+            log.warn("Google {} verification failed in {}ms: {}",
+                    req.getType(), System.currentTimeMillis() - startedAt, e.getMessage());
+            throw e;
+        }
+    }
+
+    private GoogleAuthResp dispatch(GoogleAuthRequest req) {
         switch (req.getType()) {
             case IdToken:     return validateIdToken(req.getValue());
             case AccessToken: return validateAccessToken(req.getValue());

@@ -14,11 +14,29 @@ public class SmtpEmailSender implements EmailSender {
 
     private final JavaMailSender mailSender;
     private final String fromEmail;
+    private final boolean logCodeOnSendFailure;
 
     public SmtpEmailSender(JavaMailSender mailSender,
-                           @Value("${zenzmoney.app.from-email:no-reply@zenzmoney.local}") String fromEmail) {
+                           @Value("${zenzmoney.app.from-email:no-reply@zenzmoney.local}") String fromEmail,
+                           @Value("${zenzmoney.app.log-code-on-send-failure:false}") boolean logCodeOnSendFailure) {
         this.mailSender = mailSender;
         this.fromEmail = fromEmail;
+        this.logCodeOnSendFailure = logCodeOnSendFailure;
+    }
+
+    /**
+     * Writes the live OTP to the log so local development can complete a flow without working SMTP.
+     *
+     * <p>Off unless {@code zenzmoney.app.log-code-on-send-failure} is true, which only
+     * {@code application-loc.properties} sets. It used to run unconditionally: with SMTP
+     * misconfigured in prd — the exact case that reaches this branch — every verification and reset
+     * code was written into {@code debug.log}, where it sits for the whole retention window and is a
+     * working credential for any account. A code in a log file is a code an attacker can read.
+     */
+    private void logCodeForLocalDev(String label, String to, String code) {
+        if (logCodeOnSendFailure) {
+            log.info("[DEV FALLBACK] {} for {}: {}", label, to, code);
+        }
     }
 
     @Override
@@ -37,7 +55,7 @@ public class SmtpEmailSender implements EmailSender {
             log.info("Sent verification code to {}", to);
         } catch (Exception e) {
             log.error("Failed to send verification code to {}: {}", to, e.getMessage());
-            log.info("[DEV FALLBACK] Verification code for {}: {}", to, code);
+            logCodeForLocalDev("Verification code", to, code);
         }
     }
 
@@ -57,7 +75,7 @@ public class SmtpEmailSender implements EmailSender {
             log.info("Sent password-reset code to {}", to);
         } catch (Exception e) {
             log.error("Failed to send password-reset code to {}: {}", to, e.getMessage());
-            log.info("[DEV FALLBACK] Password-reset code for {}: {}", to, code);
+            logCodeForLocalDev("Password-reset code", to, code);
         }
     }
 }

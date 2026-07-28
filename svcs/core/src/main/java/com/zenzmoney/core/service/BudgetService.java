@@ -15,6 +15,8 @@ import com.zenzmoney.core.repository.TransactionRepository;
 import com.zenzmoney.core.web.dto.BudgetResponse;
 import com.zenzmoney.core.web.dto.CreateBudgetRequest;
 import com.zenzmoney.core.web.dto.UpdateBudgetRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,6 +34,9 @@ import java.util.Objects;
  */
 @Service
 public class BudgetService {
+
+    /** Mutations only. Reads are already covered by the per-request line MdcContextFilter writes. */
+    private static final Logger log = LoggerFactory.getLogger(BudgetService.class);
 
     private final BudgetRepository budgetRepository;
     private final CategoryRepository categoryRepository;
@@ -73,7 +78,12 @@ public class BudgetService {
                 ? req.getStartDate() : TimeUtils.now());
         budget.setRollover(req.isRollover());
         budget.setStatus(AccountStatus.ACTIVE);
-        return toResponse(budgetRepository.save(budget));
+        Budget saved = budgetRepository.save(budget);
+        log.info("Budget created: limit={} {} period={} category={} rollover={} (budget {}, user {})",
+                saved.getAmountLimit(), saved.getCurrency(), saved.getPeriod(),
+                saved.getCategoryId() == null ? "all" : saved.getCategoryId(),
+                saved.isRollover(), saved.getId(), userId);
+        return toResponse(saved);
     }
 
     @Transactional(readOnly = true)
@@ -105,6 +115,8 @@ public class BudgetService {
         if (req.getRollover() != null) {
             budget.setRollover(req.getRollover());
         }
+        log.info("Budget updated: limit={} {} (budget {}, user {})",
+                budget.getAmountLimit(), budget.getCurrency(), id, budget.getUserId());
         return toResponse(budgetRepository.save(budget));
     }
 
@@ -112,6 +124,7 @@ public class BudgetService {
     public BudgetResponse archive(String id) {
         Budget budget = requireOwned(id, currentUser.requireUserId());
         budget.setStatus(AccountStatus.ARCHIVED);
+        log.info("Budget archived: (budget {}, user {})", id, budget.getUserId());
         return toResponse(budgetRepository.save(budget));
     }
 
@@ -120,6 +133,10 @@ public class BudgetService {
     public void delete(String id) {
         Budget budget = requireOwned(id, currentUser.requireUserId());
         budgetRepository.delete(budget);
+        // Hard delete — this line is the only surviving record of the budget.
+        log.info("Budget deleted: limit={} {} period={} (budget {}, user {})",
+                budget.getAmountLimit(), budget.getCurrency(), budget.getPeriod(),
+                id, budget.getUserId());
     }
 
     // --- internals ---

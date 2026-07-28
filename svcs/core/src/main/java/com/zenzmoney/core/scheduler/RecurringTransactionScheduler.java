@@ -1,8 +1,8 @@
 package com.zenzmoney.core.scheduler;
 
+import com.zenzmoney.core.logging.AppLog;
 import com.zenzmoney.core.service.RecurringTransactionService;
 import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -22,7 +22,8 @@ import java.util.List;
 @Component
 public class RecurringTransactionScheduler {
 
-    private static final Logger log = LoggerFactory.getLogger(RecurringTransactionScheduler.class);
+    /** Routed to scheduler.log — a background pass is read on its own, not amid request traffic. */
+    private static final Logger log = AppLog.SCHEDULER;
 
     private final RecurringTransactionService recurringService;
 

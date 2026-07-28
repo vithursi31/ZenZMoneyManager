@@ -2,6 +2,7 @@ package com.zenzmoney.core.service;
 
 import com.zenzmoney.common.domain.Role;
 import com.zenzmoney.core.entity.User;
+import com.zenzmoney.core.logging.AppLog;
 import com.zenzmoney.core.repository.UserRepository;
 import com.zenzmoney.core.service.oauth.AppleAuthConnector;
 import com.zenzmoney.core.service.oauth.AppleAuthResp;
@@ -13,6 +14,7 @@ import com.zenzmoney.core.web.dto.AppleAuthRequest;
 import com.zenzmoney.core.web.dto.AuthenticationResponse;
 import com.zenzmoney.core.web.dto.FacebookAuthRequest;
 import com.zenzmoney.core.web.dto.GoogleAuthRequest;
+import org.slf4j.Logger;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,6 +26,9 @@ import java.util.Set;
 
 @Service
 public class OAuthLoginService {
+
+    /** Provider sign-ins, audited at the one seam all three providers pass through. */
+    private static final Logger audit = AppLog.AUDIT;
 
     private final GoogleAuthConnector googleConnector;
     private final AppleAuthConnector appleConnector;
@@ -88,6 +93,8 @@ public class OAuthLoginService {
             if (u.getLastName()  == null && lastName  != null) u.setLastName(lastName);
             u.setLoginAttempts(0);
             u.setLastLoginTime(System.currentTimeMillis());
+            audit.info("OAuth login succeeded for {} via {} (user {}, existing account)",
+                    email, authMode, u.getId());
             return userRepository.save(u);
         }
 
@@ -106,6 +113,9 @@ public class OAuthLoginService {
         u.setLastName(lastName);
         u.setRoles(Set.of(Role.USER));
         u.setLastLoginTime(System.currentTimeMillis());
-        return userRepository.save(u);
+        User saved = userRepository.save(u);
+        audit.info("Account registered for {} via {} (user {}, roles={}) — email pre-verified by provider",
+                email, authMode, saved.getId(), saved.getRoles());
+        return saved;
     }
 }

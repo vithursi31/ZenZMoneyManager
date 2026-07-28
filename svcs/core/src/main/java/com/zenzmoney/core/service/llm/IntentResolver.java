@@ -99,6 +99,21 @@ public class IntentResolver {
             Map.entry("dividend", List.of("dividend", "investment", "income"))
     );
 
+    /**
+     * Words that say which way the money went, in the user's own message. Measured
+     * against qwen2.5:1.5b, {@code txnType} is the field the model is least stable
+     * on — it answered EXPENSE and INCOME for the same "paid 250 for uber
+     * yesterday" on consecutive runs. A verb the user actually typed is a stronger
+     * signal than that field, so it wins (see {@link #resolveType}).
+     */
+    private static final List<String> EXPENSE_WORDS = List.of(
+            "spent", "spend", "paid", "pay", "bought", "buy", "purchased", "purchase",
+            "cost", "withdrew", "withdraw", "donated");
+
+    private static final List<String> INCOME_WORDS = List.of(
+            "earned", "earn", "received", "receive", "credited", "deposited", "refunded",
+            "refund", "salary", "bonus", "dividend", "income");
+
     private final CategoryRepository categoryRepository;
     private final AccountRepository accountRepository;
 
@@ -152,14 +167,25 @@ public class IntentResolver {
 
         draft.setTxnDate(resolveDate(extraction.getDateExpr(), zoneOf(user), TimeUtils.now()));
 
-        TransactionType type = extraction.getTxnType();
+        List<Category> categories = categoryRepository.findByUserId(user.getId());
+        TransactionType type = resolveType(extraction.getTxnType(), message);
+
+        // A guess whose kind contradicts the direction means one of the two is wrong,
+        // and the draft cannot say which. Ask about the direction rather than silently
+        // discarding a plausible category and asking the less useful "which category?".
+        if (type != null && type != TransactionType.TRANSFER
+                && contradictsGuessKind(categories, type, draft.getCategoryGuess())) {
+            type = null;
+        }
+        draft.setTxnType(type);
+
         if (type == null) {
             draft.getMissingFields().add("type");
         } else if (type == TransactionType.TRANSFER) {
             // Out of scope for chat (§2): a transfer needs two accounts resolved.
             draft.getMissingFields().add("transfer");
         } else {
-            String categoryId = resolveCategory(user.getId(), type, draft.getCategoryGuess(), message);
+            String categoryId = resolveCategory(categories, type, draft.getCategoryGuess(), message);
             if (categoryId == null) {
                 draft.getMissingFields().add("category");
             } else {
@@ -167,6 +193,54 @@ public class IntentResolver {
             }
         }
         return draft;
+    }
+
+    // --- direction ---
+
+    /**
+     * Decides income-vs-expense, preferring a direction word the user typed over the
+     * model's {@code txnType}. A message carrying words from <em>both</em> directions
+     * ("paid salary 3000") is genuinely ambiguous, so the model's answer stands — an
+     * override is only worth having where the user's own wording is unambiguous.
+     *
+     * <p>Also fills the direction the model left null, which turns a clarifying
+     * question the user can already see the answer to into no question at all.
+     */
+    static TransactionType resolveType(TransactionType modelType, String message) {
+        if (modelType == TransactionType.TRANSFER) {
+            // "paid 500 into my savings" carries an expense verb but is not an expense.
+            // A direction word cannot express "between the user's own accounts", so
+            // overriding TRANSFER would lose information rather than correct it.
+            return TransactionType.TRANSFER;
+        }
+        String text = normalize(message);
+        boolean out = EXPENSE_WORDS.stream().anyMatch(word -> containsWord(text, word));
+        boolean in = INCOME_WORDS.stream().anyMatch(word -> containsWord(text, word));
+
+        if (out == in) {
+            // Neither direction named, or both: nothing better than what the model said.
+            return modelType;
+        }
+        return out ? TransactionType.EXPENSE : TransactionType.INCOME;
+    }
+
+    /**
+     * True when the model's category label names one of the user's categories whose
+     * kind is the opposite of {@code type} — e.g. txnType INCOME with a guess of
+     * "Transport". A label matching nothing the user owns is not a contradiction,
+     * just an unusable guess.
+     */
+    private static boolean contradictsGuessKind(List<Category> categories, TransactionType type, String guess) {
+        String label = normalize(guess);
+        if (label.isEmpty()) {
+            return false;
+        }
+        CategoryKind wanted = kindFor(type);
+        return categories.stream()
+                .filter(c -> normalize(c.getName()).equals(label))
+                .findFirst()
+                .map(c -> c.getKind() != wanted)
+                .orElse(false);
     }
 
     // --- amount ---
@@ -310,8 +384,13 @@ public class IntentResolver {
      * category name appears verbatim in the message, that beats the model's guess.
      */
     String resolveCategory(String userId, TransactionType type, String guess, String message) {
-        CategoryKind kind = type == TransactionType.INCOME ? CategoryKind.INCOME : CategoryKind.EXPENSE;
-        List<Category> candidates = categoryRepository.findByUserId(userId).stream()
+        return resolveCategory(categoryRepository.findByUserId(userId), type, guess, message);
+    }
+
+    /** The same resolution against categories already loaded, so one draft is one query. */
+    static String resolveCategory(List<Category> categories, TransactionType type, String guess, String message) {
+        CategoryKind kind = kindFor(type);
+        List<Category> candidates = categories.stream()
                 .filter(c -> c.getKind() == kind)
                 .toList();
         if (candidates.isEmpty()) {
@@ -361,6 +440,10 @@ public class IntentResolver {
             }
         }
         return null;
+    }
+
+    private static CategoryKind kindFor(TransactionType type) {
+        return type == TransactionType.INCOME ? CategoryKind.INCOME : CategoryKind.EXPENSE;
     }
 
     private static List<String> synonymFragments(String label, String text) {
