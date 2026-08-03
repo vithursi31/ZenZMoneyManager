@@ -253,6 +253,141 @@ class IntentResolverTest {
         assertNull(IntentResolver.resolveType(null, "paycheck arrived"), "'pay' must not match inside 'paycheck'");
     }
 
+    // --- direction in French and Spanish ---
+
+    /**
+     * The guard has to work in the language the user typed. qwen2.5 flipped
+     * "pagué 250 por uber ayer" to INCOME the same way it flipped the English
+     * sentence, so an English-only word list would leave those users unprotected.
+     */
+    @Test
+    void type_readsFrenchDirectionWords() {
+        assertEquals(TransactionType.EXPENSE,
+                IntentResolver.resolveType(TransactionType.INCOME, "j'ai payé 250 pour uber hier"));
+        assertEquals(TransactionType.EXPENSE,
+                IntentResolver.resolveType(null, "j'ai dépensé 15 pour le déjeuner"));
+        assertEquals(TransactionType.INCOME,
+                IntentResolver.resolveType(TransactionType.EXPENSE, "j'ai reçu mon salaire de 3000"));
+    }
+
+    @Test
+    void type_readsSpanishDirectionWords() {
+        assertEquals(TransactionType.EXPENSE,
+                IntentResolver.resolveType(TransactionType.INCOME, "pagué 250 por uber ayer"));
+        assertEquals(TransactionType.EXPENSE,
+                IntentResolver.resolveType(null, "compré medicina por 800 en la farmacia"));
+        assertEquals(TransactionType.INCOME,
+                IntentResolver.resolveType(TransactionType.EXPENSE, "recibí mi sueldo de 3000"));
+    }
+
+    /** Users type accents inconsistently, and normalization does not strip them. */
+    @Test
+    void type_readsDirectionWordsWithAndWithoutAccents() {
+        assertEquals(TransactionType.EXPENSE, IntentResolver.resolveType(null, "gaste 500 en el almuerzo"));
+        assertEquals(TransactionType.EXPENSE, IntentResolver.resolveType(null, "j'ai depense 500"));
+        assertEquals(TransactionType.INCOME, IntentResolver.resolveType(null, "recibi 3000"));
+    }
+
+    /** Same ambiguity rule across languages: two directions named means don't guess. */
+    @Test
+    void type_keepsTheModelsAnswerWhenAFrenchMessageNamesBothDirections() {
+        assertEquals(TransactionType.INCOME,
+                IntentResolver.resolveType(TransactionType.INCOME, "j'ai payé avec mon salaire"));
+    }
+
+    // --- non-English messages through the whole draft ---
+
+    /**
+     * The prompt makes the model normalize its output to English — a category name
+     * copied from the closed list and a date <em>phrase</em> in English ("hier" comes
+     * back as "yesterday"). That contract is what lets the resolver's English-only
+     * date and synonym tables serve a French message; this pins it, because a prompt
+     * change that let the model answer in the user's language would break resolution
+     * silently.
+     */
+    @Test
+    void resolve_buildsACompleteDraftFromAFrenchMessage() {
+        User user = user("u1", "EUR", "UTC");
+        when(accountRepository.findByUserId("u1")).thenReturn(List.of(account("a1", "Cash", "EUR", 0)));
+        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+                category("c-transport", "Transport", CategoryKind.EXPENSE)));
+
+        ParsedIntent draft = resolver.resolve(user, "j'ai payé 250 pour uber hier",
+                extraction(IntentType.CREATE_TRANSACTION, TransactionType.INCOME,
+                        "250", "Transport", "yesterday", "Uber", null, 1.0));
+
+        assertTrue(draft.isComplete(), () -> "unexpected missing: " + draft.getMissingFields());
+        assertEquals(TransactionType.EXPENSE, draft.getTxnType(), "'payé' outranks the model's INCOME");
+        assertEquals(25000L, draft.getAmountMinor());
+        assertEquals("c-transport", draft.getCategoryId());
+    }
+
+    @Test
+    void resolve_buildsACompleteDraftFromASpanishMessage() {
+        User user = user("u1", "EUR", "UTC");
+        when(accountRepository.findByUserId("u1")).thenReturn(List.of(account("a1", "Cash", "EUR", 0)));
+        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+                category("c-health", "Health", CategoryKind.EXPENSE)));
+
+        ParsedIntent draft = resolver.resolve(user, "compré medicina por 800 en la farmacia",
+                extraction(IntentType.CREATE_TRANSACTION, null,
+                        "800", "Health", "today", "Farmacia", null, 0.9));
+
+        assertTrue(draft.isComplete(), () -> "unexpected missing: " + draft.getMissingFields());
+        assertEquals(TransactionType.EXPENSE, draft.getTxnType(), "'compré' fills the null the model left");
+        assertEquals(80000L, draft.getAmountMinor());
+        assertEquals("Farmacia", draft.getPayeeName());
+    }
+
+    /**
+     * Known limitation, pinned deliberately: the "a word the user typed beats the
+     * model's label" shortcut only fires when the message contains the category name,
+     * which an unlocalized category list never will in French. Resolution falls back
+     * to the model's guess — fine here, but it means a bad guess has no second
+     * opinion for non-English messages.
+     */
+    @Test
+    void category_cannotUseTheUsersOwnWordsWhenTheyAreNotInTheCategoryLanguage() {
+        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+                category("c-food", "Food & Drinks", CategoryKind.EXPENSE),
+                category("c-groc", "Groceries", CategoryKind.EXPENSE)));
+
+        // "déjeuner" matches no category name and no synonym, so only the guess decides.
+        assertEquals("c-groc", resolver.resolveCategory("u1", TransactionType.EXPENSE,
+                "Groceries", "j'ai dépensé 15 pour le déjeuner"));
+        assertNull(resolver.resolveCategory("u1", TransactionType.EXPENSE,
+                null, "j'ai dépensé 15 pour le déjeuner"));
+    }
+
+    // --- number styles the user's locale produces ---
+
+    /**
+     * A European decimal comma is not a number this contract accepts, and that is the
+     * safe outcome: the amount goes missing and the user is asked, rather than 15,50
+     * being read as 1550 or 15. (The model normally converts it to "15.50" itself —
+     * this covers the run where it echoes the user's form instead.)
+     */
+    @Test
+    void amount_rejectsADecimalCommaRatherThanGuessingWhatItMeant() {
+        assertNull(IntentResolver.toMinorUnits("15,50", "EUR"));
+        assertNull(IntentResolver.toMinorUnits("1 500", "EUR"), "a space thousands separator is not a number");
+        assertNull(IntentResolver.toMinorUnits("1,500", "USD"), "a comma thousands separator is not a number");
+    }
+
+    /**
+     * The dangerous one, and the reason a digits-only amount is not enough on its own:
+     * "1.500" is 1500 in es-ES and 1.5 in en-US, and nothing downstream can tell. The
+     * model returned "1.5" for "gasté 1.500 en el supermercado" — a 1000x error that
+     * parses perfectly. Documented here because the fix belongs in extraction (prefer
+     * a number the user actually typed, and ask when it is ambiguous), not in this
+     * conversion.
+     */
+    @Test
+    void amount_cannotTellAThousandsDotFromADecimalDot() {
+        assertEquals(150L, IntentResolver.toMinorUnits("1.5", "EUR"));
+        assertEquals(150000L, IntentResolver.toMinorUnits("1500", "EUR"));
+    }
+
     // --- the whole draft ---
 
     @Test

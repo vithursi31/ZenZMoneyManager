@@ -105,14 +105,31 @@ public class IntentResolver {
      * on — it answered EXPENSE and INCOME for the same "paid 250 for uber
      * yesterday" on consecutive runs. A verb the user actually typed is a stronger
      * signal than that field, so it wins (see {@link #resolveType}).
+     *
+     * <p>Listed per language the app supports (F-1.24), because the guard is only
+     * worth having in the language the user actually typed: qwen2.5 flipped
+     * "pagué 250 por uber ayer" to INCOME exactly as it flipped the English one, and
+     * an English-only list leaves those users unprotected. Accented and unaccented
+     * spellings are both listed — {@link #normalize} lowercases but does not strip
+     * accents, and users type both.
      */
     private static final List<String> EXPENSE_WORDS = List.of(
+            // en
             "spent", "spend", "paid", "pay", "bought", "buy", "purchased", "purchase",
-            "cost", "withdrew", "withdraw", "donated");
+            "cost", "withdrew", "withdraw", "donated",
+            // fr
+            "dépensé", "depense", "dépense", "payé", "paye", "acheté", "achete", "retiré", "retire",
+            // es
+            "gasté", "gaste", "pagué", "pague", "compré", "compre", "gastado");
 
     private static final List<String> INCOME_WORDS = List.of(
+            // en
             "earned", "earn", "received", "receive", "credited", "deposited", "refunded",
-            "refund", "salary", "bonus", "dividend", "income");
+            "refund", "salary", "bonus", "dividend", "income",
+            // fr
+            "reçu", "recu", "gagné", "gagne", "salaire", "remboursé", "rembourse",
+            // es
+            "recibí", "recibi", "gané", "gane", "sueldo", "salario", "ingreso", "reembolso");
 
     private final CategoryRepository categoryRepository;
     private final AccountRepository accountRepository;
