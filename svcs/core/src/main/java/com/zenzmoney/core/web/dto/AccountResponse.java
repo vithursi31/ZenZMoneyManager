@@ -1,35 +1,23 @@
 package com.zenzmoney.core.web.dto;
 
-import com.zenzmoney.common.domain.AccountStatus;
-import com.zenzmoney.common.domain.AccountType;
 import com.zenzmoney.core.entity.Account;
 import lombok.Getter;
 
+/**
+ * The caller's single account (§1.4). Carries no balance — the figure the UI shows
+ * is the monthly position from {@code /api/v1/summary/monthly} (§1.10).
+ */
 @Getter
 public class AccountResponse {
 
     private final String id;
-    private final String name;
-    private final AccountType type;
     private final String currency;
-    private final long openingBalance;
-    private final long currentBalance;
-    private final String color;
-    private final String icon;
-    private final AccountStatus status;
-    private final int sortOrder;
+    private final Long createdTime;
 
     private AccountResponse(Account a) {
         this.id = a.getId();
-        this.name = a.getName();
-        this.type = a.getType();
         this.currency = a.getCurrency();
-        this.openingBalance = a.getOpeningBalance();
-        this.currentBalance = a.getCurrentBalance();
-        this.color = a.getColor();
-        this.icon = a.getIcon();
-        this.status = a.getStatus();
-        this.sortOrder = a.getSortOrder();
+        this.createdTime = a.getCreatedTime();
     }
 
     public static AccountResponse of(Account a) {

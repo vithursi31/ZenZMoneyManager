@@ -3,6 +3,7 @@ package com.zenzmoney.common.domain;
 import java.time.DayOfWeek;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 
@@ -54,5 +55,21 @@ public final class TimeUtils {
                 .atStartOfDay(ZoneOffset.UTC)
                 .toInstant()
                 .toEpochMilli();
+    }
+
+    /**
+     * First instant of {@code month} in {@code zone}, as epoch millis. The monthly
+     * position (§1.10) is a half-open window {@code [startOfMonth(m), startOfMonth(m+1))},
+     * so this is the only boundary function it needs — pass the next month for the
+     * upper bound and a transaction on the stroke of midnight lands in exactly one
+     * month rather than both or neither.
+     */
+    public static long startOfMonth(YearMonth month, ZoneId zone) {
+        return month.atDay(1).atStartOfDay(zone).toInstant().toEpochMilli();
+    }
+
+    /** The calendar month {@code millis} falls in, as seen from {@code zone}. */
+    public static YearMonth monthOf(long millis, ZoneId zone) {
+        return YearMonth.from(Instant.ofEpochMilli(millis).atZone(zone));
     }
 }

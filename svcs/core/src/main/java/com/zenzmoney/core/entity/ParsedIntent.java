@@ -44,8 +44,6 @@ public class ParsedIntent {
     /** The model's raw category label, kept so a mismatch is diagnosable. */
     private String categoryGuess;
 
-    private String accountId;
-
     /** Epoch millis, resolved from the model's date phrase in the user's timezone. */
     private Long txnDate;
 

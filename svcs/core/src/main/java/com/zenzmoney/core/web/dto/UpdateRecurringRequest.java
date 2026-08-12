@@ -20,6 +20,9 @@ public class UpdateRecurringRequest {
 
     private Long nextRunDate;
 
+    /** Free-trial end date for a subscription (F-1.7). */
+    private Long trialEndDate;
+
     private Long endDate;
 
     /** Pause (false) or resume (true) generation. */

@@ -11,17 +11,30 @@ JWT, OAuth, Flyway, Redis) are kept unchanged — see
 `../architecture/migration-plan.md`.
 
 It complements the product-level [Features List](../features-list.md) and
-[Roadmap](../roadmap.md); feature IDs (e.g. `F-1.16`) refer to those documents.
+[Roadmap](../roadmap.md); feature IDs (e.g. `F-1.11`) refer to those documents.
+**Feature IDs were renumbered on 2026-08-08** to match BRD v1.0 — see the
+[mapping table](../features-list.md#id-mapping-2026-08-08) when reading older
+commits.
 
 ## Contents
 
 - **Part 0 — [Foundations](#part-0--foundations)** — conventions, money, currency.
-- **Part 1 — [Core Ledger](#part-1--core-ledger-mvp)** (MVP) — accounts, categories, transactions, budgets, recurring, savings goals, balances, net worth, access.
-- **Part 2 — [Debts & Commitments](#part-2--debts--commitments-mvp)** (MVP) — loans/EMI, subscription tracking.
-- **Part 3 — [Ingestion & AI](#part-3--ingestion--ai-mvp--p2)** (MVP + P2) — chat/NLP entry, auto-categorization, OCR receipts, AI insights, financial assistant.
-- **Part 4 — [Security](#part-4--security-mvp)** (MVP) — app lock, encryption, login history, sessions.
-- **Part 5 — [Sharing / Multi-user](#part-5--sharing--multi-user-phase-3)** (Phase 3) — family spaces, shared goals, Splitwise-style groups.
+- **Part 1 — [Core Ledger](#part-1--core-ledger-mvp)** (MVP) — the single account, categories, transactions, budgets, recurring, the monthly position, access.
+- **Part 2 — [Debts & Commitments](#part-2--debts--commitments-phase-3)** (Phase 3) — loans/EMI. *(Subscriptions folded into recurring, [§1.8](#18-recurringtransaction).)*
+- **Part 3 — [Ingestion & AI](#part-3--ingestion--ai-mvp)** (MVP) — chat/NLP entry, voice, auto-categorization, OCR receipts, AI insights, financial assistant.
+- **Part 4 — [Security](#part-4--security-mvp)** (MVP) — app lock, data protection.
+- **Part 5 — [Sharing / Multi-user](#part-5--sharing--multi-user-phase-3)** (Phase 3) — family spaces, savings goals, shared goals, group expense sharing.
 - **Part 6 — [Phasing & Traceability](#part-6--phasing--traceability)** — what ships when, schema/API mapping.
+
+> ### The two rules that shape Part 1
+>
+> **One account per user, and no stored balance.** A user has exactly one
+> `Account`, created automatically at onboarding — never named, typed, chosen, or
+> switched (F-1.1), and it holds **no balance column at all**. The figure the user
+> sees is the **monthly position**: income − expenses for one calendar month,
+> computed on read and carried forward nowhere ([§1.10](#110-monthly-position-invariant)).
+> Consequently there are **no transfers** — a transfer needs two accounts. Multiple
+> accounts, per-account transactions, and transfers are future work (F-F.1).
 
 ---
 
@@ -54,33 +67,39 @@ ISO-4217 currency code.**
 - The number of minor units per major unit is defined by the currency
   (2 for USD/EUR, 0 for JPY, 3 for BHD). Clients format for display; the backend
   only stores and sums minor units.
-- Conversions between currencies are **not** performed implicitly. A transfer or
-  report that spans currencies is either blocked (MVP) or carries an explicit
-  `fx_rate` (Phase 2 — see [Roadmap](../roadmap.md)).
+- Conversions between currencies are **not** performed implicitly. A report that
+  spans currencies is either blocked (MVP) or carries an explicit `fx_rate`
+  (future — F-F.2, see [Roadmap](../roadmap.md)).
 - Interest rates are stored as **basis points** in an `int` (e.g. `750` = 7.50%),
   same no-float-drift principle (see [§2.2](#22-loan)).
 
 ## 0.3 One active currency per user
 
 **In the MVP, each user operates in a single active currency at a time.** The
-currency is a **user-level** setting, not a per-account choice (feature F-1.23):
+currency is a **user-level** setting, not a per-account choice (feature F-1.25):
 
 - The user picks their active currency (`app_user.active_currency`, ISO-4217) at
-  onboarding.
+  onboarding. Registration seeds a **provisional** one first, from the BCP-47
+  `locale` the client reports — `si-LK` → `LKR` — so a user who skips onboarding
+  is still usable; a client that reports nothing leaves it null rather than
+  guessing. `app_user.onboarded` marks which of the two it is: while `false` the
+  value is a guess that onboarding may replace, and once `true` the switch guard
+  below applies.
 - **Every** owned entity that stores money — `Account`, `Transaction`, `Budget`,
-  `RecurringTransaction`, `SavingsGoal`, `Loan`, `Subscription` — carries
-  `currency`, and all rows for a user share the user's active currency. Storing it
-  per row keeps the money representation self-contained and makes a future switch
-  to true multi-currency a non-breaking change.
+  `RecurringTransaction`, `SavingsGoal`, `Loan` — carries `currency`, and all rows
+  for a user share the user's active currency. Storing it per row keeps the money
+  representation self-contained and makes a future switch to true multi-currency a
+  non-breaking change.
 - **Switching** the active currency is allowed but guarded: because amounts are
-  stored as minor units in the old currency, a switch either (a) requires zero
-  balances / accepting that historical figures stay in their original currency, or
-  (b) applies an explicit one-time conversion. The exact switch policy is a product
-  decision tracked in the [Roadmap](../roadmap.md); the domain simply guarantees a
-  single active currency is in force at any moment.
+  stored as minor units in the old currency, a switch means historical figures
+  either stay in their original currency or get an explicit one-time conversion.
+  The exact switch policy is a product decision tracked in the
+  [Roadmap](../roadmap.md); the domain simply guarantees a single active currency
+  is in force at any moment. (Note there is no *balance* to convert — the position
+  is derived per month, [§1.10](#110-monthly-position-invariant).)
 - Genuinely **mixing** currencies within one user, and cross-currency FX, are
-  **out of scope for the MVP**. The per-row `currency` column is the seam that
-  makes that later work additive rather than a schema rewrite.
+  **out of scope** (future — F-F.2). The per-row `currency` column is the seam
+  that makes that later work additive rather than a schema rewrite.
 
 ## 0.4 The `app_user` extensions
 
@@ -89,7 +108,8 @@ Beyond the existing auth columns, the domain adds these user-level fields:
 | Field | Type | Notes | Introduced by |
 |---|---|---|---|
 | `activeCurrency` | `String(3)` | ISO-4217; the user's single active currency. | [§0.3](#03-one-active-currency-per-user) |
-| `language` | `String(10)` | BCP-47 preferred language (e.g. `en`, `ta`, `si`). | F-1.24 |
+| `language` | `String(10)` | BCP-47 preferred language (e.g. `en`, `ta`, `si`). | F-1.26 |
+| `timezone` | `String(50)` | IANA zone, default `UTC`. **Defines the calendar-month boundary** for the monthly position ([§1.10](#110-monthly-position-invariant)). | F-1.2 |
 | `appLockEnabled` | `boolean` | Default `false`. | [§4.2](#42-app-lock-client-side) |
 | `appLockTimeoutSeconds` | `int` | Auto-lock delay. Default `60`. | [§4.2](#42-app-lock-client-side) |
 | `biometricEnabled` | `boolean` | Whether biometric unlock is allowed. Default `false`. | [§4.2](#42-app-lock-client-side) |
@@ -104,20 +124,20 @@ This is the core personal ledger — the tables every other part builds on.
 
 | Entity | Aggregate root | Purpose |
 |---|---|---|
-| `Account` | ✔ | A place money lives — cash, bank, card, savings, wallet. |
+| `Account` | ✔ | The user's **single** container for financial activity. One row per user, auto-created, balance-less. |
 | `Category` | ✔ | A hierarchical label for income/expense classification. |
 | `Payee` | ✔ | A named merchant/person a transaction is paid to or received from. |
-| `Transaction` | ✔ | The core ledger record — income, expense, or transfer. |
+| `Transaction` | ✔ | The core ledger record — income or expense. |
 | `Budget` | ✔ | A spending cap for a category over a recurring period. |
-| `RecurringTransaction` | ✔ | A template that generates future transactions on a cadence. |
-| `SavingsGoal` | ✔ | A target amount backed by a real account, funded over time. |
-| `GoalContribution` | | A funding event linking a goal to the real transaction that moved the money. |
+| `RecurringTransaction` | ✔ | A template that generates future transactions on a cadence (including subscriptions). |
+| `SavingsGoal` | ✔ | *(Phase 3, F-3.1)* A target amount funded by contributions over time. |
+| `GoalContribution` | | *(Phase 3)* A funding event linking a goal to the transaction that moved the money. |
 
 ## 1.2 Entity Relationship Diagram
 
 ```mermaid
 erDiagram
-    APP_USER ||--o{ ACCOUNT : owns
+    APP_USER ||--|| ACCOUNT : "owns exactly one"
     APP_USER ||--o{ CATEGORY : owns
     APP_USER ||--o{ PAYEE : owns
     APP_USER ||--o{ TRANSACTION : owns
@@ -125,19 +145,17 @@ erDiagram
     APP_USER ||--o{ RECURRING_TRANSACTION : owns
     APP_USER ||--o{ SAVINGS_GOAL : owns
 
-    ACCOUNT  ||--o{ TRANSACTION : "source of"
-    ACCOUNT  ||--o{ TRANSACTION : "transfer target of"
+    ACCOUNT  ||--o{ TRANSACTION : contains
     CATEGORY ||--o{ TRANSACTION : classifies
     CATEGORY ||--o{ CATEGORY : "parent of"
     CATEGORY ||--o{ BUDGET : "budgeted by"
     PAYEE    ||--o{ TRANSACTION : "paid to / received from"
 
-    ACCOUNT              ||--o{ RECURRING_TRANSACTION : "source of"
+    ACCOUNT              ||--o{ RECURRING_TRANSACTION : contains
     CATEGORY             ||--o{ RECURRING_TRANSACTION : classifies
     PAYEE                ||--o{ RECURRING_TRANSACTION : "paid to"
     RECURRING_TRANSACTION ||--o{ TRANSACTION : generates
 
-    ACCOUNT      ||--o| SAVINGS_GOAL : backs
     SAVINGS_GOAL ||--o{ GOAL_CONTRIBUTION : "tracked by"
     TRANSACTION  ||--o| GOAL_CONTRIBUTION : "realized by"
 
@@ -147,16 +165,13 @@ erDiagram
         string display_name
         string active_currency
         string language
+        string timezone
+        boolean onboarded
     }
     ACCOUNT {
         string id PK
-        string user_id FK
-        string name
-        string type
+        string user_id UK
         string currency
-        bigint opening_balance
-        bigint current_balance
-        string status
     }
     CATEGORY {
         string id PK
@@ -180,7 +195,6 @@ erDiagram
         string payee_id FK
         bigint amount
         string currency
-        string transfer_account_id FK
         bigint txn_date
     }
     BUDGET {
@@ -204,7 +218,6 @@ erDiagram
     SAVINGS_GOAL {
         string id PK
         string user_id FK
-        string account_id FK
         string name
         bigint target_amount
         string currency
@@ -226,39 +239,43 @@ Defined in `com.<pkg>.common.domain` (replacing `HabitStatus`), stored as
 `VARCHAR(50)` via `EnumType.STRING`.
 
 ```java
-public enum AccountType      { CASH, BANK, CARD, SAVINGS, WALLET }
-public enum AccountStatus    { ACTIVE, ARCHIVED, DELETED }
 public enum CategoryKind     { INCOME, EXPENSE }
-public enum TransactionType  { INCOME, EXPENSE, TRANSFER }
+public enum TransactionType  { INCOME, EXPENSE }
 public enum BudgetPeriod     { WEEKLY, MONTHLY, YEARLY }
+public enum BudgetStatus     { ACTIVE, ARCHIVED }
 public enum RecurringCadence { DAILY, WEEKLY, MONTHLY, YEARLY }
 public enum GoalStatus       { ACTIVE, ACHIEVED, ARCHIVED }
 ```
 
+> **Removed with the single-account model:** `AccountType` (the account is never
+> typed) and `AccountStatus` (a user's only account is never archived or deleted —
+> `Budget` now uses its own `BudgetStatus`). `TransactionType.TRANSFER` is gone
+> because a transfer needs a second account.
+
 ## 1.4 Account
 
-A place where money is held. Owned by one user.
+**Exactly one per user** (F-1.1). The account is a *container* for the user's
+financial activity, not something they manage: it is created automatically at
+onboarding and is never named, typed, listed, picked, archived, or deleted. It is
+also **balance-less** — see [§1.10](#110-monthly-position-invariant).
 
 | Field | Type | Notes |
 |---|---|---|
 | `id` | `String` (UUID) | PK, from `BaseEntity`. |
-| `userId` | `String` | Owner. Not null, indexed. |
-| `name` | `String(300)` | Display name, e.g. "Chase Checking". Not null. |
-| `type` | `AccountType` | Not null. |
-| `currency` | `String(3)` | ISO-4217. In the MVP this always equals the owner's `active_currency` ([§0.3](#03-one-active-currency-per-user)); stored per-account so a later multi-currency phase is additive. |
-| `openingBalance` | `long` | Minor units at account creation. Default `0`. |
-| `currentBalance` | `long` | Minor units. Maintained by the ledger (see [§1.10](#110-balance-derivation-invariant)). |
-| `color` | `String(20)` | Optional UI hint. |
-| `icon` | `String(50)` | Optional UI hint. |
-| `status` | `AccountStatus` | Default `ACTIVE`. |
-| `sortOrder` | `int` | Manual ordering. Default `0`. |
-| `metadata` | `jsonb` | Free-form (e.g. masked account number). |
+| `userId` | `String` | Owner. Not null, **unique** — the one-account rule is enforced by a unique index, not by service code alone. |
+| `currency` | `String(3)` | ISO-4217. Always equals the owner's `active_currency` ([§0.3](#03-one-active-currency-per-user)); stored here so a later multi-currency phase is additive. |
+| `metadata` | `jsonb` | Free-form. |
 
 **Rules**
-- An account's `currency` mirrors the owner's active currency ([§0.3](#03-one-active-currency-per-user)). New accounts are created in the user's active currency and are not individually re-denominated; changing currency is a user-level switch.
-- **Credit cards** are an `AccountType.CARD` that may carry a **negative** `currentBalance`, counted as a liability in net worth ([§1.11](#111-net-worth-derived)). Statement cycles / minimum payments / limits are not modeled yet.
-- Archiving (`status = ARCHIVED`) hides the account from pickers but preserves history. Archived accounts cannot receive new transactions.
-- Deleting an account is a **soft delete**: `status = DELETED` and the row is **retained** in the database (for audit / recovery), then hidden from every listing and operation (a soft-deleted account reads as *not found*). Delete is only allowed when the account has **no transactions**; an account with history must be **archived** instead. Rows are never physically removed by the API — this keeps foreign keys from transactions/goals valid and preserves the audit trail. Derived figures (balances, net worth) exclude `DELETED` accounts.
+- **Auto-provisioned.** The account is get-or-created the first time the user needs one — at onboarding (currency + language, F-1.27), or earlier on any read or ledger write once a currency exists, since registration seeds one. It cannot be created, updated, or deleted through the API — the only account endpoint is a read of the caller's own account.
+- **No balance columns.** There is no `openingBalance` and no `currentBalance`, so the user is never asked for a starting balance and no figure can drift out of step with the ledger. What replaces them is the monthly position ([§1.10](#110-monthly-position-invariant)).
+- `currency` mirrors the owner's active currency; re-denominating is a user-level switch ([§0.3](#03-one-active-currency-per-user)). Because provisioning can precede onboarding, the account may already hold the *seeded* currency when the user picks a different one — onboarding moves it, and refuses once any transaction exists.
+- The account is **implicit on every write**: `Transaction.accountId` and `RecurringTransaction.accountId` are resolved server-side from the caller, never accepted from the client. A client that could name an account could name someone else's.
+
+> **Why keep an `Account` entity at all for a single account?** It is the seam for
+> F-F.1 (multiple accounts). Ledger rows already carry `account_id`, so adding a
+> second account later is additive; folding the currency onto `app_user` and
+> dropping the table would make that a schema rewrite.
 
 ## 1.5 Category
 
@@ -278,9 +295,9 @@ A hierarchical label used to classify transactions. Owned by one user.
 **Rules**
 - Hierarchy is **one level deep**: a category with a `parentId` may not itself be a parent. Enforced in the service layer.
 - A parent and its children must share the same `kind`.
-- A category referenced by any transaction or budget cannot be deleted; it can be merged into another category (Phase 2, F-2.4) or left unused.
-- `TRANSFER` transactions carry **no** category.
-- **Seed categories.** At onboarding each new user is provisioned a default set so the app is not empty (F-1.25). Suggested defaults:
+- A category referenced by any transaction or budget cannot be deleted; it may be left unused.
+- **Every** transaction carries a category — with `TRANSFER` gone, there is no category-less transaction type.
+- **Seed categories.** At onboarding each new user is provisioned a default set so the app is not empty (F-1.27). Suggested defaults:
   - **Income** (`kind = INCOME`): Salary, Business, Freelance, Investments, Gifts.
   - **Expense** (`kind = EXPENSE`): Food & Drinks, Groceries, Transport, Housing, Utilities, Entertainment, Health, Shopping, Education, Subscriptions, Other.
   These are ordinary user-owned `Category` rows (fully editable/deletable), not a system table — seeding just copies a template into the user's own categories.
@@ -290,7 +307,7 @@ A hierarchical label used to classify transactions. Owned by one user.
 A named **merchant or person** a transaction is paid to (expense) or received from
 (income). Owned by one user. Modeled as an entity — rather than a free-text string
 on the transaction — so that payee is a **first-class filter/report dimension**
-(F-1.19): "total spent at Keells", payee autocomplete, and dedup of
+(F-1.9): "total spent at Keells", payee autocomplete, and dedup of
 "Keells" / "keells" / "Keells Super" into one row.
 
 | Field | Type | Notes |
@@ -306,14 +323,14 @@ on the transaction — so that payee is a **first-class filter/report dimension*
 - **Uniqueness:** at most one payee per (`userId`, `normalizedName`) — enforced by a
   unique index. Resolving "Keells" and "keells" collapses to the same row.
 - **Resolve-or-create:** every transaction-writing path (manual entry, chat/NLP
-  capture F-1.9a, OCR F-1.9c) resolves a typed payee name to a `Payee` via a
-  service (`resolveOrCreate`): normalize → find by (`userId`, `normalizedName`) →
-  else create. Payees are never entered as opaque strings on the transaction.
-- **Optional on a transaction:** `TRANSFER` and unnamed one-off entries
-  ("$5 for burger") have **no** payee (`payeeId` null). The item/description in such
-  cases goes to the transaction's `note`, not to a payee.
-- A payee referenced by any transaction cannot be hard-deleted; it can be **merged**
-  into another payee (mirrors category merge, Phase 2 F-2.4) or left unused.
+  capture F-1.11, voice F-1.12, OCR F-1.13) resolves a typed payee name to a
+  `Payee` via a service (`resolveOrCreate`): normalize → find by (`userId`,
+  `normalizedName`) → else create. Payees are never entered as opaque strings on
+  the transaction.
+- **Optional on a transaction:** unnamed one-off entries ("$5 for burger") have
+  **no** payee (`payeeId` null). The item/description in such cases goes to the
+  transaction's `note`, not to a payee.
+- A payee referenced by any transaction cannot be hard-deleted; it may be left unused.
 - Scoped by `user_id` like every owned entity (§1.12); no cross-user payees.
 
 ## 1.6 Transaction
@@ -324,26 +341,24 @@ The core ledger record. Every movement of money is one transaction row.
 |---|---|---|
 | `id` | `String` (UUID) | PK. |
 | `userId` | `String` | Owner. Not null, indexed. |
-| `accountId` | `String` | Source account. Not null, FK → `account`. |
-| `type` | `TransactionType` | `INCOME` / `EXPENSE` / `TRANSFER`. Not null. |
-| `categoryId` | `String` | FK → `category`. Required for INCOME/EXPENSE, null for TRANSFER. |
+| `accountId` | `String` | FK → `account`. Not null. **Resolved server-side** from the caller's single account ([§1.4](#14-account)) — never sent by the client. |
+| `type` | `TransactionType` | `INCOME` / `EXPENSE`. Not null. |
+| `categoryId` | `String` | FK → `category`. Required — every transaction is categorized. |
 | `amount` | `long` | Minor units. **Always positive**; sign is derived from `type`. Not null. |
-| `currency` | `String(3)` | ISO-4217. Equals the owner's active currency ([§0.3](#03-one-active-currency-per-user)); in the MVP every account shares it, so it always matches the account currency. |
-| `transferAccountId` | `String` | FK → `account`. Set **only** when `type = TRANSFER`. |
-| `txnDate` | `long` | Epoch millis of the transaction date. Not null, indexed. |
-| `payeeId` | `String` | Optional FK → `payee` ([§1.5b](#15b-payee)). The merchant/payer as an entity, not free text. Null for TRANSFER and unnamed one-off entries. Indexed (drives payee filtering, F-1.19). |
+| `currency` | `String(3)` | ISO-4217. Equals the owner's active currency ([§0.3](#03-one-active-currency-per-user)) and therefore the account currency. |
+| `txnDate` | `long` | Epoch millis of the transaction date. Not null, indexed. **Decides which month the row counts in** ([§1.10](#110-monthly-position-invariant)). |
+| `payeeId` | `String` | Optional FK → `payee` ([§1.5b](#15b-payee)). The merchant/payer as an entity, not free text. Null for unnamed one-off entries. Indexed (drives payee filtering, F-1.9). |
 | `note` | `String(500)` | Optional free-text description / item (e.g. "burger", "tea things"). |
 | `tags` | `jsonb` | Optional string array. |
 | `recurringId` | `String` | Nullable FK → `recurring_transaction` if auto-generated. |
 
 **Rules**
-- `amount` is stored as a positive magnitude. Effect on balance is determined by `type`: INCOME adds, EXPENSE subtracts, TRANSFER subtracts from `accountId` and adds to `transferAccountId`.
-- `type = TRANSFER` **requires** `transferAccountId` (≠ `accountId`) and forbids `categoryId`. Both accounts share the user's active currency, so no conversion is involved in the MVP.
-- `type ∈ {INCOME, EXPENSE}` **requires** `categoryId` whose `kind` matches the type, and forbids `transferAccountId`.
-- Editing or deleting a transaction re-derives affected account balances ([§1.10](#110-balance-derivation-invariant)).
-- **Duplicating** a transaction (F-1.5b) creates a new row copying all fields except `id`/timestamps, defaulting `txnDate` to now. The copy is an independent transaction.
-- **Attachments** (receipts/images) link via the `Attachment` entity ([§3.5](#35-attachment-receipts--ocr)); a transaction may have zero or more, added manually or produced by OCR.
-- **Search & filter** (F-1.19) over transactions (date range, category, account, amount, payee, tag, free text) is a first-class MVP capability; the indexed `txnDate`, `userId`, `accountId`, `categoryId`, and `payeeId` columns support it. Payee filtering is by `payeeId` ([§1.5b](#15b-payee)), not free-text match.
+- `amount` is stored as a positive magnitude. Effect on the monthly position is determined by `type`: INCOME adds, EXPENSE subtracts.
+- Every transaction **requires** a `categoryId` whose `kind` matches its `type` (INCOME→INCOME, EXPENSE→EXPENSE).
+- **There is no `TRANSFER`.** A transfer moves money between two accounts and a user has one, so the type, the `transferAccountId` column, and the "destination account" validation are all gone. This returns with F-F.1.
+- Creating, editing, or deleting a transaction changes **only the position of the month its `txnDate` falls in** ([§1.10](#110-monthly-position-invariant)). Nothing is written back to the account. Moving a transaction's date *across* a month boundary changes two months' positions — both are simply recomputed on next read.
+- **Receipt images are not stored** — scanning (F-1.13) extracts merchant/date/total into an ordinary transaction and the image is discarded. There is no `Attachment` entity.
+- **Search & filter** (F-1.9) over transactions (keyword, date range, category, amount, payee, tags) is a first-class MVP capability; the indexed `txnDate`, `userId`, `categoryId`, and `payeeId` columns support it. Payee filtering is by `payeeId` ([§1.5b](#15b-payee)), not free-text match.
 
 ## 1.7 Budget
 
@@ -359,31 +374,34 @@ A spending cap for a category (or overall) across a recurring period.
 | `currency` | `String(3)` | ISO-4217. |
 | `startDate` | `long` | Epoch millis; anchors the period cycle. Not null. |
 | `rollover` | `boolean` | Carry unused amount into the next period. Default `false`. |
-| `status` | `AccountStatus` | Reused enum: `ACTIVE` / `ARCHIVED`. |
+| `status` | `BudgetStatus` | `ACTIVE` / `ARCHIVED`. |
 
 **Rules**
 - A budget's `categoryId` (if set) must be an `EXPENSE` category.
 - At most one active budget per (`categoryId`, `period`) per user.
-- "Spent" is computed from EXPENSE transactions in the current period window; budgets store the cap, not the running total.
+- "Spent" is computed from EXPENSE transactions in the current period window; budgets store the cap, not the running total. A MONTHLY budget's window is the same calendar month as the position ([§1.10](#110-monthly-position-invariant)).
+- **Rollover is a budget-only concept.** A budget may carry unused headroom into the next period; the monthly position never does. The two are not inconsistent — a budget is a plan the user sets, the position is a fact about what happened (OQ-3).
 - Budget usage feeds alerts (F-1.20), e.g. *"You've used 90% of your Food budget."*
 
 ## 1.8 RecurringTransaction
 
-A template that generates `Transaction` rows on a schedule. Works for both income
-(e.g. *salary $3000 on the 25th monthly*) and expense (e.g. rent).
+A template that generates `Transaction` rows on a schedule. **One model for
+everything that repeats** (F-1.7): income (*salary $3000 on the 25th monthly*),
+expense (rent, utilities), **and subscriptions** (Netflix, Spotify, gym) — a
+subscription is a recurring expense with a renewal date, not a separate entity.
 
 | Field | Type | Notes |
 |---|---|---|
 | `id` | `String` (UUID) | PK. |
 | `userId` | `String` | Owner. Not null, indexed. |
-| `accountId` | `String` | FK → `account`. Not null. |
-| `categoryId` | `String` | FK → `category`. Required unless `type = TRANSFER`. |
-| `type` | `TransactionType` | Not null. |
-| `amount` | `long` | Minor units, positive. Not null. |
+| `accountId` | `String` | FK → `account`. Not null. Resolved server-side ([§1.4](#14-account)). |
+| `categoryId` | `String` | FK → `category`. Required; `kind` must match `type`. |
+| `type` | `TransactionType` | `INCOME` / `EXPENSE`. Not null. |
+| `amount` | `long` | Minor units, positive. Not null. The subscription's cost. |
 | `currency` | `String(3)` | ISO-4217. |
-| `transferAccountId` | `String` | Set only for TRANSFER templates. |
-| `cadence` | `RecurringCadence` | Not null. |
-| `nextRunDate` | `long` | Epoch millis of the next generation. Not null, indexed. |
+| `cadence` | `RecurringCadence` | Not null. The repeat / billing frequency. |
+| `nextRunDate` | `long` | Epoch millis of the next generation — the next due or renewal date. Not null, indexed. |
+| `trialEndDate` | `long` | Nullable. Free-trial end, for the trial-expiry reminder (F-1.7 / F-1.20). |
 | `endDate` | `long` | Nullable; stop generating after this. |
 | `active` | `boolean` | Default `true`. |
 | `payeeId` | `String` | Optional FK → `payee` ([§1.5b](#15b-payee)). Copied onto generated transactions. |
@@ -391,15 +409,22 @@ A template that generates `Transaction` rows on a schedule. Works for both incom
 
 **Rules**
 - A scheduled job scans `active = true AND next_run_date <= now`, creates a `Transaction` (with `recurringId` set back to the template), then advances `nextRunDate` by the cadence.
-- The same validation as `Transaction` applies to the generated row.
+- The same validation as `Transaction` applies to the generated row — including "no TRANSFER templates".
+- A generated row lands in the month its run date falls in, so it counts toward exactly that month's position ([§1.10](#110-monthly-position-invariant)).
 - Reaching `endDate` sets `active = false`.
+- **Reminders** (F-1.20) read this table: upcoming `nextRunDate` drives bill and renewal reminders, and `trialEndDate` drives the trial-expiry warning.
 
 ## 1.9 SavingsGoal & GoalContribution
 
-A **SavingsGoal** is a target the user is saving toward, **backed by a real
-account**. Progress is measured by real money movements, so the goal can never
-diverge from the ledger. Personal and single-owner in the MVP; its shared form
-(`GoalMember`) is Phase 3 — see [§5.2](#52-shared-savings-goals-goalmember).
+> **Phase 3 (F-3.1), documented here.** Savings goals moved out of the MVP in BRD
+> v1.0. The backend below is **already built** — it stays as-is rather than being
+> deleted, since Phase 3 commits to it (OQ-7). It is documented in Part 1 because
+> it sits on the core ledger, not on the sharing model.
+
+A **SavingsGoal** is a target the user is saving toward. Progress is measured by
+recorded contributions, so the goal can never diverge from what the user actually
+put aside. Personal and single-owner here; its shared form (`GoalMember`) is
+[§5.2](#52-shared-savings-goals-goalmember).
 
 ### SavingsGoal
 
@@ -407,10 +432,9 @@ diverge from the ledger. Personal and single-owner in the MVP; its shared form
 |---|---|---|
 | `id` | `String` (UUID) | PK. |
 | `userId` | `String` | Owner. Not null, indexed. |
-| `accountId` | `String` | FK → `account` that backs the goal (typically a `SAVINGS` account). Not null. |
 | `name` | `String(300)` | e.g. "Japan Trip". Not null. |
 | `targetAmount` | `long` | Minor units. Not null. |
-| `currency` | `String(3)` | ISO-4217. Equals the owner's active currency and the backing account's currency. |
+| `currency` | `String(3)` | ISO-4217. Equals the owner's active currency. |
 | `targetDate` | `long` | Epoch millis; nullable soft deadline. |
 | `status` | `GoalStatus` | `ACTIVE` / `ACHIEVED` / `ARCHIVED`. Default `ACTIVE`. |
 | `color` / `icon` | `String` | Optional UI hints. |
@@ -427,14 +451,13 @@ remaining = max(0, target_amount - saved)
 
 ### GoalContribution
 
-A single funding event linking a `SavingsGoal` to the **real** `Transaction` that
-moved money into the backing account.
+A single funding event, optionally linked to the `Transaction` that moved the money.
 
 | Field | Type | Notes |
 |---|---|---|
 | `id` | `String` (UUID) | PK. |
 | `goalId` | `String` | FK → `savings_goal`. Not null, indexed. |
-| `transactionId` | `String` | FK → `transaction` (the TRANSFER into the backing account). Nullable for a manual/adjustment entry. |
+| `transactionId` | `String` | FK → `transaction`. Nullable for a manual/adjustment entry. |
 | `amount` | `long` | Minor units, positive. Not null. |
 | `contributedAt` | `long` | Epoch millis. Not null. |
 | `note` | `String(500)` | Optional. |
@@ -442,82 +465,43 @@ moved money into the backing account.
 **Rules**
 - A contribution's `amount`/`currency` must match its linked transaction.
 - Deleting the linked transaction deletes (or voids) the contribution.
-- Contributions are additive; a "withdrawal" is recorded as a transfer out of the backing account plus a reversing contribution, so `saved` always reflects the earmarked total.
-- In the MVP the contributing user is always the goal owner; the Phase 3 shared form adds a `userId` per contribution to attribute members ([§5.2](#52-shared-savings-goals-goalmember)).
+- Contributions are additive; a "withdrawal" is recorded as a reversing contribution, so `saved` always reflects the earmarked total.
+- The contributing user is the goal owner; the shared form adds a `userId` per contribution to attribute members ([§5.2](#52-shared-savings-goals-goalmember)).
 
-## 1.10 Balance derivation (invariant)
+## 1.10 Monthly position (invariant)
 
-`Account.currentBalance` is a **materialized** value kept consistent with the
-ledger, not a free-standing field clients can set:
-
-```
-currentBalance = openingBalance
-               + Σ(amount) where type = INCOME  and account_id   = this
-               - Σ(amount) where type = EXPENSE and account_id   = this
-               - Σ(amount) where type = TRANSFER and account_id  = this   (outgoing)
-               + Σ(amount) where type = TRANSFER and transfer_account_id = this  (incoming)
-```
-
-- The service layer updates `currentBalance` inside the same transaction that creates/edits/deletes a `Transaction`.
-- A recompute endpoint/job can rebuild it from the ledger if drift is ever detected (defensive; the ledger is the source of truth).
-
-> **Two kinds of "drift" — don't confuse them.** The recompute above fixes
-> *internal* drift (stored `currentBalance` vs. the sum of the ledger). It does
-> **not** address the app's balance diverging from the user's **real bank
-> balance** — that is reconciliation ([§1.10b](#110b-reconciliation)).
-
-## 1.10b Reconciliation
-
-Over time a user's tracked balance can diverge from their **real-world** account
-balance — usually because some transactions were never entered (a forgotten cash
-expense, a bank fee). Reconciliation brings the two back into agreement (F-1.2b).
-
-**The balance is never edited directly.** `currentBalance` is derived
-([§1.10](#110-balance-derivation-invariant)); typing a new value would (a) be
-overwritten by the next recompute and (b) desync the balance from the ledger, so
-spending/income reports would no longer add up. Instead, reconciliation records a
-**balance adjustment**: an ordinary `Transaction` for the difference.
+**There is no balance anywhere in this domain — not stored, not accumulated, not
+carried forward.** The single figure the product shows is the **monthly
+position** (F-1.2), computed on read for **one calendar month**:
 
 ```
-difference = actual_real_balance − app_current_balance
-  difference < 0  → app shows MORE than reality (missed expenses)  → EXPENSE adjustment
-  difference > 0  → app shows LESS than reality (missed income)    → INCOME  adjustment
-  difference = 0  → already reconciled; nothing to record
+income(m)   = Σ(amount) where type = INCOME  and txn_date ∈ [start(m), start(m+1))
+expenses(m) = Σ(amount) where type = EXPENSE and txn_date ∈ [start(m), start(m+1))
+position(m) = income(m) − expenses(m)
 ```
 
-The adjustment is a normal INCOME/EXPENSE row assigned to a reserved
-**"Adjustment"** (or "Uncategorized") category — **no new entity and no new
-`TransactionType`**. Because it flows through the ledger like any other
-transaction, the balance corrects itself via [§1.10](#110-balance-derivation-invariant),
-net worth stays right, total spending/income stays honest (the money really did
-move), and the correction is fully auditable — the user can later re-categorize or
-split it if they remember what it was.
+- **The window is half-open** `[start, next_start)`, so a transaction at the exact instant a month begins belongs to the new month and is never counted twice.
+- **Boundaries are resolved in `app_user.timezone`** (default `UTC`) and then converted to epoch millis. A user in `Asia/Colombo` gets Colombo months; changing the timezone re-slices every month on the next read, because nothing was precomputed (OQ-2).
+- **Nothing carries forward.** `position(August)` does not seed September. There is no opening figure, no closing figure, no cumulative running total, and consequently no "reset".
+- **Any month is computable** — past months are the same query with a different window.
+- **A write only affects its own month.** Creating / editing / deleting a transaction changes the position of the month its `txnDate` falls in, and no other. Moving a date across a boundary affects exactly the two months involved.
+- Spending analysis (F-1.18), reports (F-1.19), and the dashboard (F-1.17) all use **this** window rule, so every month-labelled figure on screen agrees with every other.
+- **Budgets are the deliberate exception.** A budget window is anchored at the budget's own `startDate` and rolls by its period ([§1.7](#17-budget)) — a weekly budget starting on the 3rd is not a calendar week, and a monthly budget started mid-month is not a calendar month. Its "spent" figure therefore need not equal the month's expenses, and that is correct: the user chose when their budget cycle begins.
 
-**Example.** Opening $5000; app shows $1200; the bank actually shows $600. The
-user reconciles to $600 → the app records an **EXPENSE of $600** (`1200 − 600`) to
-the Adjustment category, and `currentBalance` derives to $600. Reversed (app $600,
-bank $1200) it records an **INCOME of $600**.
+> **Why derived rather than stored.** A stored balance has to be maintained on
+> every write, which means it can be wrong — the classic reconciliation bug this
+> product now avoids by construction. A figure recomputed from the ledger on every
+> read cannot drift from the ledger, so there is nothing to reconcile
+> ([out of scope](../features-list.md#out-of-scope)) and no recompute job to run.
+> The cost is a `SUM` per read, over an indexed `(user_id, txn_date)` range —
+> cheap at personal-finance volumes, and revisit it with a cache only if a real
+> measurement says so.
 
-**UX (not domain):** a "reconcile" action takes the user's stated real balance,
-computes the difference, and creates the adjustment for them — they never do the
-subtraction by hand.
-
-## 1.11 Net worth (derived)
-
-**Net worth is a derived figure, never stored.** It powers the dashboard
-(F-1.13) and is computed on read:
-
-```
-assets      = Σ Account.currentBalance where currentBalance >= 0   (cash, bank, savings)
-            + Σ Loan.outstanding       where direction = LENT       (receivables)
-liabilities = Σ |Account.currentBalance| where currentBalance < 0   (e.g. credit-card debt)
-            + Σ Loan.outstanding       where direction = BORROWED
-net_worth   = assets - liabilities
-```
-
-- Loan figures come from [§2.2](#22-loan).
-- All terms are in the user's single active currency ([§0.3](#03-one-active-currency-per-user)), so the subtraction is currency-safe in the MVP.
-- Because every term is itself derived from the ledger, net worth is always reproducible and auditable.
+> **What disappeared with the stored balance:** the `opening_balance` /
+> `current_balance` columns, the re-derivation on every ledger write, balance
+> reconciliation (F-1.2b), and **net worth** — which summed account balances and
+> loan outstandings, and has no meaning without balances. The dashboard (F-1.17)
+> shows income, expenses, and position (see OQ-1).
 
 ## 1.12 Ownership & access (MVP)
 
@@ -530,25 +514,35 @@ access for shared entities only.)
 
 ---
 
-# Part 2 — Debts & Commitments (MVP)
+# Part 2 — Debts & Commitments (Phase 3)
 
-Two MVP features that model **money the user is committed to over time**, layered
-on the core ledger. **Design principle — reuse the ledger, don't shadow it:** a
-debt/subscription is a *plan*; the actual money movements are ordinary
-`Transaction`s linked back to the plan, so balances and reports stay correct
-without a parallel ledger.
+> **Moved MVP → Phase 3 (F-3.2)** in BRD v1.0, and **not implemented** — no
+> entities, tables, or services exist for any of Part 2. The design below is kept
+> as the spec to build against when Phase 3 starts. **Subscription tracking left
+> this part entirely**: it is now a recurring transaction with a renewal date and
+> a trial-end date ([§1.8](#18-recurringtransaction), F-1.7), not its own entity.
+
+Models **money the user is committed to over time**, layered on the core ledger.
+**Design principle — reuse the ledger, don't shadow it:** a debt is a *plan*; the
+actual money movements are ordinary `Transaction`s linked back to the plan, so
+reports stay correct without a parallel ledger.
 
 ## 2.1 Debts & Loans — concept
 
-A **Loan** (F-1.16) is a debt agreement with a principal, an interest rate, and a
+A **Loan** (F-3.2) is a debt agreement with a principal, an interest rate, and a
 repayment schedule of **installments** (EMIs). It covers both directions:
 
-- **Borrowing** (`BORROWED`) — the user owes someone (home/car loan, money from a friend). A liability; reduces net worth.
-- **Lending** (`LENT`) — someone owes the user. A receivable (asset).
+- **Borrowing** (`BORROWED`) — the user owes someone (home/car loan, money from a friend). A liability.
+- **Lending** (`LENT`) — someone owes the user. A receivable.
 
 Each scheduled installment is a `LoanInstallment`; each real repayment is a
-`Transaction` linked via `LoanPayment`, so outstanding balance is reconciled with
-the ledger.
+`Transaction` linked via `LoanPayment`, so the outstanding figure is always
+reconciled with the ledger rather than tracked separately.
+
+> **`Loan.accountId` is vestigial under the single-account model.** With one
+> account per user it can only ever hold that account's id; treat it as reserved
+> for F-F.1 and resolve it server-side, exactly like `Transaction.accountId`
+> ([§1.4](#14-account)).
 
 ```mermaid
 erDiagram
@@ -629,7 +623,7 @@ next_due    = earliest LOAN_INSTALLMENT with status = DUE
 
 **Rules**
 - `status` flips to `CLOSED` when every installment is `PAID`.
-- A `BORROWED` loan contributes to **liabilities** in net worth ([§1.11](#111-net-worth-derived)); a `LENT` loan is a receivable (asset).
+- A `BORROWED` loan is a liability, a `LENT` loan a receivable. Neither feeds a net-worth figure — that concept went away with stored balances ([§1.10](#110-monthly-position-invariant)).
 - Interest is computed by the service layer from `interestType` + `interestRateBps` when the schedule is generated; the domain stores the resulting per-installment components, not a running formula.
 
 ## 2.3 LoanInstallment (EMI schedule)
@@ -670,74 +664,39 @@ it settles).
 **Rules**
 - Recording a payment updates the target installment(s) to `PAID`/`PARTIAL`.
 - Deleting the linked transaction voids the payment and reopens the installment.
-- A **payoff plan** is a derived projection (service layer): given `outstanding`, rate, and a chosen extra-payment amount, project the revised payoff date and interest saved. No stored entity. (Multi-debt strategies like snowball/avalanche are a proposal, F-P.12.)
+- A **payoff plan** is a derived projection (service layer): given `outstanding`, rate, and a chosen extra-payment amount, project the revised payoff date and interest saved. No stored entity. (Multi-debt strategies like snowball/avalanche are future work, F-F.6.)
 
-## 2.5 Subscription tracking
+## 2.5 Subscription tracking — merged into recurring
 
-A **Subscription** (F-1.17) is the user's own recurring paid service (Netflix,
-Spotify, gym) — essentially a **named, categorized recurring expense with a
-renewal date and reminders**. Rather than a separate ledger, it is a thin
-specialization that *drives* a `RecurringTransaction` ([§1.8](#18-recurringtransaction))
-and adds subscription-specific metadata.
+**There is no `Subscription` entity.** BRD v1.0 folds subscriptions into
+recurring income/expenses (F-1.7): a subscription *is* a recurring expense with a
+billing cycle, a renewal date, and an optional free-trial end date — all of which
+`RecurringTransaction` already carries ([§1.8](#18-recurringtransaction)).
 
-> **Not app billing.** This tracks subscriptions the user pays to *third parties*.
-> The user's own ZenZ Free/Premium plan (F-2.2) is separate app-monetization, not
-> part of this feature.
+| What the old design had | Where it lives now |
+|---|---|
+| `name` / `provider` | The template's [`Payee`](#15b-payee) (*Netflix*) plus its `note`. |
+| `amount`, `currency`, `billingCycle` | `RecurringTransaction.amount` / `currency` / `cadence`. |
+| `nextRenewalDate` | `RecurringTransaction.nextRunDate`. |
+| `trialEndDate` | `RecurringTransaction.trialEndDate`. |
+| `status` (`ACTIVE`/`PAUSED`/`CANCELLED`) | `RecurringTransaction.active` + `endDate`. |
+| `recurringId` link | Not needed — it *is* the recurring row. |
 
-```mermaid
-erDiagram
-    APP_USER ||--o{ SUBSCRIPTION : owns
-    CATEGORY ||--o| SUBSCRIPTION : classifies
-    ACCOUNT  ||--o| SUBSCRIPTION : "billed to"
-    SUBSCRIPTION ||--o| RECURRING_TRANSACTION : "generates via"
+**Why merge.** The two models were the same shape, and the split forced every
+consumer (reminders, reports, "what do I pay monthly") to read two tables and
+de-duplicate charges that the recurring engine had already posted. One table
+cannot double-count.
 
-    SUBSCRIPTION {
-        string id PK
-        string user_id FK
-        string category_id FK
-        string account_id FK
-        string recurring_id FK
-        string name
-        string provider
-        bigint amount
-        string currency
-        string billing_cycle
-        bigint next_renewal_date
-        bigint trial_end_date
-        string status
-    }
-```
+> **Not app billing.** This is about subscriptions the user pays to *third
+> parties*. The user's own ZenZ Free/Premium plan (F-2.1) is app monetization and
+> unrelated.
 
-| Field | Type | Notes |
-|---|---|---|
-| `id` | `String` (UUID) | PK. |
-| `userId` | `String` | Owner. Not null, indexed. |
-| `name` | `String(300)` | e.g. "Netflix Premium". Not null. |
-| `provider` | `String(200)` | Vendor. Optional. |
-| `categoryId` | `String` | FK → `category` (an EXPENSE category, e.g. "Entertainment"). |
-| `accountId` | `String` | FK → `account` it is billed to (card/bank). |
-| `recurringId` | `String` | FK → `recurring_transaction` that auto-generates the charge. Nullable if the user only tracks it (no auto-posting). |
-| `amount` | `long` | Minor units per cycle. Not null. |
-| `currency` | `String(3)` | ISO-4217; user's active currency. |
-| `billingCycle` | `RecurringCadence` | Reuses the ledger enum: `MONTHLY` / `YEARLY` / etc. |
-| `nextRenewalDate` | `long` | Epoch millis. Indexed (drives reminders). |
-| `trialEndDate` | `long` | Epoch millis; nullable free-trial end. |
-| `status` | `SubscriptionStatus` | `ACTIVE` / `TRIAL` / `PAUSED` / `CANCELLED`. Default `ACTIVE`. |
-| `note` | `String(500)` | Optional. |
-
-```java
-public enum SubscriptionStatus { ACTIVE, TRIAL, PAUSED, CANCELLED }
-```
-
-**Rules**
-- When linked to a `RecurringTransaction`, the subscription does **not** post its own transactions — the recurring engine does, and the generated `Transaction` carries the subscription's category/account. Avoids double-counting.
-- Reminders (renewal soon, trial ending) are emitted via the notification system (F-1.20) keyed off `nextRenewalDate` / `trialEndDate`.
-- `CANCELLED` stops future reminders and deactivates the linked recurring template; history is preserved.
-- Total monthly subscription cost is a derived aggregate for the dashboard ("You spend $84/month on 6 subscriptions").
+- Reminders (renewal soon, trial ending) are emitted by the notification system (F-1.20) keyed off `nextRunDate` / `trialEndDate`.
+- Total monthly subscription cost is a derived aggregate over active EXPENSE templates.
 
 ---
 
-# Part 3 — Ingestion & AI (MVP + P2)
+# Part 3 — Ingestion & AI (MVP)
 
 The **intelligent input and insight** side of the domain: how transactions get
 created from natural language, voice, and scanned receipts, and how AI insights
@@ -748,17 +707,17 @@ The design principle is a single funnel: **every capture channel — typed chat,
 voice, or a scanned receipt — is normalized into a proposed transaction, which the
 user confirms before it enters the ledger.**
 
-> **Phase.** Chat entry (F-1.9a), auto-categorization (F-1.9b), OCR (F-1.9c), AI
-> insights (F-1.10), and the financial assistant (F-1.10b) are **MVP**. Voice
-> entry (F-2.1) is **Phase 2**, reusing the pipeline with a speech-to-text front
-> end.
+> **Phase.** All of it is **MVP** in BRD v1.0 — chat entry (F-1.11), voice entry
+> (F-1.12, promoted from Phase 2), receipt scanning (F-1.13), auto-categorization
+> (F-1.14), insights (F-1.15), and the financial assistant (F-1.16). Only the
+> *advanced* assistant — follow-ups, comparisons, forecasts (F-2.2) — is Phase 2.
 
 ## 3.1 The capture pipeline
 
 ```mermaid
 flowchart LR
     A[Typed chat msg] --> P
-    B[Voice / audio  P2] --> STT[Speech-to-text] --> P
+    B[Voice / audio] --> STT[Speech-to-text] --> P
     C[Receipt photo] --> OCR[OCR extract] --> P
     P[Parse & normalize\nInterpret intent] --> D{Confident\nenough?}
     D -- yes --> PROP[Proposed transaction]
@@ -771,9 +730,13 @@ flowchart LR
 
 | Channel | Raw input | Extraction step | Feature |
 |---|---|---|---|
-| Chat | Text message | NLP intent + entity parse | F-1.9a (MVP) |
-| Voice | Audio clip | Speech-to-text → same NLP parse | F-2.1 (Phase 2) |
-| Receipt | Image / PDF | OCR → field extraction → NLP normalize | F-1.9c (MVP) |
+| Chat | Text message | NLP intent + entity parse | F-1.11 |
+| Voice | Audio clip | Speech-to-text → same NLP parse | F-1.12 |
+| Receipt | Image / PDF | OCR → field extraction → NLP normalize | F-1.13 |
+
+**The account is never part of a capture.** A draft carries type, amount,
+category, date, payee, and note; the account is resolved server-side at confirm
+time ([§1.4](#14-account)), so no capture channel can name one.
 
 The output of all three is a **ParsedIntent** ([§3.3](#33-parsedintent-value-object)), rendered as a draft transaction for confirmation.
 
@@ -782,21 +745,21 @@ The output of all three is a **ParsedIntent** ([§3.3](#33-parsedintent-value-ob
 | Entity | Aggregate root | Purpose |
 |---|---|---|
 | `ChatMessage` | ✔ | A logged user/assistant message in the conversational interface. |
-| `Attachment` | ✔ | An uploaded file (receipt image, PDF) plus its OCR extraction result. |
 | `AiInsight` | ✔ | A generated insight/report snippet derived from the user's ledger. |
 
 `ParsedIntent` is a **transient value object** — the structured result of
-interpreting one input — stored inline (as `jsonb`) on the `ChatMessage`/`Attachment`.
+interpreting one input — stored inline (as `jsonb`) on the `ChatMessage`.
+
+> **No `Attachment` entity.** Receipt images are [out of scope](../features-list.md#out-of-scope):
+> scanning (F-1.13) extracts merchant / date / total, produces a draft, and the
+> image is discarded — see [§3.5](#35-receipt-scanning-ocr).
 
 ```mermaid
 erDiagram
     APP_USER ||--o{ CHAT_MESSAGE : sends
-    APP_USER ||--o{ ATTACHMENT  : uploads
     APP_USER ||--o{ AI_INSIGHT  : "generated for"
 
     CHAT_MESSAGE ||--o| TRANSACTION : "may create"
-    ATTACHMENT   ||--o| TRANSACTION : "may create"
-    TRANSACTION  ||--o{ ATTACHMENT  : "has receipt"
 
     CHAT_MESSAGE {
         string id PK
@@ -835,7 +798,7 @@ inline (`jsonb`) on the message/attachment that produced it.
 | Field | Type | Notes |
 |---|---|---|
 | `intent` | `IntentType` | What the user is trying to do. |
-| `txnType` | `TransactionType` | Inferred `INCOME` / `EXPENSE` / `TRANSFER`. |
+| `txnType` | `TransactionType` | Inferred `INCOME` / `EXPENSE`. |
 | `amount` | `long` | Minor units, in the user's active currency. |
 | `categoryId` | `String` | Best-match category; null if unresolved. |
 | `categoryGuess` | `String` | Raw label the model proposed (e.g. "food") before matching. |
@@ -849,7 +812,7 @@ inline (`jsonb`) on the message/attachment that produced it.
 
 **Resolution rules**
 - **Currency is never parsed from the message.** The amount is always interpreted in the user's single active currency ([§0.3](#03-one-active-currency-per-user)); a "$" or "€" in text is a magnitude marker, not a currency switch.
-- **Auto-category detection (F-1.9b):** category matching resolves `categoryGuess` against the user's categories (case-insensitive, synonym/alias aware, language-aware). The parser infers a category (and sub-category) from merchant/keywords — *"Spent $15 at Starbucks"* → **Food & Drinks → Coffee** — and the user can **correct** the suggestion, which is fed back as a preference for future matching. If no match and confidence is high, the UI may offer to **create** the category.
+- **Auto-category detection (F-1.14):** category matching resolves `categoryGuess` against the user's categories (case-insensitive, synonym/alias aware, language-aware). The parser infers a category (and sub-category) from merchant/keywords — *"Spent $15 at Starbucks"* → **Food & Drinks → Coffee** — and the user can **correct** the suggestion, which is fed back as a preference for future matching. If no match and confidence is high, the UI may offer to **create** the category.
 - Relative dates ("today", "yesterday", "last Friday") resolve against the user's timezone.
 - If `confidence < threshold` or `missingFields` is non-empty, the assistant asks a clarifying question instead of proposing a transaction.
 
@@ -888,47 +851,34 @@ public enum ChatMessageStatus { RECEIVED, PARSED, NEEDS_CLARIFICATION, CONFIRMED
 **Rules**
 - A `USER` message with `intent = CREATE_TRANSACTION` and sufficient confidence produces a **draft**; the transaction is only written after the user confirms, at which point `status = CONFIRMED` and `transactionId` is set.
 - `UPDATE_TRANSACTION` requires a resolvable target (the last transaction in the session, or one the user names); otherwise `NEEDS_CLARIFICATION`.
-- `QUERY` intents do not create transactions; they read the ledger and reply. This is the **financial assistant** (F-1.10b) — *"How much did I spend on food last month?"* → *"You spent $320 on food, 15% more than June."* Answers come from deterministic ledger aggregates ([§3.6](#36-aiinsight-insights--reports)) rendered into natural language in the user's language; it never fabricates figures. Query capability deepens in Phase 2 (F-2.3).
+- `QUERY` intents do not create transactions; they read the ledger and reply. This is the **financial assistant** (F-1.16) — *"How much did I spend on food last month?"* → *"You spent $320 on food, 15% more than June."* Answers come from deterministic ledger aggregates ([§3.6](#36-aiinsight-insights--reports)) rendered into natural language in the user's language; it never fabricates figures. Query capability deepens in Phase 2 (F-2.2).
 
-## 3.5 Attachment (receipts & OCR)
+## 3.5 Receipt scanning (OCR)
 
-An uploaded file plus its OCR result. Doubles as the manual "attach a receipt"
-feature (F-1.9).
+**No entity, no stored file.** Receipt scanning (F-1.13) is a *capture channel*,
+not a storage feature: the user photographs a bill, the extractor reads it, and
+the result becomes a draft transaction on the same confirm-before-write path as
+chat ([§3.1](#31-the-capture-pipeline)). Attaching receipts to transactions is
+[out of scope](../features-list.md#out-of-scope), so the image is never persisted
+and there is no `Attachment` table, object-storage bucket, or retention job.
 
-| Field | Type | Notes |
-|---|---|---|
-| `id` | `String` (UUID) | PK. |
-| `userId` | `String` | Owner. Not null, indexed. |
-| `transactionId` | `String` | FK → `transaction`. Nullable until a transaction is created/linked. |
-| `kind` | `AttachmentKind` | `RECEIPT` / `BILL` / `DOCUMENT`. |
-| `storageKey` | `String(500)` | Object-storage key/path for the binary. The file itself is **not** stored in the DB. |
-| `contentType` | `String(100)` | MIME type. |
-| `fileSize` | `long` | Bytes. |
-| `ocrStatus` | `OcrStatus` | `PENDING` / `PROCESSING` / `DONE` / `FAILED`. |
-| `ocrResult` | `jsonb` | Extracted fields: merchant, date, total, tax, line items, currency-as-seen. Nullable. |
-
-```java
-public enum AttachmentKind { RECEIPT, BILL, DOCUMENT }
-public enum OcrStatus      { PENDING, PROCESSING, DONE, FAILED }
-```
-
-**OCR result (`ocrResult` shape)** — provider-agnostic so the vendor can be swapped:
+**Extraction shape** — provider-agnostic so the vendor can be swapped:
 
 ```
-{ merchant, purchaseDate, currencyAsSeen, subtotal, tax, total,
-  lineItems: [{ description, qty, unitPrice, amount }], rawText }
+{ merchant, purchaseDate, currencyAsSeen, total, rawText }
 ```
 
 **Rules**
-- OCR runs **asynchronously**: upload returns immediately with `ocrStatus = PENDING`; a worker fills `ocrResult`.
-- The extracted `total` is normalized into the user's active currency and fed through the same draft-transaction confirmation flow ([§3.1](#31-the-capture-pipeline)). `currencyAsSeen` is reference only.
-- Line items may map to multiple categories; the MVP creates **one** expense for the total and keeps line items as reference (splitting is a proposal, F-P.9).
-- Deleting a transaction unlinks its attachments (`transactionId → null`); the binary is garbage-collected by a retention job.
+- The extractor is expected to identify **merchant, date, and total**; anything else it reads is discarded with the image.
+- `merchant` resolves to a [`Payee`](#15b-payee) and `total` normalizes into the user's active currency — the same resolution the chat path uses, so both channels produce identical rows. `currencyAsSeen` is a sanity check, not a conversion input.
+- Extraction happens **outside** the DB transaction; only the confirmed draft is persisted.
+- **Uploads are rate-limited per user** — OCR costs compute, so it falls under the standing "rate-limit anything that costs money or compute" rule.
+- Line items are not split into several categorized expenses; one expense is created for the total. Splitting is future work (F-F.3).
 
 ## 3.6 AiInsight (insights & reports)
 
 A generated, human-readable insight derived from the user's ledger — backing the
-AI insights feature (F-1.10) and the narrative parts of reports and the dashboard.
+AI insights feature (F-1.15) and the narrative parts of reports and the dashboard.
 
 | Field | Type | Notes |
 |---|---|---|
@@ -959,7 +909,7 @@ public enum InsightSeverity { INFO, WARNING, CRITICAL }
 - Insights are **derived and read-only**; they never modify the ledger. Figures must be reproducible from `Transaction`/`Budget`/`SavingsGoal`/`Loan` data.
 - Generated on a schedule and/or on demand; regeneration supersedes prior insights for the same `(type, period)`.
 - The AI is a **presentation/analysis layer over deterministic aggregates** — numbers in `data` come from ledger queries; the model turns them into language. Keeps insights accurate and auditable.
-- All insight text respects the user's selected language (F-1.24).
+- All insight text respects the user's selected language (F-1.26).
 
 ## 3.7 Privacy, safety & language
 
@@ -977,17 +927,20 @@ protecting access to financial data. These concern the *user's account and
 device*, not money movements. The existing auth stack (JWT, OAuth, email/OTP,
 `app_user`, `user_roles`, Redis) is unchanged.
 
-> **Phase.** App lock, encryption, login history, and session management are
-> **MVP** (F-1.18).
+> **Phase.** App lock (F-1.23) and data protection (F-1.24) are **MVP**.
+> **Session management is [out of scope](../features-list.md#out-of-scope)** and
+> **login history** was dropped in BRD v1.0 — both are documented below only as a
+> spec to revive if they come back. Neither has a table, and neither should be
+> built without a decision that puts it back in a phase.
 
 ## 4.1 Feature overview
 
-| Feature | What it protects | Where enforced |
-|---|---|---|
-| **App lock** (PIN / biometric) | Local device access to a logged-in session. | Client-side gate; server unaffected. |
-| **Data encryption** | Data at rest and in transit. | Infrastructure + DB, not per-entity domain. |
-| **Login history** | Visibility into account access. | Server: `login_event` records. |
-| **Session management** | Control over active sessions/devices. | Server: `user_session` records + token revocation. |
+| Feature | What it protects | Where enforced | Phase |
+|---|---|---|---|
+| **App lock** (PIN / biometric) | Local device access to a logged-in session. | Client-side gate; server unaffected. | MVP (F-1.23) |
+| **Data protection** | Data at rest and in transit. | Infrastructure + DB, not per-entity domain. | MVP (F-1.24) |
+| **Login history** | Visibility into account access. | Server: `login_event` records. | 🚫 dropped |
+| **Session management** | Control over active sessions/devices. | Server: `user_session` records + token revocation. | 🚫 out of scope |
 
 ## 4.2 App lock (client-side)
 
@@ -1001,12 +954,16 @@ A second gate *after* login: even with a valid session, opening the app requires
 ## 4.3 Data encryption
 
 - **In transit:** all API traffic over TLS (HTTPS) — infrastructure baseline.
-- **At rest:** database-level encryption; object storage (receipt attachments, [§3.5](#35-attachment-receipts--ocr)) encrypted by the storage provider.
+- **At rest:** database-level encryption. No object storage is involved — receipt images are never stored ([§3.5](#35-receipt-scanning-ocr)).
 - **Secrets:** JWT signing keys and provider credentials via the platform secret manager, never in the DB.
 
 Infrastructure/deployment concern — no entities introduced; documented here so the security surface is complete in one place.
 
-## 4.4 Login history — LoginEvent
+## 4.4 Login history — LoginEvent *(dropped)*
+
+> Not in BRD v1.0 and **not built**. Kept as a spec only. Note that `audit.log`
+> already records logins, OTP issuance, and password resets server-side — this
+> entity was about making that history *visible to the user*.
 
 An append-only audit of authentication events.
 
@@ -1029,7 +986,11 @@ public enum LoginEventType { LOGIN_SUCCESS, LOGIN_FAILURE, LOGOUT, TOKEN_REFRESH
 - Append-only; never updated or deleted by users. Retention is policy-bound (e.g. 90 days) via a cleanup job.
 - `LOGIN_FAILURE` events feed rate-limiting / suspicious-activity alerts.
 
-## 4.5 Session management — UserSession
+## 4.5 Session management — UserSession *(out of scope)*
+
+> Explicitly [out of scope](../features-list.md#out-of-scope) in BRD v1.0 —
+> access is protected by App Lock (F-1.23) instead. **Not built.** Kept as a spec
+> only.
 
 A record of each active authenticated session/device, so a user can **see active
 sessions and remotely sign out** a device.
@@ -1066,7 +1027,7 @@ public enum SessionStatus { ACTIVE, REVOKED, EXPIRED }
 
 This part covers three multi-user features:
 
-1. **Shared Savings Goals** — the personal `SavingsGoal` ([§1.9](#19-savingsgoal--goalcontribution)) is MVP; this adds the layer that makes a goal **shareable** (`GoalMember`).
+1. **Shared Savings Goals** — the personal `SavingsGoal` ([§1.9](#19-savingsgoal--goalcontribution)) is itself Phase 3 (F-3.1) though already built; this adds the layer that makes a goal **shareable** (`GoalMember`, F-3.7).
 2. **Family Spaces** — a permanent **shared workspace** for a household: shared accounts, categories, budgets, and transactions every member sees, with per-member attribution.
 3. **Shared Groups** — a Splitwise-style temporary group with its own expense ledger, member split balances, settle-up, and a **close** action.
 
@@ -1108,7 +1069,7 @@ public enum MemberStatus { INVITED, ACTIVE, LEFT }
 ## 5.2 Shared Savings Goals (GoalMember)
 
 The base `SavingsGoal` / `GoalContribution` are MVP ([§1.9](#19-savingsgoal--goalcontribution)).
-Phase 3 (F-3.2) adds the ability to **invite other users** and see **aggregate**
+Phase 3 (F-3.7) adds the ability to **invite other users** and see **aggregate**
 progress. Two small deltas support this:
 
 - `SavingsGoal` gains a `shared boolean` flag (default `false`; `true` once members are invited).
@@ -1231,12 +1192,12 @@ family:    WHERE space_id = :familyId AND :me is an ACTIVE member of :familyId
 | `status` | `MemberStatus` | `INVITED` / `ACTIVE` / `LEFT`. |
 | `invitedBy` | `String` | FK → `app_user`. |
 
-**Roles (F-3.1a)**
+**Roles (F-3.4)**
 - `ADMIN` — manage members, accounts, budgets; full read/write; can archive the family. (The `ownerUserId` is always an admin.)
 - `MEMBER` — log transactions, view everything; cannot manage members or delete accounts.
 - `VIEWER` — read-only (e.g. a teen who should see but not edit).
 
-### Attribution & reporting (F-3.1b, F-3.1c)
+### Attribution & reporting (F-3.5, F-3.6)
 
 Because each `transaction` keeps its creator `user_id`, family reports support
 both views:
@@ -1261,7 +1222,7 @@ across all members' transactions in that space.
 
 ## 5.4 Shared Groups (Splitwise-style)
 
-A **SharedGroup** (F-3.3) is a self-contained ledger, **independent of any
+A **SharedGroup** (F-3.8) is a self-contained ledger, **independent of any
 member's personal accounts**. Members log group expenses, each split among
 participants, and the group tracks **who owes whom**. When the trip ends the group
 is **settled** and **closed** (frozen, read-only). A member's personal `Account`
@@ -1416,6 +1377,7 @@ net(m) = paid_total(m) - owed_total(m) - settled_out(m) + settled_in(m)
 ## 5.5 How sharing touches the MVP model
 
 - **No change to the core `Transaction` table's shape for personal use.** The one addition is a nullable `space_id` column on `account`, `category`, `budget`, `transaction`, and `recurring_transaction` (Family): `NULL` = personal (unchanged, **no row migration**), a family id = shared.
+- **A family space needs more than one account**, so it depends on the same groundwork as F-F.1 — the single-account rule ([§1.4](#14-account)) is a *personal-scope* rule, and a shared space is where it first has to bend.
 - **Access control** is the real departure: shared entities are scoped by a membership join (`family_member` / `goal_member` / `group_member`) or by `space_id`, not by a single `user_id`. `user_id` is retained on owned rows as creator/attribution.
 - **Invitations** reuse the existing email/OTP infrastructure — a placeholder member with `status = INVITED` and an email; on signup the `user_id` is backfilled.
 
@@ -1427,32 +1389,42 @@ net(m) = paid_total(m) - owed_total(m) - settled_out(m) + settled_in(m)
 
 | Phase | Domain delivers |
 |---|---|
-| **MVP** | Core ledger ([Part 1](#part-1--core-ledger-mvp)) incl. personal savings goals; debts/loans & subscriptions ([Part 2](#part-2--debts--commitments-mvp)); ingestion & AI ([Part 3](#part-3--ingestion--ai-mvp--p2)) incl. chat/OCR/insights/assistant; security ([Part 4](#part-4--security-mvp)). Single active currency, no sharing. |
-| **Phase 2** | Voice entry, advanced financial assistant, category merge, audit/undo (see [Features List](../features-list.md)). No new sharing entities. |
-| **Phase 3** | Sharing ([Part 5](#part-5--sharing--multi-user-phase-3)): family spaces (`space_id` + `family_member`, per-member attribution, shared budgets), goal sharing (`GoalMember`), and Splitwise-style groups. |
+| **MVP** | Core ledger ([Part 1](#part-1--core-ledger-mvp)): the single account, categories, payees, transactions, budgets, recurring (incl. subscriptions), and the monthly position. Ingestion & AI ([Part 3](#part-3--ingestion--ai-mvp)): chat, voice, OCR, auto-category, insights, assistant. Security ([Part 4](#part-4--security-mvp)): app lock, data protection. Single active currency, no sharing. |
+| **Phase 2** | Free/Premium plans, advanced financial assistant, activity history & undo. No new sharing entities. |
+| **Phase 3** | Savings goals ([§1.9](#19-savingsgoal--goalcontribution)) and debts/loans ([Part 2](#part-2--debts--commitments-phase-3)); then sharing ([Part 5](#part-5--sharing--multi-user-phase-3)): family spaces, shared budgets, shared goals, group expense sharing. |
+| **Future** | Multiple accounts & transfers (F-F.1), multi-currency/FX (F-F.2), receipt splitting (F-F.3), bank sync (F-F.4), quick add (F-F.5), payoff strategies (F-F.6). |
+
+**Built ahead of its phase:** savings goals ([§1.9](#19-savingsgoal--goalcontribution))
+have a working backend from when they were an MVP feature. They stay — Phase 3
+commits to them (OQ-7).
 
 ## 6.2 Flyway migrations
 
+Actual migrations in `svcs/core/src/main/resources/db/migration/`:
+
 | Migration | Adds |
 |---|---|
-| `V3__finance_schema.sql` | Core ledger + savings goals + loans + subscriptions ([Part 1](#part-1--core-ledger-mvp), [Part 2](#part-2--debts--commitments-mvp)). |
-| `V4__ingestion_ai.sql` | `chat_message`, `attachment`, `ai_insight` ([Part 3](#part-3--ingestion--ai-mvp--p2)). |
-| `V4b__security.sql` | `login_event`, `user_session`, and `app_user` security columns ([Part 4](#part-4--security-mvp)). |
-| `V5__family_spaces.sql` | `family`, `family_member`, plus `space_id` columns on owned tables. |
-| `V6__shared_groups.sql` | `shared_group`, `group_member`, `group_expense`, `expense_split`, `settlement`. |
-| `V7__goal_sharing.sql` | `goal_member`, plus the `shared` flag on `savings_goal`. |
+| `V1__auth_schema.sql` | `app_user`, `user_roles`, `verification`. |
+| `V2__finance_schema.sql` | `account`, `category`, `payee`, `transaction`, `budget`, `recurring_transaction`, `savings_goal`, `goal_contribution` ([Part 1](#part-1--core-ledger-mvp)), plus `app_user.active_currency` / `language`. |
+| `V3__chat_ingestion.sql` | `chat_message` ([Part 3](#part-3--ingestion--ai-mvp)). |
+| `V4__onboarding_state.sql` | `app_user.onboarded` — separates a currency the user confirmed from one seeded at signup ([§0.3](#03-one-active-currency-per-user)). Backfills `TRUE` for anyone who already had an `active_currency`. |
+
+Not yet written: security columns ([Part 4](#part-4--security-mvp)), loans
+([Part 2](#part-2--debts--commitments-phase-3)), `ai_insight`, and the Phase 3
+sharing tables.
 
 ## 6.3 Traceability
 
 | Domain concept | Schema | API |
 |---|---|---|
-| Core entities & enums ([Part 1](#part-1--core-ledger-mvp)) | `V3__finance_schema.sql` | DTOs & endpoints in `../api/api-design.md` |
+| Core entities & enums ([Part 1](#part-1--core-ledger-mvp)) | `V2__finance_schema.sql` | DTOs & endpoints under `/api/v1` |
+| The single account ([§1.4](#14-account)) | `account`, unique on `user_id` | `GET /api/v1/account` (read only) |
+| Monthly position ([§1.10](#110-monthly-position-invariant)) | **no column** — derived from `transaction` | `GET /api/v1/summary/monthly` |
 | Savings goals ([§1.9](#19-savingsgoal--goalcontribution)) | `savings_goal`, `goal_contribution` | goal + contribution endpoints |
-| Balance invariant ([§1.10](#110-balance-derivation-invariant)) | `account.current_balance` | recompute endpoint |
-| Net worth ([§1.11](#111-net-worth-derived)) | derived from accounts + loans | net-worth report |
 | Money as minor units ([§0.2](#02-money-representation)) | `BIGINT amount`, `int` basis points | integer `amount` + `currency` in DTOs |
-| Single active currency ([§0.3](#03-one-active-currency-per-user)) | `app_user.active_currency` | user settings endpoint |
-| Loans & subscriptions ([Part 2](#part-2--debts--commitments-mvp)) | `loan`, `loan_installment`, `loan_payment`, `subscription` | loan/schedule/payment/subscription endpoints |
-| Ingestion & AI ([Part 3](#part-3--ingestion--ai-mvp--p2)) | `V4__ingestion_ai.sql` | conversational-entry, upload/OCR, insights endpoints |
-| Security ([Part 4](#part-4--security-mvp)) | `app_user` cols, `login_event`, `user_session` | settings, login-history, sessions endpoints |
-| Sharing ([Part 5](#part-5--sharing--multi-user-phase-3)) | `V5`–`V7`, `space_id` columns | membership-scoped endpoints |
+| Single active currency ([§0.3](#03-one-active-currency-per-user)) | `app_user.active_currency` | onboarding / preferences endpoint |
+| Recurring & subscriptions ([§1.8](#18-recurringtransaction)) | `recurring_transaction` incl. `trial_end_date` | recurring endpoints |
+| Loans ([Part 2](#part-2--debts--commitments-phase-3)) | *(Phase 3, not built)* | *(Phase 3)* |
+| Ingestion & AI ([Part 3](#part-3--ingestion--ai-mvp)) | `V3__chat_ingestion.sql` | chat entry, OCR upload, insights endpoints |
+| Security ([Part 4](#part-4--security-mvp)) | `app_user` columns | settings endpoints |
+| Sharing ([Part 5](#part-5--sharing--multi-user-phase-3)) | *(Phase 3, not built)* | membership-scoped endpoints |

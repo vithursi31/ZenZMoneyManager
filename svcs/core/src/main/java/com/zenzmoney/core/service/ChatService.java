@@ -165,7 +165,6 @@ public class ChatService {
 
         CreateTransactionRequest request = new CreateTransactionRequest();
         request.setType(draft.getTxnType());
-        request.setAccountId(draft.getAccountId());
         request.setCategoryId(draft.getCategoryId());
         request.setAmount(draft.getAmountMinor());
         request.setTxnDate(draft.getTxnDate());

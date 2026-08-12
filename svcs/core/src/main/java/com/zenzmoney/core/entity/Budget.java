@@ -1,6 +1,6 @@
 package com.zenzmoney.core.entity;
 
-import com.zenzmoney.common.domain.AccountStatus;
+import com.zenzmoney.common.domain.BudgetStatus;
 import com.zenzmoney.common.domain.BaseEntity;
 import com.zenzmoney.common.domain.BudgetPeriod;
 import jakarta.persistence.Column;
@@ -50,5 +50,5 @@ public class Budget extends BaseEntity {
     /** Reuses the ACTIVE / ARCHIVED enum (§1.7). */
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 50)
-    private AccountStatus status = AccountStatus.ACTIVE;
+    private BudgetStatus status = BudgetStatus.ACTIVE;
 }

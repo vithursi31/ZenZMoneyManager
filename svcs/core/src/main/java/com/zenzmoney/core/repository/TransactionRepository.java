@@ -11,8 +11,8 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * QuerydslPredicateExecutor is extended so the search/filter feature (F-1.19)
- * can build dynamic predicates over date range, category, account, amount, etc.
+ * QuerydslPredicateExecutor is extended so the search/filter feature (F-1.9)
+ * can build dynamic predicates over date range, category, amount, payee, etc.
  */
 public interface TransactionRepository
         extends JpaRepository<Transaction, String>, QuerydslPredicateExecutor<Transaction> {
@@ -21,17 +21,8 @@ public interface TransactionRepository
 
     List<Transaction> findByUserId(String userId);
 
-    List<Transaction> findByUserIdAndAccountId(String userId, String accountId);
-
-    List<Transaction> findByAccountId(String accountId);
-
-    List<Transaction> findByTransferAccountId(String transferAccountId);
-
-    /** True if any transaction uses this account as its source. */
-    boolean existsByAccountId(String accountId);
-
-    /** True if any transaction uses this account as a transfer destination. */
-    boolean existsByTransferAccountId(String transferAccountId);
+    /** True once the user has recorded anything — the test that freezes their currency (§0.3). */
+    boolean existsByUserId(String userId);
 
     /** True if any transaction is classified under this category. */
     boolean existsByCategoryId(String categoryId);
@@ -39,20 +30,20 @@ public interface TransactionRepository
     /** True if any transaction references this payee. */
     boolean existsByPayeeId(String payeeId);
 
-    // --- balance derivation (§1.10): sums an account's ledger by direction ---
+    // --- monthly position (§1.10) and budget spend (§1.7): sums over a [from, to) window ---
 
-    /** Σ amount for an account as the source, for one type (INCOME/EXPENSE/TRANSFER-out). */
+    /**
+     * Σ amount for one type in the half-open window {@code [from, to)} — the two
+     * queries behind the monthly position (F-1.2) and the dashboard (F-1.17).
+     * Served by {@code idx_transaction_user_date}.
+     */
     @Query("SELECT COALESCE(SUM(t.amount), 0) FROM Transaction t "
-            + "WHERE t.accountId = :accountId AND t.type = :type")
-    long sumAmountByAccountIdAndType(@Param("accountId") String accountId,
-                                     @Param("type") TransactionType type);
-
-    /** Σ amount transferred INTO an account (it is the transfer destination). */
-    @Query("SELECT COALESCE(SUM(t.amount), 0) FROM Transaction t "
-            + "WHERE t.transferAccountId = :accountId")
-    long sumTransferInByAccountId(@Param("accountId") String accountId);
-
-    // --- budget spend (§1.7): EXPENSE totals within a period window [from, to) ---
+            + "WHERE t.userId = :userId AND t.type = :type "
+            + "AND t.txnDate >= :from AND t.txnDate < :to")
+    long sumAmountByTypeInWindow(@Param("userId") String userId,
+                                 @Param("type") TransactionType type,
+                                 @Param("from") long from,
+                                 @Param("to") long to);
 
     /** Σ EXPENSE for one category in the window (a category budget). */
     @Query("SELECT COALESCE(SUM(t.amount), 0) FROM Transaction t "

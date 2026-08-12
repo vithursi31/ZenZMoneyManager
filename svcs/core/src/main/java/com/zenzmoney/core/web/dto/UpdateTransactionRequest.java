@@ -12,9 +12,10 @@ import java.util.List;
 
 /**
  * Full replacement of a transaction (PUT semantics) — same shape as create.
- * Because changing {@code type} changes which fields are required, an edit
- * re-specifies the whole transaction rather than patching fields; affected
- * account balances are re-derived (§1.6 / §1.10).
+ * An edit re-specifies the whole transaction rather than patching fields, so the
+ * type/category pairing is validated the same way on every write. Moving
+ * {@code txnDate} across a month boundary simply re-slices which month the row
+ * counts in; nothing is recomputed eagerly (§1.10).
  */
 @Getter
 @Setter
@@ -24,14 +25,10 @@ public class UpdateTransactionRequest {
     private TransactionType type;
 
     @NotBlank
-    private String accountId;
-
     private String categoryId;
 
     @Positive
     private long amount;
-
-    private String transferAccountId;
 
     private Long txnDate;
 

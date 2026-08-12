@@ -6,18 +6,15 @@
 ALTER TABLE app_user ADD COLUMN active_currency VARCHAR(3);
 ALTER TABLE app_user ADD COLUMN language        VARCHAR(10);
 
+-- Exactly ONE account per user (domain §1.4, F-1.1): a container for the user's
+-- activity, auto-created at onboarding and never named, typed, listed or picked.
+-- It deliberately has NO balance columns — the user-facing figure is the monthly
+-- position, derived from the ledger on read (§1.10). The unique index on user_id
+-- is what actually enforces the one-account rule; service code alone would race.
 CREATE TABLE account (
     id                VARCHAR(36) PRIMARY KEY,
     user_id           VARCHAR(36) NOT NULL,
-    name              VARCHAR(300) NOT NULL,
-    type              VARCHAR(50) NOT NULL,
     currency          VARCHAR(3) NOT NULL,
-    opening_balance   BIGINT NOT NULL DEFAULT 0,
-    current_balance   BIGINT NOT NULL DEFAULT 0,
-    color             VARCHAR(20),
-    icon              VARCHAR(50),
-    status            VARCHAR(50) NOT NULL DEFAULT 'ACTIVE',
-    sort_order        INT NOT NULL DEFAULT 0,
     metadata          JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_time      BIGINT,
     modified_time     BIGINT,
@@ -25,7 +22,7 @@ CREATE TABLE account (
     modified_by       VARCHAR(120),
     version           BIGINT
 );
-CREATE INDEX idx_account_user ON account(user_id);
+CREATE UNIQUE INDEX idx_account_user ON account(user_id);
 
 CREATE TABLE category (
     id                VARCHAR(36) PRIMARY KEY,
@@ -69,7 +66,6 @@ CREATE TABLE transaction (
     category_id           VARCHAR(36),
     amount                BIGINT NOT NULL,
     currency              VARCHAR(3) NOT NULL,
-    transfer_account_id   VARCHAR(36),
     txn_date              BIGINT NOT NULL,
     payee_id              VARCHAR(36),
     note                  VARCHAR(500),
@@ -83,8 +79,10 @@ CREATE TABLE transaction (
 );
 CREATE INDEX idx_transaction_user ON transaction(user_id);
 CREATE INDEX idx_transaction_account ON transaction(account_id);
-CREATE INDEX idx_transaction_transfer_account ON transaction(transfer_account_id);
 CREATE INDEX idx_transaction_category ON transaction(category_id);
+-- The monthly position (§1.10) sums one user's rows over a [from, to) date
+-- window on every dashboard read; this composite is the index that serves it.
+CREATE INDEX idx_transaction_user_date ON transaction(user_id, txn_date);
 CREATE INDEX idx_transaction_payee ON transaction(payee_id);
 CREATE INDEX idx_transaction_txn_date ON transaction(txn_date);
 
@@ -115,10 +113,12 @@ CREATE TABLE recurring_transaction (
     type                  VARCHAR(50) NOT NULL,
     amount                BIGINT NOT NULL,
     currency              VARCHAR(3) NOT NULL,
-    transfer_account_id   VARCHAR(36),
     cadence               VARCHAR(50) NOT NULL,
     next_run_date         BIGINT NOT NULL,
     anchor_day            INT NOT NULL DEFAULT 1,
+    -- Free-trial end for a subscription template (F-1.7); drives the
+    -- trial-expiry reminder (F-1.20). Null for anything without a trial.
+    trial_end_date        BIGINT,
     end_date              BIGINT,
     active                BOOLEAN NOT NULL DEFAULT TRUE,
     payee_id              VARCHAR(36),
@@ -132,10 +132,11 @@ CREATE TABLE recurring_transaction (
 CREATE INDEX idx_recurring_user ON recurring_transaction(user_id);
 CREATE INDEX idx_recurring_next_run ON recurring_transaction(next_run_date);
 
+-- Savings goals moved MVP -> Phase 3 (F-3.1) in BRD v1.0; the backend was
+-- already built, so the tables stay. Progress is the sum of contributions.
 CREATE TABLE savings_goal (
     id                VARCHAR(36) PRIMARY KEY,
     user_id           VARCHAR(36) NOT NULL,
-    account_id        VARCHAR(36) NOT NULL,
     name              VARCHAR(300) NOT NULL,
     target_amount     BIGINT NOT NULL,
     currency          VARCHAR(3) NOT NULL,
@@ -150,7 +151,6 @@ CREATE TABLE savings_goal (
     version           BIGINT
 );
 CREATE INDEX idx_savings_goal_user ON savings_goal(user_id);
-CREATE INDEX idx_savings_goal_account ON savings_goal(account_id);
 
 CREATE TABLE goal_contribution (
     id                VARCHAR(36) PRIMARY KEY,

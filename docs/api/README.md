@@ -106,10 +106,13 @@ shape for `CATEGORY_ID`, `PAYEE_ID`, `TRANSACTION_ID`, `BUDGET_ID`, `GOAL_ID`,
 
 > **Money is integer minor units** — `openingBalance: 500000` means $5000.00.
 
-## Chat transaction entry (F-1.9a)
+## Chat transaction entry (F-1.11)
 
 Chat is **plain REST, not a WebSocket** — one request per turn, and the draft is
-confirmed by a second call. Nothing streams, so there is no socket to open.
+confirmed by a second call. Nothing streams, so there is no socket to open. The
+one thing REST cannot do — telling a user something while their app is closed —
+is F-1.20's job and goes out as **FCM push**, not over a connection
+([plan](../features/push-notifications-fcm-plan.md)).
 
 `POST /chat` only ever produces a draft; `POST /chat/confirm` is the single path
 from chat to the ledger. That two-step gate is the safety story for AI money

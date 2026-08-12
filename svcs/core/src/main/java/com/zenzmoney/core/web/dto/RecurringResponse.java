@@ -9,15 +9,15 @@ import lombok.Getter;
 public class RecurringResponse {
 
     private final String id;
-    private final String accountId;
     private final String categoryId;
     private final TransactionType type;
     private final long amount;
     private final String currency;
-    private final String transferAccountId;
     private final RecurringCadence cadence;
+    /** The next due or renewal date. */
     private final long nextRunDate;
     private final int anchorDay;
+    private final Long trialEndDate;
     private final Long endDate;
     private final boolean active;
     private final String payeeId;
@@ -25,15 +25,14 @@ public class RecurringResponse {
 
     private RecurringResponse(RecurringTransaction r) {
         this.id = r.getId();
-        this.accountId = r.getAccountId();
         this.categoryId = r.getCategoryId();
         this.type = r.getType();
         this.amount = r.getAmount();
         this.currency = r.getCurrency();
-        this.transferAccountId = r.getTransferAccountId();
         this.cadence = r.getCadence();
         this.nextRunDate = r.getNextRunDate();
         this.anchorDay = r.getAnchorDay();
+        this.trialEndDate = r.getTrialEndDate();
         this.endDate = r.getEndDate();
         this.active = r.isActive();
         this.payeeId = r.getPayeeId();

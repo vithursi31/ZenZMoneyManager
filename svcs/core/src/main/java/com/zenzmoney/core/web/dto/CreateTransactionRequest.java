@@ -11,11 +11,10 @@ import lombok.Setter;
 import java.util.List;
 
 /**
- * Create a transaction. Currency is not sent — it is taken from the account
- * (single active currency, §0.3). Field requirements depend on {@code type}
- * (§1.6): INCOME/EXPENSE need a matching {@code categoryId} and no
- * {@code transferAccountId}; TRANSFER needs {@code transferAccountId} and no
- * category.
+ * Create a transaction (§1.6). Neither currency nor account is sent: the currency
+ * comes from the user's active currency (§0.3) and the account is the user's only
+ * one, resolved server-side (§1.4). {@code categoryId} is required and its kind
+ * must match {@code type}.
  */
 @Getter
 @Setter
@@ -24,18 +23,13 @@ public class CreateTransactionRequest {
     @NotNull
     private TransactionType type;
 
+    /** Required; its kind must match {@code type} (INCOME→INCOME, EXPENSE→EXPENSE). */
     @NotBlank
-    private String accountId;
-
-    /** Required for INCOME/EXPENSE (kind must match type); must be null for TRANSFER. */
     private String categoryId;
 
     /** Minor units, positive magnitude; direction is derived from type. */
     @Positive
     private long amount;
-
-    /** Required for TRANSFER (destination, ≠ accountId); must be null otherwise. */
-    private String transferAccountId;
 
     /** Epoch millis; defaults to now when omitted (null/0). */
     private Long txnDate;

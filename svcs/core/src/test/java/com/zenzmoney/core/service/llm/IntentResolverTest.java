@@ -1,14 +1,11 @@
 package com.zenzmoney.core.service.llm;
 
-import com.zenzmoney.common.domain.AccountStatus;
 import com.zenzmoney.common.domain.CategoryKind;
 import com.zenzmoney.common.domain.IntentType;
 import com.zenzmoney.common.domain.TransactionType;
-import com.zenzmoney.core.entity.Account;
 import com.zenzmoney.core.entity.Category;
 import com.zenzmoney.core.entity.ParsedIntent;
 import com.zenzmoney.core.entity.User;
-import com.zenzmoney.core.repository.AccountRepository;
 import com.zenzmoney.core.repository.CategoryRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -42,7 +39,6 @@ class IntentResolverTest {
     private static final ZoneId COLOMBO = ZoneId.of("Asia/Colombo");   // UTC+5:30
 
     @Mock CategoryRepository categoryRepository;
-    @Mock AccountRepository accountRepository;
     @InjectMocks IntentResolver resolver;
 
     // --- amount: minor units, never a float ---
@@ -142,7 +138,7 @@ class IntentResolverTest {
         assertEquals(now, IntentResolver.resolveDate("the day after the eclipse", COLOMBO, now));
     }
 
-    // --- category (F-1.9b) ---
+    // --- category (F-1.14) ---
 
     @Test
     void category_prefersACategoryTheUserNamedOverTheModelsGuess() {
@@ -243,12 +239,6 @@ class IntentResolverTest {
     }
 
     @Test
-    void type_neverOverridesATransfer() {
-        assertEquals(TransactionType.TRANSFER,
-                IntentResolver.resolveType(TransactionType.TRANSFER, "paid 500 into my savings"));
-    }
-
-    @Test
     void type_matchesWholeWordsOnly() {
         assertNull(IntentResolver.resolveType(null, "paycheck arrived"), "'pay' must not match inside 'paycheck'");
     }
@@ -308,7 +298,6 @@ class IntentResolverTest {
     @Test
     void resolve_buildsACompleteDraftFromAFrenchMessage() {
         User user = user("u1", "EUR", "UTC");
-        when(accountRepository.findByUserId("u1")).thenReturn(List.of(account("a1", "Cash", "EUR", 0)));
         when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
                 category("c-transport", "Transport", CategoryKind.EXPENSE)));
 
@@ -325,7 +314,6 @@ class IntentResolverTest {
     @Test
     void resolve_buildsACompleteDraftFromASpanishMessage() {
         User user = user("u1", "EUR", "UTC");
-        when(accountRepository.findByUserId("u1")).thenReturn(List.of(account("a1", "Cash", "EUR", 0)));
         when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
                 category("c-health", "Health", CategoryKind.EXPENSE)));
 
@@ -393,7 +381,6 @@ class IntentResolverTest {
     @Test
     void resolve_buildsACompleteDraftFromAGoodExtraction() {
         User user = user("u1", "USD", "Asia/Colombo");
-        when(accountRepository.findByUserId("u1")).thenReturn(List.of(account("a1", "Cash", "USD", 0)));
         when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
                 category("c-groc", "Groceries", CategoryKind.EXPENSE)));
 
@@ -406,7 +393,6 @@ class IntentResolverTest {
         assertEquals(TransactionType.EXPENSE, draft.getTxnType());
         assertEquals(1550L, draft.getAmountMinor());
         assertEquals("USD", draft.getCurrency());
-        assertEquals("a1", draft.getAccountId());
         assertEquals("c-groc", draft.getCategoryId());
         assertEquals("Keells", draft.getPayeeName(), "the payee stays a name until confirm (§5.7)");
         assertEquals("tea things", draft.getNote());
@@ -416,7 +402,6 @@ class IntentResolverTest {
     @Test
     void resolve_takesCurrencyFromTheUserNotTheMessage() {
         User user = user("u1", "LKR", "Asia/Colombo");
-        when(accountRepository.findByUserId("u1")).thenReturn(List.of(account("a1", "Cash", "LKR", 0)));
         when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
                 category("c-food", "Food & Drinks", CategoryKind.EXPENSE)));
 
@@ -428,12 +413,14 @@ class IntentResolverTest {
         assertEquals(500L, draft.getAmountMinor());
     }
 
+    /**
+     * A draft never names an account — the user has one and it is resolved on confirm
+     * (§1.4). It does need the currency, because the amount is converted to minor units
+     * against it, so a user who has not onboarded cannot produce a complete draft.
+     */
     @Test
-    void resolve_picksTheFirstActiveAccountAndSkipsArchivedOnes() {
-        User user = user("u1", "USD", "UTC");
-        Account archived = account("a-arch", "Old Card", "USD", 0);
-        archived.setStatus(AccountStatus.ARCHIVED);
-        when(accountRepository.findByUserId("u1")).thenReturn(List.of(archived, account("a2", "Cash", "USD", 1)));
+    void resolve_reportsMissingCurrencyBeforeOnboarding() {
+        User user = user("u1", null, "UTC");
         when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
                 category("c-food", "Food & Drinks", CategoryKind.EXPENSE)));
 
@@ -441,27 +428,13 @@ class IntentResolverTest {
                 extraction(IntentType.CREATE_TRANSACTION, TransactionType.EXPENSE,
                         "5", "Food & Drinks", "today", null, null, 0.9));
 
-        assertEquals("a2", draft.getAccountId());
-    }
-
-    @Test
-    void resolve_reportsMissingAccountWhenTheUserHasNone() {
-        User user = user("u1", "USD", "UTC");
-        when(accountRepository.findByUserId("u1")).thenReturn(List.of());
-        when(categoryRepository.findByUserId("u1")).thenReturn(List.of());
-
-        ParsedIntent draft = resolver.resolve(user, "spent 5 on lunch",
-                extraction(IntentType.CREATE_TRANSACTION, TransactionType.EXPENSE,
-                        "5", "Food & Drinks", "today", null, null, 0.9));
-
         assertFalse(draft.isComplete());
-        assertTrue(draft.getMissingFields().contains("account"));
+        assertTrue(draft.getMissingFields().contains("currency"));
     }
 
     @Test
     void resolve_reportsMissingAmountWhenTheModelWroteJunk() {
         User user = user("u1", "USD", "UTC");
-        when(accountRepository.findByUserId("u1")).thenReturn(List.of(account("a1", "Cash", "USD", 0)));
         when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
                 category("c-food", "Food & Drinks", CategoryKind.EXPENSE)));
 
@@ -475,22 +448,8 @@ class IntentResolverTest {
     }
 
     @Test
-    void resolve_refusesTransfersFromChat() {
-        User user = user("u1", "USD", "UTC");
-        when(accountRepository.findByUserId("u1")).thenReturn(List.of(account("a1", "Cash", "USD", 0)));
-
-        ParsedIntent draft = resolver.resolve(user, "moved 100 from cash to savings",
-                extraction(IntentType.CREATE_TRANSACTION, TransactionType.TRANSFER,
-                        "100", null, "today", null, null, 0.9));
-
-        assertFalse(draft.isComplete());
-        assertTrue(draft.getMissingFields().contains("transfer"), "transfers are out of scope (§2)");
-    }
-
-    @Test
     void resolve_appliesTheUsersVerbToTheDraftNotJustTheModelsType() {
         User user = user("u1", "USD", "UTC");
-        when(accountRepository.findByUserId("u1")).thenReturn(List.of(account("a1", "Cash", "USD", 0)));
         when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
                 category("c-transport", "Transport", CategoryKind.EXPENSE)));
 
@@ -511,7 +470,6 @@ class IntentResolverTest {
     @Test
     void resolve_asksAboutDirectionWhenTheGuessKindContradictsTheType() {
         User user = user("u1", "USD", "UTC");
-        when(accountRepository.findByUserId("u1")).thenReturn(List.of(account("a1", "Cash", "USD", 0)));
         when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
                 category("c-food", "Food & Drinks", CategoryKind.EXPENSE),
                 category("c-salary", "Salary", CategoryKind.INCOME)));
@@ -529,7 +487,6 @@ class IntentResolverTest {
     @Test
     void resolve_leavesAnUnmatchedGuessAloneRatherThanCallingItAContradiction() {
         User user = user("u1", "USD", "UTC");
-        when(accountRepository.findByUserId("u1")).thenReturn(List.of(account("a1", "Cash", "USD", 0)));
         when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
                 category("c-salary", "Salary", CategoryKind.INCOME)));
 
@@ -569,16 +526,6 @@ class IntentResolverTest {
         u.setActiveCurrency(currency);
         u.setTimezone(timezone);
         return u;
-    }
-
-    private static Account account(String id, String name, String currency, int sortOrder) {
-        Account a = new Account();
-        a.setId(id);
-        a.setName(name);
-        a.setCurrency(currency);
-        a.setSortOrder(sortOrder);
-        a.setStatus(AccountStatus.ACTIVE);
-        return a;
     }
 
     private static Category category(String id, String name, CategoryKind kind) {

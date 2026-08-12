@@ -13,7 +13,6 @@ import lombok.Getter;
 public class GoalResponse {
 
     private final String id;
-    private final String accountId;
     private final String name;
     private final long targetAmount;
     private final String currency;
@@ -28,7 +27,6 @@ public class GoalResponse {
 
     private GoalResponse(SavingsGoal g, long saved) {
         this.id = g.getId();
-        this.accountId = g.getAccountId();
         this.name = g.getName();
         this.targetAmount = g.getTargetAmount();
         this.currency = g.getCurrency();

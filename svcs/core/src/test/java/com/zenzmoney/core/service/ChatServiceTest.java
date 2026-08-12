@@ -219,7 +219,6 @@ class ChatServiceTest {
         verify(transactionService).create(request.capture());
         assertEquals(TransactionType.EXPENSE, request.getValue().getType());
         assertEquals(500L, request.getValue().getAmount());
-        assertEquals("a1", request.getValue().getAccountId());
         assertEquals("c1", request.getValue().getCategoryId());
         assertEquals("Keells", request.getValue().getPayeeName(),
                 "the name goes to TransactionService, which owns payee resolution");
@@ -309,7 +308,6 @@ class ChatServiceTest {
         draft.setTxnType(TransactionType.EXPENSE);
         draft.setAmountMinor(500L);
         draft.setCurrency("USD");
-        draft.setAccountId("a1");
         draft.setCategoryId("c1");
         draft.setTxnDate(1_800_000_000_000L);
         draft.setPayeeName("Keells");

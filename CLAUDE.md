@@ -2,9 +2,11 @@
 
 ## Product Overview
 
-ZenZ Money Manager is a **personal finance application**. A single user tracks where money lives (accounts), where it moves (transactions, transfers), plans against it (budgets, savings goals, debts, subscriptions), and gets insight from it (dashboard, reports, AI assistant) — in their own language and currency, behind a device lock.
+ZenZ Money Manager is a **personal finance application**. A single user records income and expenses in **one account**, sees their **monthly position** (income − expenses for the selected calendar month), plans against it (budgets, recurring commitments and subscriptions), and gets insight from it (dashboard, reports, AI assistant) — in their own language and currency, behind a device lock.
 
-**Current state:** the backend implements the **authentication foundation** only. The finance domain (accounts, transactions, budgets, goals, recurring, contributions) exists as **entities + repositories + Flyway schema** (`V2__finance_schema.sql`), but has **no services, controllers, or DTOs yet** — that's the work in flight. Frontend templates are placeholder Thymeleaf: no CSS framework, no JS, no design system.
+**Current state:** auth is complete, and the **core ledger has services, controllers, and DTOs** — account, category, payee, transaction, budget, recurring, savings goal, plus chat/NLP capture. Frontend templates are placeholder Thymeleaf: no CSS framework, no JS, no design system.
+
+> **The product model changed on 2026-08-08 (BRD v1.0)** and every feature ID was renumbered. Two rules now shape the whole domain: **exactly one account per user** (auto-created, unnamed, untyped, never chosen) and **no stored balance** — the figure shown is derived per calendar month. That removed transfers, opening/current balances, balance reconciliation, net worth, receipt attachments, and session management; it moved savings goals and debt to Phase 3 and promoted voice entry into the MVP. Read [features-list.md](docs/features-list.md) before designing anything, and use its [ID mapping](docs/features-list.md#id-mapping-2026-08-08) when reading older commits.
 
 What's actually working today:
 - Email/password **registration** with email-verification OTP, and **login** (JWT access + refresh).
@@ -19,7 +21,8 @@ Product docs — read these before designing any finance feature:
 | [docs/features-list.md](docs/features-list.md) | Feature catalogue with stable IDs (`F-1.3`, `F-2.x`) grouped by phase, with per-feature status. **Feature IDs are the shared vocabulary** — reference them in commits, branches, and tests. |
 | [docs/domain/domain-documentation.md](docs/domain/domain-documentation.md) | The consolidated domain model — entities, ERD, enums, invariants, per-part scope. The authority on schema shape. |
 | [docs/roadmap.md](docs/roadmap.md) | Phase sequencing and what is deliberately unscheduled. |
-| [docs/features/chat-transaction-entry-plan.md](docs/features/chat-transaction-entry-plan.md) | Implementation plan for F-1.9a (NLP transaction entry). |
+| [docs/features/chat-transaction-entry-plan.md](docs/features/chat-transaction-entry-plan.md) | Design rationale for F-1.11 (NLP transaction entry) — now implemented. |
+| [docs/features/push-notifications-fcm-plan.md](docs/features/push-notifications-fcm-plan.md) | Plan for F-1.20 notifications — **FCM push over the existing REST API**, device-token registration, and the audience seam Phase 3 sharing (F-3.3) extends. Records why no WebSocket is being built: chat is request/response, and the reminders that matter fire while the app is closed. |
 | [svcs/AUTH_FLOW_PORTABLE.md](svcs/AUTH_FLOW_PORTABLE.md) | Framework-free walkthrough of the whole auth flow. |
 | [docs/production-release.md](docs/production-release.md) | The prd release process — pre-flight gates, versioning/tagging, build, deploy, verify, rollback. Read with [DEPLOYMENT.md](DEPLOYMENT.md), which is the one-time infrastructure runbook. |
 
@@ -31,7 +34,7 @@ These come from [domain-documentation.md §0](docs/domain/domain-documentation.m
 - **One active currency per user** (MVP). Every money-bearing entity still carries its own `currency` column — that per-row column is the seam that makes multi-currency additive later. No implicit FX conversion.
 - **Every user-owned row carries `user_id VARCHAR(36) NOT NULL`, indexed.** Reads and writes are always scoped to the authenticated user — there are no cross-user reads until Part 5 sharing. Repository finders follow `findByIdAndUserId(...)` ([TransactionRepository.java:17](svcs/core/src/main/java/com/zenzmoney/core/repository/TransactionRepository.java#L17)); a bare `findById` on a user-owned entity in a request path is an authorization hole.
 - **Time is epoch milliseconds in a `BIGINT`** — audit columns *and* domain dates (`txn_date`, `next_run_date`). No `LocalDate`/`Timestamp` columns.
-- **Balances are derived from the ledger** (opening balance ± transactions), so they re-derive on every edit or delete — see [domain-documentation.md §1.10](docs/domain/domain-documentation.md#110-balance-derivation-invariant). `account.current_balance` is a cache of that derivation, never an independent source of truth.
+- **One account per user, and no stored balance anywhere.** The account is auto-provisioned, has no `opening_balance`/`current_balance`, and is never named, typed, listed, or picked — `Transaction.accountId` is resolved **server-side** from the caller, never accepted from a request body. The user-facing figure is the **monthly position**: `Σ INCOME − Σ EXPENSE` over `[month start, next month start)` in the user's timezone, computed on read, carried forward nowhere — see [domain-documentation.md §1.10](docs/domain/domain-documentation.md#110-monthly-position-invariant). Consequently **there is no `TransactionType.TRANSFER`** (a transfer needs two accounts) and no reconciliation or net worth. Multiple accounts and transfers are future work (F-F.1); adding either back is a phase, not a patch.
 - **Enums are `@Enumerated(EnumType.STRING)` in `VARCHAR(50)`**, and the enum types live in `common/domain` — not in `core`.
 
 ## Project Info
@@ -84,7 +87,7 @@ Controller (@RestController / @Controller)
 
 - **JSON columns:** `@JdbcTypeCode(SqlTypes.JSON)` + `@Column(columnDefinition = "jsonb")` (see `Account.metadata`, `Transaction.tags`, `User.preferences`). Both annotations are required.
 
-- **Repositories** extend `JpaRepository<T, String>`. Add `QuerydslPredicateExecutor<T>` only where dynamic filtering is genuinely needed (currently `TransactionRepository`, for search/filter F-1.19). A `JPAQueryFactory` bean is available from [QueryDslConfig](svcs/core/src/main/java/com/zenzmoney/core/config/QueryDslConfig.java) for projections/aggregates that don't fit a derived finder. QueryDSL `Q` classes are generated by the annotation processor at `package` time — a missing `QTransaction` means the module hasn't been rebuilt.
+- **Repositories** extend `JpaRepository<T, String>`. Add `QuerydslPredicateExecutor<T>` only where dynamic filtering is genuinely needed (currently `TransactionRepository`, for search/filter F-1.9). A `JPAQueryFactory` bean is available from [QueryDslConfig](svcs/core/src/main/java/com/zenzmoney/core/config/QueryDslConfig.java) for projections/aggregates that don't fit a derived finder. QueryDSL `Q` classes are generated by the annotation processor at `package` time — a missing `QTransaction` means the module hasn't been rebuilt.
 
 - **Transactions are demarcated on the service, not the controller or repository** — `@Transactional` on the service method (see [RegistrationService](svcs/core/src/main/java/com/zenzmoney/core/service/RegistrationService.java), [OtpService](svcs/core/src/main/java/com/zenzmoney/core/service/OtpService.java)). **`spring.jpa.open-in-view=false`**, so nothing lazy-loads after the service returns: fetch everything you need inside the transaction. Keep slow work (email send, HTTP calls, OCR/AI, image processing) **outside** the transaction — process first, then a short transaction to persist. Holding a DB connection across a network call is how the pool starves under load.
 
@@ -147,7 +150,8 @@ Hybrid model, both paths converging on Spring Security's `SecurityContext`:
 Schema is managed by **Flyway**: [svcs/core/src/main/resources/db/migration/](svcs/core/src/main/resources/db/migration/), run automatically at startup, `baseline-on-migrate=true`.
 
 - `V1__auth_schema.sql` — `app_user`, `user_roles`, `verification`
-- `V2__finance_schema.sql` — `account`, `category`, `transaction`, `budget`, `recurring_transaction`, `savings_goal`, `goal_contribution` (each with a `user_id` index)
+- `V2__finance_schema.sql` — `account` (unique on `user_id`), `category`, `payee`, `transaction`, `budget`, `recurring_transaction`, `savings_goal`, `goal_contribution` (each with a `user_id` index)
+- `V3__chat_ingestion.sql` — `chat_message`
 
 **New schema goes in a new `V<n>__<name>.sql`.** Never edit an applied migration — Flyway fails on a checksum mismatch, and the only fix on a shared DB is a corrective migration. A migration must be **idempotent-safe to review**: state what it does to existing rows, not just to the shape.
 
@@ -305,7 +309,7 @@ Additional current posture: BCrypt password hashing, JWT type checking (a refres
 Default branch is **`main`** (`origin` = `vithursi31/ZenZMoneyManager`). History to date is direct commits on `main` by a single author, with no merge commits.
 
 - **Don't commit or push unless asked.** Leave the working tree for the developer to inspect; when a commit is requested and you're on `main`, **branch first**.
-- **Branch naming:** descriptive kebab-case matching what the change does, and reference the feature ID where one applies — `add-account-crud-f-1-1`, `fix-otp-rate-limit-window`, `flyway-migration-for-payee`. The branch is throwaway; its name exists to make `git log --oneline main` readable later.
+- **Branch naming:** descriptive kebab-case matching what the change does, and reference the feature ID where one applies — `add-monthly-position-f-1-2`, `fix-otp-rate-limit-window`, `flyway-migration-for-payee`. The branch is throwaway; its name exists to make `git log --oneline main` readable later.
 - **Commit messages:** short imperative summary, ideally under ~70 chars, saying what the change does — `Add deployment tooling for Oracle Cloud (Docker + compose + guide)` over `updated signup method`. Body for the *why* when it isn't obvious.
 - **Prefer merge over rebase** when a branch falls behind `main`. Rebase rewrites shas, breaks a reviewer's local checkout, and produces a history shape nobody asked for. Use it only when explicitly requested.
 - **History-rewriting operations** — force-push, amend on a pushed commit, rewriting a shared branch — need explicit authorisation. Prefer a new commit over amending.

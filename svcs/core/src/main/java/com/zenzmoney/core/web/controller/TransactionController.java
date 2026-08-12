@@ -37,13 +37,15 @@ public class TransactionController {
         return ResponseEntity.ok(ApiResponse.success(transactionService.create(req)));
     }
 
-    /** List the caller's transactions, optionally filtered by account and/or date range (epoch millis). */
+    /**
+     * List the caller's transactions, optionally within a date range (epoch millis).
+     * There is no account filter — the caller has one account (§1.4).
+     */
     @GetMapping
     public ResponseEntity<ApiResponse<List<TransactionResponse>>> list(
-            @RequestParam(name = "accountId", required = false) String accountId,
             @RequestParam(name = "from", required = false) Long from,
             @RequestParam(name = "to", required = false) Long to) {
-        return ResponseEntity.ok(ApiResponse.success(transactionService.list(accountId, from, to)));
+        return ResponseEntity.ok(ApiResponse.success(transactionService.list(from, to)));
     }
 
     @GetMapping("/{id}")

@@ -34,7 +34,6 @@ class ParsedIntentSerializationTest {
         draft.setCurrency("USD");
         draft.setCategoryId("c1");
         draft.setCategoryGuess("Groceries");
-        draft.setAccountId("a1");
         draft.setTxnDate(1_800_000_000_000L);
         draft.setPayeeName("Keells");
         draft.setNote("tea things");
@@ -49,7 +48,6 @@ class ParsedIntentSerializationTest {
         assertEquals("USD", back.getCurrency());
         assertEquals("c1", back.getCategoryId());
         assertEquals("Groceries", back.getCategoryGuess());
-        assertEquals("a1", back.getAccountId());
         assertEquals(1_800_000_000_000L, back.getTxnDate());
         assertEquals("Keells", back.getPayeeName());
         assertEquals("tea things", back.getNote());

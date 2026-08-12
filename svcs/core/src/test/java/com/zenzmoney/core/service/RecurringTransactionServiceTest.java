@@ -1,15 +1,13 @@
 package com.zenzmoney.core.service;
 
-import com.zenzmoney.common.domain.AccountStatus;
 import com.zenzmoney.common.domain.CategoryKind;
 import com.zenzmoney.common.domain.RecurringCadence;
 import com.zenzmoney.common.domain.TransactionType;
 import com.zenzmoney.common.exception.BadRequestException;
 import com.zenzmoney.common.exception.NotFoundException;
-import com.zenzmoney.core.entity.Account;
 import com.zenzmoney.core.entity.Category;
 import com.zenzmoney.core.entity.RecurringTransaction;
-import com.zenzmoney.core.repository.AccountRepository;
+import com.zenzmoney.core.entity.User;
 import com.zenzmoney.core.repository.CategoryRepository;
 import com.zenzmoney.core.repository.RecurringTransactionRepository;
 import com.zenzmoney.core.web.dto.CreateRecurringRequest;
@@ -49,20 +47,18 @@ class RecurringTransactionServiceTest {
     private static final long FEB_28_2025 = 1_740_700_800_000L;
 
     @Mock RecurringTransactionRepository recurringRepository;
-    @Mock AccountRepository accountRepository;
     @Mock CategoryRepository categoryRepository;
+    @Mock AccountService accountService;
     @Mock PayeeService payeeService;
     @Mock TransactionService transactionService;
     @Mock CurrentUserService currentUser;
     @InjectMocks RecurringTransactionService service;
 
-    private Account account(String id, AccountStatus status) {
-        Account a = new Account();
-        a.setId(id);
-        a.setUserId("u1");
-        a.setCurrency("USD");
-        a.setStatus(status);
-        return a;
+    private User user() {
+        User u = new User();
+        u.setId("u1");
+        u.setActiveCurrency("USD");
+        return u;
     }
 
     private Category category(String id, CategoryKind kind) {
@@ -92,7 +88,6 @@ class RecurringTransactionServiceTest {
     private CreateRecurringRequest expenseReq(long nextRun) {
         CreateRecurringRequest req = new CreateRecurringRequest();
         req.setType(TransactionType.EXPENSE);
-        req.setAccountId("a1");
         req.setCategoryId("c1");
         req.setAmount(100_000);
         req.setCadence(RecurringCadence.MONTHLY);
@@ -103,10 +98,10 @@ class RecurringTransactionServiceTest {
     // --- CRUD ---
 
     @Test
-    void create_expense_setsCurrencyFromAccount_anchorDayFromDate_andResolvesPayee() {
-        when(currentUser.requireUserId()).thenReturn("u1");
-        when(accountRepository.findByIdAndUserId("a1", "u1"))
-                .thenReturn(Optional.of(account("a1", AccountStatus.ACTIVE)));
+    void create_expense_takesCurrencyFromUser_anchorDayFromDate_andResolvesPayee() {
+        User u = user();
+        when(currentUser.requireUser()).thenReturn(u);
+        when(accountService.requireAccountId(u)).thenReturn("a1");
         when(categoryRepository.findByIdAndUserId("c1", "u1"))
                 .thenReturn(Optional.of(category("c1", CategoryKind.EXPENSE)));
         when(payeeService.resolveOrCreate("u1", "Landlord")).thenReturn("p1");
@@ -119,27 +114,34 @@ class RecurringTransactionServiceTest {
         ArgumentCaptor<RecurringTransaction> saved = ArgumentCaptor.forClass(RecurringTransaction.class);
         verify(recurringRepository).save(saved.capture());
         assertEquals("USD", saved.getValue().getCurrency());
+        assertEquals("a1", saved.getValue().getAccountId());   // server-resolved, not requested
         assertEquals(31, saved.getValue().getAnchorDay());
         assertEquals("p1", saved.getValue().getPayeeId());
         assertTrue(saved.getValue().isActive());
         assertEquals(31, resp.getAnchorDay());
     }
 
+    /** A subscription is just this: a recurring expense carrying its trial-end date (F-1.7). */
     @Test
-    void create_rejects_whenAccountArchived() {
-        when(currentUser.requireUserId()).thenReturn("u1");
-        when(accountRepository.findByIdAndUserId("a1", "u1"))
-                .thenReturn(Optional.of(account("a1", AccountStatus.ARCHIVED)));
+    void create_subscription_keepsTrialEndDate() {
+        User u = user();
+        when(currentUser.requireUser()).thenReturn(u);
+        when(accountService.requireAccountId(u)).thenReturn("a1");
+        when(categoryRepository.findByIdAndUserId("c1", "u1"))
+                .thenReturn(Optional.of(category("c1", CategoryKind.EXPENSE)));
+        when(recurringRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        assertThrows(BadRequestException.class, () -> service.create(expenseReq(JAN_31_2023)));
-        verify(recurringRepository, never()).save(any());
+        CreateRecurringRequest req = expenseReq(JAN_31_2023);
+        req.setTrialEndDate(FEB_28_2023);
+        RecurringResponse resp = service.create(req);
+
+        assertEquals(FEB_28_2023, resp.getTrialEndDate());
     }
 
     @Test
     void create_rejects_whenIncomeCategoryKindMismatch() {
-        when(currentUser.requireUserId()).thenReturn("u1");
-        when(accountRepository.findByIdAndUserId("a1", "u1"))
-                .thenReturn(Optional.of(account("a1", AccountStatus.ACTIVE)));
+        User u = user();
+        when(currentUser.requireUser()).thenReturn(u);
         when(categoryRepository.findByIdAndUserId("c1", "u1"))
                 .thenReturn(Optional.of(category("c1", CategoryKind.INCOME)));   // wrong kind for EXPENSE
 
@@ -148,26 +150,13 @@ class RecurringTransactionServiceTest {
     }
 
     @Test
-    void create_transfer_setsDestination_andNullsCategory() {
-        when(currentUser.requireUserId()).thenReturn("u1");
-        when(accountRepository.findByIdAndUserId("a1", "u1"))
-                .thenReturn(Optional.of(account("a1", AccountStatus.ACTIVE)));
-        when(accountRepository.findByIdAndUserId("a2", "u1"))
-                .thenReturn(Optional.of(account("a2", AccountStatus.ACTIVE)));
-        when(recurringRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+    void create_rejects_whenCategoryBelongsToAnotherUser() {
+        User u = user();
+        when(currentUser.requireUser()).thenReturn(u);
+        when(categoryRepository.findByIdAndUserId("c1", "u1")).thenReturn(Optional.empty());
 
-        CreateRecurringRequest req = new CreateRecurringRequest();
-        req.setType(TransactionType.TRANSFER);
-        req.setAccountId("a1");
-        req.setTransferAccountId("a2");
-        req.setAmount(50_000);
-        req.setCadence(RecurringCadence.MONTHLY);
-        req.setNextRunDate(JAN_31_2023);
-
-        RecurringResponse resp = service.create(req);
-
-        assertEquals("a2", resp.getTransferAccountId());
-        assertEquals(null, resp.getCategoryId());
+        assertThrows(NotFoundException.class, () -> service.create(expenseReq(JAN_31_2023)));
+        verify(recurringRepository, never()).save(any());
     }
 
     @Test

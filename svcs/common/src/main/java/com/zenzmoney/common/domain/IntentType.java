@@ -14,7 +14,7 @@ public enum IntentType {
     /** "make that $6 instead" — change an earlier transaction. Not implemented yet. */
     UPDATE_TRANSACTION,
 
-    /** "how much did I spend on food?" — a read-side question (F-1.10b). */
+    /** "how much did I spend on food?" — a read-side question (F-1.16). */
     QUERY,
 
     /** Nothing usable was read, or the model was unavailable. */

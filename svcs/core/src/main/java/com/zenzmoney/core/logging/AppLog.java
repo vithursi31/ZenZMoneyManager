@@ -27,7 +27,7 @@ public final class AppLog {
     /** Background job runs — what each scheduled pass did, and what it skipped. */
     public static final Logger SCHEDULER = LoggerFactory.getLogger("scheduler");
 
-    /** LLM/extraction calls (F-1.9a): prompts sent, latency, and parse failures. */
+    /** LLM/extraction calls (F-1.11): prompts sent, latency, and parse failures. */
     public static final Logger LLM = LoggerFactory.getLogger("llm");
 
     private AppLog() {}

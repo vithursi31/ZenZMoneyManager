@@ -10,7 +10,7 @@ import lombok.Setter;
 /**
  * A named merchant or person a transaction is paid to / received from (§1.5b).
  * Owned by one user; modeled as an entity (not a free-text string on the
- * transaction) so payee is a first-class filter/report dimension (F-1.19).
+ * transaction) so payee is a first-class filter/report dimension (F-1.9).
  * Deduped per user by {@link #normalizedName}.
  */
 @Getter

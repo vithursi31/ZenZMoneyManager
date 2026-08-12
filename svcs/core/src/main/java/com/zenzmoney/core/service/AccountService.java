@@ -1,33 +1,27 @@
 package com.zenzmoney.core.service;
 
-import com.zenzmoney.common.domain.AccountStatus;
 import com.zenzmoney.common.exception.BadRequestException;
-import com.zenzmoney.common.exception.NotFoundException;
 import com.zenzmoney.core.entity.Account;
 import com.zenzmoney.core.entity.User;
 import com.zenzmoney.core.repository.AccountRepository;
 import com.zenzmoney.core.repository.TransactionRepository;
 import com.zenzmoney.core.web.dto.AccountResponse;
-import com.zenzmoney.core.web.dto.CreateAccountRequest;
-import com.zenzmoney.core.web.dto.UpdateAccountRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.Comparator;
-import java.util.List;
-
 /**
- * CRUD for {@link Account}, scoped to the authenticated user (§1.4).
- * A new account's currency mirrors the user's active currency (§0.3);
- * {@code currentBalance} starts at the opening balance and is thereafter
- * maintained by the ledger (§1.10) — not set here after creation.
+ * The user's single account (§1.4, F-1.1). There is no CRUD here on purpose: the
+ * account is provisioned once at onboarding and thereafter only read. Everything
+ * that writes to the ledger asks this service which account to write to rather
+ * than trusting a client-supplied id.
  */
 @Service
 public class AccountService {
 
-    /** Mutations only. Reads are already covered by the per-request line MdcContextFilter writes. */
+    /** Provisioning only. Reads are already covered by the per-request line MdcContextFilter writes. */
     private static final Logger log = LoggerFactory.getLogger(AccountService.class);
 
     private final AccountRepository accountRepository;
@@ -42,114 +36,88 @@ public class AccountService {
         this.currentUser = currentUser;
     }
 
+    /** The caller's account, provisioning it if onboarding has set a currency but not yet reached it. */
     @Transactional
-    public AccountResponse create(CreateAccountRequest req) {
-        User user = currentUser.requireUser();
+    public AccountResponse current() {
+        return AccountResponse.of(provision(currentUser.requireUser()));
+    }
 
+    /**
+     * The id every ledger write uses. Resolved from the authenticated user, never
+     * from the request body — a client that could name an account could name
+     * someone else's.
+     */
+    @Transactional
+    public String requireAccountId(User user) {
+        return provision(user).getId();
+    }
+
+    /**
+     * Get-or-create the user's one account. Idempotent, so it is safe to call from
+     * onboarding and from every write path.
+     *
+     * <p>The unique index on {@code user_id} is the real guard: two concurrent
+     * first-writes both miss the {@code findByUserId} and both insert, and the
+     * loser gets a constraint violation rather than a second account. Re-reading
+     * on that violation turns the race into a no-op instead of a 500.
+     */
+    @Transactional
+    public Account provision(User user) {
+        return accountRepository.findByUserId(user.getId())
+                .orElseGet(() -> create(user));
+    }
+
+    /**
+     * Re-denominate the account while the signup currency is still provisional
+     * (F-1.27). {@link OnboardingService} is the only caller, and only on the path
+     * where the user has not yet confirmed a currency.
+     *
+     * <p>This exists because the account is provisioned lazily on first use, which
+     * can happen <em>before</em> onboarding runs — a user who opens the app, lets it
+     * read {@code /account}, and only then picks a currency would otherwise be left
+     * with preferences saying one thing and their account saying another.
+     *
+     * <p>Refuses once anything is recorded. A stored amount is a bare minor-unit
+     * integer whose denomination lives only in this column, so flipping it would
+     * silently turn 1000 LKR into 1000 USD (§0.3).
+     */
+    @Transactional
+    public void redenominate(User user, String currency) {
+        Account account = accountRepository.findByUserId(user.getId()).orElse(null);
+        if (account == null || account.getCurrency().equals(currency)) {
+            return;
+        }
+        if (transactionRepository.existsByUserId(user.getId())) {
+            throw new BadRequestException("Amounts are already recorded in " + account.getCurrency()
+                    + "; changing your currency is not supported yet.");
+        }
+        String previous = account.getCurrency();
+        account.setCurrency(currency);
+        accountRepository.save(account);
+        log.info("Account re-denominated {} -> {} before onboarding (account {}, user {})",
+                previous, currency, account.getId(), user.getId());
+    }
+
+    private Account create(User user) {
+        String currency = user.getActiveCurrency();
+        if (currency == null || currency.isBlank()) {
+            // The account is denominated in the user's active currency, so it cannot
+            // exist before onboarding picks one (F-1.27).
+            throw new BadRequestException(
+                    "No active currency set; complete onboarding before recording money.");
+        }
         Account account = new Account();
         account.setUserId(user.getId());
-        account.setName(req.getName().trim());
-        account.setType(req.getType());
-        account.setCurrency(resolveCurrency(user, req.getCurrency()));
-        account.setOpeningBalance(req.getOpeningBalance());
-        account.setCurrentBalance(req.getOpeningBalance());   // no ledger entries yet
-        account.setColor(req.getColor());
-        account.setIcon(req.getIcon());
-        account.setSortOrder(req.getSortOrder());
-        account.setStatus(AccountStatus.ACTIVE);
-
-        Account saved = accountRepository.save(account);
-        log.info("Account created: {} type={} currency={} opening={} (account {}, user {})",
-                saved.getName(), saved.getType(), saved.getCurrency(),
-                saved.getOpeningBalance(), saved.getId(), user.getId());
-        return AccountResponse.of(saved);
-    }
-
-    @Transactional(readOnly = true)
-    public List<AccountResponse> list(boolean includeArchived) {
-        String userId = currentUser.requireUserId();
-        return accountRepository.findByUserId(userId).stream()
-                .filter(a -> a.getStatus() != AccountStatus.DELETED)   // soft-deleted are never listed
-                .filter(a -> includeArchived || a.getStatus() != AccountStatus.ARCHIVED)
-                .sorted(Comparator.comparingInt(Account::getSortOrder)
-                        .thenComparing(Account::getName))
-                .map(AccountResponse::of)
-                .toList();
-    }
-
-    @Transactional(readOnly = true)
-    public AccountResponse get(String id) {
-        return AccountResponse.of(requireOwned(id));
-    }
-
-    @Transactional
-    public AccountResponse update(String id, UpdateAccountRequest req) {
-        Account account = requireOwned(id);
-        if (req.getName() != null && !req.getName().isBlank()) {
-            account.setName(req.getName().trim());
+        account.setCurrency(currency.toUpperCase());
+        try {
+            Account saved = accountRepository.saveAndFlush(account);
+            log.info("Account provisioned: currency={} (account {}, user {})",
+                    saved.getCurrency(), saved.getId(), user.getId());
+            return saved;
+        } catch (DataIntegrityViolationException e) {
+            // Lost the insert race; the winner's row is the account.
+            log.debug("Account insert raced for user {}; re-reading the winner", user.getId());
+            return accountRepository.findByUserId(user.getId()).orElseThrow(() -> e);
         }
-        if (req.getColor() != null) account.setColor(req.getColor());
-        if (req.getIcon() != null) account.setIcon(req.getIcon());
-        if (req.getSortOrder() != null) account.setSortOrder(req.getSortOrder());
-        log.info("Account updated: {} (account {}, user {})",
-                account.getName(), id, account.getUserId());
-        return AccountResponse.of(accountRepository.save(account));
-    }
-
-    @Transactional
-    public AccountResponse archive(String id) {
-        Account account = requireOwned(id);
-        account.setStatus(AccountStatus.ARCHIVED);
-        log.info("Account archived: {} (account {}, user {}, balance {} {})",
-                account.getName(), id, account.getUserId(),
-                account.getCurrentBalance(), account.getCurrency());
-        return AccountResponse.of(accountRepository.save(account));
-    }
-
-    /**
-     * Soft-deletes an account: its {@code status} is set to {@link AccountStatus#DELETED}
-     * and the row is <b>kept</b> in the database (audit / recovery); it is then hidden
-     * from all listings and operations. Allowed only when the account has no ledger
-     * history; an account with transactions must be archived instead (§1.4).
-     */
-    @Transactional
-    public void delete(String id) {
-        Account account = requireOwned(id);
-        if (transactionRepository.existsByAccountId(id)
-                || transactionRepository.existsByTransferAccountId(id)) {
-            throw new BadRequestException(
-                    "Account has transactions and cannot be deleted; archive it instead.");
-        }
-        account.setStatus(AccountStatus.DELETED);
-        accountRepository.save(account);
-        log.info("Account soft-deleted: {} (account {}, user {})",
-                account.getName(), id, account.getUserId());
-    }
-
-    /** Owned, non-deleted account; a soft-deleted account reads as not found. */
-    private Account requireOwned(String id) {
-        String userId = currentUser.requireUserId();
-        Account account = accountRepository.findByIdAndUserId(id, userId)
-                .orElseThrow(() -> new NotFoundException("Account not found"));
-        if (account.getStatus() == AccountStatus.DELETED) {
-            throw new NotFoundException("Account not found");
-        }
-        return account;
-    }
-
-    /**
-     * MVP single-currency rule (§0.3): if the user already operates in a currency,
-     * the account uses it; otherwise the request must supply one (ISO-4217).
-     */
-    private String resolveCurrency(User user, String requested) {
-        String active = user.getActiveCurrency();
-        if (active != null && !active.isBlank()) {
-            return active.toUpperCase();
-        }
-        if (requested != null && !requested.isBlank()) {
-            return requested.toUpperCase();
-        }
-        throw new BadRequestException(
-                "No active currency set; provide a currency for the first account.");
     }
 }

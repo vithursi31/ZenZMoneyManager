@@ -21,7 +21,7 @@ import java.util.List;
 /**
  * CRUD for {@link Category}, scoped to the authenticated user (§1.5). Enforces the
  * one-level hierarchy and same-kind rules in the service layer, guards deletion of
- * referenced categories, and provides the onboarding seed set (F-1.25).
+ * referenced categories, and provides the onboarding seed set (F-1.27).
  */
 @Service
 public class CategoryService {
@@ -139,7 +139,7 @@ public class CategoryService {
 
     /**
      * Provisions the default category set for a user the first time (onboarding,
-     * F-1.25). Idempotent: if the user already has any category, it returns the
+     * F-1.27). Idempotent: if the user already has any category, it returns the
      * existing set unchanged rather than duplicating.
      */
     @Transactional

@@ -1,0 +1,85 @@
+package com.zenzmoney.core.service;
+
+import com.zenzmoney.common.domain.TimeUtils;
+import com.zenzmoney.common.domain.TransactionType;
+import com.zenzmoney.common.exception.BadRequestException;
+import com.zenzmoney.core.entity.User;
+import com.zenzmoney.core.repository.TransactionRepository;
+import com.zenzmoney.core.web.dto.MonthlySummaryResponse;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.DateTimeException;
+import java.time.YearMonth;
+import java.time.ZoneId;
+import java.time.format.DateTimeParseException;
+
+/**
+ * The monthly position (§1.10, F-1.2) and the dashboard summary built on it
+ * (F-1.17): {@code Σ INCOME − Σ EXPENSE} over one calendar month.
+ *
+ * <p>Nothing here is cached or stored. The figure is two indexed sums per request,
+ * which is what makes it impossible for it to disagree with the ledger — the class
+ * of bug that a materialized balance and its reconciliation flow exist to chase.
+ */
+@Service
+public class MonthlySummaryService {
+
+    private final TransactionRepository transactionRepository;
+    private final CurrentUserService currentUser;
+
+    public MonthlySummaryService(TransactionRepository transactionRepository,
+                                 CurrentUserService currentUser) {
+        this.transactionRepository = transactionRepository;
+        this.currentUser = currentUser;
+    }
+
+    /**
+     * The caller's position for {@code month} (ISO {@code yyyy-MM}), or the current
+     * month when omitted. Any past or future month is equally computable — there is
+     * no "closed" month, because no month was ever rolled up.
+     */
+    @Transactional(readOnly = true)
+    public MonthlySummaryResponse summary(String month) {
+        User user = currentUser.requireUser();
+        ZoneId zone = zoneOf(user);
+        YearMonth target = parseMonth(month, zone);
+
+        // Half-open [from, to): a transaction stamped exactly at midnight on the 1st
+        // belongs to the month starting there, and to only that month.
+        long from = TimeUtils.startOfMonth(target, zone);
+        long to = TimeUtils.startOfMonth(target.plusMonths(1), zone);
+
+        long income = transactionRepository.sumAmountByTypeInWindow(
+                user.getId(), TransactionType.INCOME, from, to);
+        long expenses = transactionRepository.sumAmountByTypeInWindow(
+                user.getId(), TransactionType.EXPENSE, from, to);
+
+        return new MonthlySummaryResponse(target.toString(), zone.getId(), from, to,
+                income, expenses, income - expenses, user.getActiveCurrency());
+    }
+
+    /**
+     * "Now" is resolved in the user's own zone, so someone in {@code Asia/Colombo}
+     * asking on the 1st gets their August, not the server's July.
+     */
+    private static YearMonth parseMonth(String month, ZoneId zone) {
+        if (month == null || month.isBlank()) {
+            return TimeUtils.monthOf(TimeUtils.now(), zone);
+        }
+        try {
+            return YearMonth.parse(month.trim());
+        } catch (DateTimeParseException e) {
+            throw new BadRequestException("Month must be in yyyy-MM format, e.g. 2026-08.");
+        }
+    }
+
+    /** A stored zone the JVM does not recognise must not take the dashboard down. */
+    private static ZoneId zoneOf(User user) {
+        try {
+            return ZoneId.of(user.getTimezone());
+        } catch (DateTimeException | NullPointerException e) {
+            return ZoneId.of("UTC");
+        }
+    }
+}

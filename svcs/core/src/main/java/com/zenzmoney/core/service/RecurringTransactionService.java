@@ -1,16 +1,14 @@
 package com.zenzmoney.core.service;
 
-import com.zenzmoney.common.domain.AccountStatus;
 import com.zenzmoney.common.domain.CategoryKind;
 import com.zenzmoney.common.domain.RecurringCadence;
 import com.zenzmoney.common.domain.TimeUtils;
 import com.zenzmoney.common.domain.TransactionType;
 import com.zenzmoney.common.exception.BadRequestException;
 import com.zenzmoney.common.exception.NotFoundException;
-import com.zenzmoney.core.entity.Account;
 import com.zenzmoney.core.entity.Category;
 import com.zenzmoney.core.entity.RecurringTransaction;
-import com.zenzmoney.core.repository.AccountRepository;
+import com.zenzmoney.core.entity.User;
 import com.zenzmoney.core.repository.CategoryRepository;
 import com.zenzmoney.core.repository.RecurringTransactionRepository;
 import com.zenzmoney.core.web.dto.CreateRecurringRequest;
@@ -44,21 +42,21 @@ public class RecurringTransactionService {
     static final int MAX_CATCHUP = 500;
 
     private final RecurringTransactionRepository recurringRepository;
-    private final AccountRepository accountRepository;
     private final CategoryRepository categoryRepository;
+    private final AccountService accountService;
     private final PayeeService payeeService;
     private final TransactionService transactionService;
     private final CurrentUserService currentUser;
 
     public RecurringTransactionService(RecurringTransactionRepository recurringRepository,
-                                       AccountRepository accountRepository,
                                        CategoryRepository categoryRepository,
+                                       AccountService accountService,
                                        PayeeService payeeService,
                                        TransactionService transactionService,
                                        CurrentUserService currentUser) {
         this.recurringRepository = recurringRepository;
-        this.accountRepository = accountRepository;
         this.categoryRepository = categoryRepository;
+        this.accountService = accountService;
         this.payeeService = payeeService;
         this.transactionService = transactionService;
         this.currentUser = currentUser;
@@ -68,27 +66,31 @@ public class RecurringTransactionService {
 
     @Transactional
     public RecurringResponse create(CreateRecurringRequest req) {
-        String userId = currentUser.requireUserId();
-        String currency = validateAndResolveCurrency(userId, req.getType(), req.getAccountId(),
-                req.getCategoryId(), req.getAmount(), req.getTransferAccountId());
+        User user = currentUser.requireUser();
+        String userId = user.getId();
+        validate(userId, req.getType(), req.getCategoryId(), req.getAmount());
 
-        boolean transfer = req.getType() == TransactionType.TRANSFER;
         RecurringTransaction r = new RecurringTransaction();
         r.setUserId(userId);
-        r.setAccountId(req.getAccountId());
+        r.setAccountId(accountService.requireAccountId(user));
         r.setType(req.getType());
-        r.setCategoryId(transfer ? null : req.getCategoryId());
+        r.setCategoryId(req.getCategoryId());
         r.setAmount(req.getAmount());
-        r.setCurrency(currency);
-        r.setTransferAccountId(transfer ? req.getTransferAccountId() : null);
+        r.setCurrency(user.getActiveCurrency());
         r.setCadence(req.getCadence());
         r.setNextRunDate(req.getNextRunDate());
         r.setAnchorDay(dayOfMonth(req.getNextRunDate()));
+        r.setTrialEndDate(req.getTrialEndDate());
         r.setEndDate(req.getEndDate());
         r.setActive(true);
         r.setPayeeId(payeeService.resolveOrCreate(userId, req.getPayeeName()));
         r.setNote(req.getNote());
-        return RecurringResponse.of(recurringRepository.save(r));
+
+        RecurringTransaction saved = recurringRepository.save(r);
+        log.info("Recurring template created: {} {} {} {} next={} trialEnd={} (template {}, user {})",
+                saved.getType(), saved.getAmount(), saved.getCurrency(), saved.getCadence(),
+                saved.getNextRunDate(), saved.getTrialEndDate(), saved.getId(), userId);
+        return RecurringResponse.of(saved);
     }
 
     @Transactional(readOnly = true)
@@ -123,11 +125,17 @@ public class RecurringTransactionService {
             r.setNextRunDate(req.getNextRunDate());
             r.setAnchorDay(dayOfMonth(req.getNextRunDate()));   // reschedule re-anchors the cycle
         }
+        if (req.getTrialEndDate() != null) r.setTrialEndDate(req.getTrialEndDate());
         if (req.getEndDate() != null) r.setEndDate(req.getEndDate());
         if (req.getActive() != null) r.setActive(req.getActive());
         if (req.getPayeeName() != null) r.setPayeeId(payeeService.resolveOrCreate(userId, req.getPayeeName()));
         if (req.getNote() != null) r.setNote(req.getNote());
-        return RecurringResponse.of(recurringRepository.save(r));
+
+        RecurringTransaction saved = recurringRepository.save(r);
+        log.info("Recurring template updated: {} {} {} next={} active={} (template {}, user {})",
+                saved.getType(), saved.getAmount(), saved.getCurrency(),
+                saved.getNextRunDate(), saved.isActive(), saved.getId(), userId);
+        return RecurringResponse.of(saved);
     }
 
     /**
@@ -137,8 +145,11 @@ public class RecurringTransactionService {
      */
     @Transactional
     public void delete(String id) {
-        RecurringTransaction r = requireOwned(id, currentUser.requireUserId());
+        String userId = currentUser.requireUserId();
+        RecurringTransaction r = requireOwned(id, userId);
         recurringRepository.delete(r);
+        log.info("Recurring template deleted: {} {} {} {} (template {}, user {})",
+                r.getType(), r.getAmount(), r.getCurrency(), r.getCadence(), id, userId);
     }
 
     // --- generation engine (driven by the scheduler) ---
@@ -214,66 +225,24 @@ public class RecurringTransactionService {
     // --- internals ---
 
     /**
-     * Validates the template's structural rules (§1.6) the same way a transaction is
-     * validated, failing fast at create time, and returns the currency taken from the
-     * source account. Generation re-validates through {@link TransactionService}, which
-     * remains the real gate (e.g. an account archived after the template was created).
+     * Validates the template's structural rules (§1.6) the same way a transaction is,
+     * so a template that could never generate a valid row is rejected at create time
+     * rather than failing nightly in the scheduler.
      */
-    private String validateAndResolveCurrency(String userId, TransactionType type, String accountId,
-                                              String categoryId, long amount, String transferAccountId) {
+    private void validate(String userId, TransactionType type, String categoryId, long amount) {
         if (amount <= 0) {
             throw new BadRequestException("Amount must be positive.");
         }
-        Account source = requireActiveAccount(accountId, userId);
-        if (type == TransactionType.TRANSFER) {
-            if (isBlank(transferAccountId)) {
-                throw new BadRequestException("A transfer requires a destination account.");
-            }
-            if (transferAccountId.equals(accountId)) {
-                throw new BadRequestException("A transfer's destination must differ from its source.");
-            }
-            if (!isBlank(categoryId)) {
-                throw new BadRequestException("A transfer must not have a category.");
-            }
-            Account dest = requireActiveAccount(transferAccountId, userId);
-            if (!source.getCurrency().equals(dest.getCurrency())) {
-                throw new BadRequestException("Transfer accounts must share the same currency.");
-            }
-        } else {
-            if (!isBlank(transferAccountId)) {
-                throw new BadRequestException("Only a transfer may set a destination account.");
-            }
-            if (isBlank(categoryId)) {
-                throw new BadRequestException("Income and expense require a category.");
-            }
-            Category category = categoryRepository.findByIdAndUserId(categoryId, userId)
-                    .orElseThrow(() -> new NotFoundException("Category not found"));
-            CategoryKind expected = type == TransactionType.INCOME ? CategoryKind.INCOME : CategoryKind.EXPENSE;
-            if (category.getKind() != expected) {
-                throw new BadRequestException("Category kind must match the transaction type.");
-            }
+        Category category = categoryRepository.findByIdAndUserId(categoryId, userId)
+                .orElseThrow(() -> new NotFoundException("Category not found"));
+        CategoryKind expected = type == TransactionType.INCOME ? CategoryKind.INCOME : CategoryKind.EXPENSE;
+        if (category.getKind() != expected) {
+            throw new BadRequestException("Category kind must match the transaction type.");
         }
-        return source.getCurrency();
-    }
-
-    private Account requireActiveAccount(String id, String userId) {
-        Account a = accountRepository.findByIdAndUserId(id, userId)
-                .orElseThrow(() -> new NotFoundException("Account not found"));
-        if (a.getStatus() == AccountStatus.DELETED) {
-            throw new NotFoundException("Account not found");
-        }
-        if (a.getStatus() == AccountStatus.ARCHIVED) {
-            throw new BadRequestException("Account is archived and cannot back a recurring template.");
-        }
-        return a;
     }
 
     private RecurringTransaction requireOwned(String id, String userId) {
         return recurringRepository.findByIdAndUserId(id, userId)
                 .orElseThrow(() -> new NotFoundException("Recurring template not found"));
-    }
-
-    private static boolean isBlank(String s) {
-        return s == null || s.isBlank();
     }
 }

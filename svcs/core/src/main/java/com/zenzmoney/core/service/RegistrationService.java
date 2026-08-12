@@ -64,10 +64,23 @@ public class RegistrationService {
         user.setEmailVerified(false);
         user.setSystemGeneratedPassword(false);
         user.setRoles(Set.of(Role.USER));
+
+        // Provisional preferences, so someone who skips onboarding is still usable
+        // (F-1.27). Unconfirmed until they say so, which is what lets onboarding
+        // replace the currency later.
+        user.setActiveCurrency(SignupDefaults.currencyFor(req.getLocale()));
+        user.setLanguage(SignupDefaults.LANGUAGE);
+        String zone = SignupDefaults.timezoneFor(req.getTimezone());
+        if (zone != null) {
+            user.setTimezone(zone);
+        }
+        user.setOnboarded(false);
         userRepository.save(user);
 
-        audit.info("Account registered for {} (user {}, authMode=password, roles={})",
-                email, user.getId(), user.getRoles());
+        audit.info("Account registered for {} (user {}, authMode=password, roles={}, "
+                        + "currency={}, language={}, timezone={}, onboarded=false)",
+                email, user.getId(), user.getRoles(),
+                user.getActiveCurrency(), user.getLanguage(), user.getTimezone());
 
         String code = otpService.issue(email, Purpose.VERIFY_EMAIL);
         emailSender.sendVerificationCode(email, code);

@@ -1,9 +1,12 @@
 # Plan — Chat-Based Transaction Entry (NLP capture via Qwen2.5)
 
-**Status:** Draft for review. **No code has been written.** This document is the
-implementation plan only; modifications happen after verification.
+**Status:** Implemented — `ChatService`, `IntentResolver`, `OllamaExtractionClient`,
+`ChatController` and their tests are in the tree. This document is retained as the
+design rationale; where it disagrees with the code, the code wins.
 
-**Feature IDs:** F-1.9a (chat entry), F-1.9b (auto-categorization).
+**Feature IDs:** F-1.11 (chat entry), F-1.14 (auto-category suggestions).
+*Renumbered 2026-08-08 from F-1.9a / F-1.9b — see the
+[ID mapping](../features-list.md#id-mapping-2026-08-08).*
 **Domain basis:** [domain §3.1 capture pipeline](../domain/domain-documentation.md),
 §3.3 `ParsedIntent`, §3.4 `ChatMessage`, and Part 1 `Transaction`/`Category`.
 
@@ -18,10 +21,11 @@ and have the backend:
 2. Get back a **structured interpretation** (a `ParsedIntent`): type = EXPENSE,
    amount = `500` minor units, category guess = "food", date = today.
 3. Resolve the guess to one of the **user's own categories** (Food & Drinks) and
-   default the account/date.
+   resolve the date.
 4. Return a **draft** the user confirms.
 5. On confirm, write a real `Transaction` to the ledger (Part 1) — reusing the
-   existing transaction rules and balance derivation.
+   existing transaction rules. The account is the user's single account, resolved
+   server-side (domain §1.4).
 
 **Worked example A — item, no merchant**
 
@@ -38,7 +42,7 @@ Qwen2.5 → { intent: CREATE_TRANSACTION, txnType: EXPENSE,
 Draft:     EXPENSE · $5.00 · Food & Drinks · today · payee=null · note="burger"
            │
            ▼  POST /api/v1/chat/confirm { messageId }
-Ledger:    Transaction row created; account balance re-derived.
+Ledger:    Transaction row created; that month's position now reflects it.
 Assistant: "Added $5.00 expense in Food & Drinks for today."
 ```
 
@@ -71,18 +75,21 @@ Draft:     EXPENSE · $15.00 · Groceries · today · payee="Keells" · note="te
 
 **In scope (this plan)**
 - `CREATE_TRANSACTION` intent (income + expense) from typed chat.
-- Auto-category detection against the user's categories (F-1.9b).
+- Auto-category detection against the user's categories (F-1.14).
 - Relative-date resolution ("today", "yesterday") in the user's timezone.
 - Two-step **parse → confirm** flow with a hard write gate (domain §3.1).
 - `ChatMessage` logging (user + assistant turns), `ParsedIntent` persisted inline.
 - Self-hosted **Qwen2.5 via Ollama**, called over an OpenAI-compatible HTTP API.
 
 **Out of scope (later phases / separate plans)**
-- `QUERY` intent / financial assistant (F-1.10b) — read-side, deterministic aggregates.
+- `QUERY` intent / financial assistant (F-1.16) — read-side, deterministic aggregates.
 - `UPDATE_TRANSACTION` — needs session-target resolution; add after create works.
-- `TRANSFER` via chat — deferred (requires two-account resolution).
-- Voice entry (F-2.1, Phase 2) — reuses this pipeline behind speech-to-text.
-- OCR / receipts (F-1.9c) — separate `Attachment` pipeline (§3.5).
+- Voice entry (F-1.12) — reuses this pipeline behind speech-to-text. Now MVP, not Phase 2.
+- OCR / receipts (F-1.13) — same draft→confirm funnel, different extractor (§3.5).
+
+> **`TRANSFER` is gone, not deferred.** The single-account model removed the
+> transaction type entirely (domain §1.6); a transfer needs two accounts. It
+> returns only with F-F.1.
 
 ---
 
@@ -122,7 +129,7 @@ POST /api/v1/chat ───► │ ChatService.handle(userId, message)          
                        │  1. save ChatMessage(USER, RECEIVED)          │
                        │  2. LlmExtractionClient.extract(msg, ctx) ────┼──► Ollama (Qwen2.5)
                        │  3. IntentResolver: guess→categoryId,         │      JSON out
-                       │       date→millis, default account, $→minor   │
+                       │       date→millis, the one account, $→minor   │
                        │  4. confidence/missing check                  │
                        │  5. save ParsedIntent + ASSISTANT reply       │
                        └───────────────┬──────────────────────────────┘
@@ -134,8 +141,8 @@ POST /api/v1/chat ───► │ ChatService.handle(userId, message)          
                         DRAFT returned (status = PARSED); NO ledger write
 
 POST /api/v1/chat/confirm { messageId } ─► TransactionService.create(fromIntent)
-                                           status = CONFIRMED, transactionId set,
-                                           account balance re-derived (§1.10)
+                                           status = CONFIRMED, transactionId set;
+                                           the month's position now includes it (§1.10)
 ```
 
 **Key principle (domain §3.7):** the model *proposes*; the user *commits*. No AI
@@ -178,7 +185,7 @@ All under `com.zenzmoney.core`, mirroring existing service/connector style
   - **Amount → minor units** using the user's active currency (§0.2). `$5` → `500`.
     Currency is **never** taken from the text (§3.3 rule) — always the user's
     `active_currency`.
-  - **Category matching (F-1.9b):** resolve `categoryGuess` against the user's
+  - **Category matching (F-1.14):** resolve `categoryGuess` against the user's
     `Category` rows — case-insensitive, kind-aware (EXPENSE guess → EXPENSE
     categories), with a small synonym map ("burger/lunch/coffee" → Food & Drinks).
     Null if no confident match.
@@ -193,7 +200,7 @@ All under `com.zenzmoney.core`, mirroring existing service/connector style
     it before any `Payee` row is created. Resolution to `payeeId` happens only at
     confirm, via `PayeeService.resolveOrCreate` (§5.7). The prompt already enforces
     payee=merchant/person-or-null and note=item/description.
-  - **Account default:** the user's default/first active account.
+  - **Account:** the user's single account (domain §1.4) — never chosen, never sent by the client.
   - **missingFields / confidence:** if amount or category can't be filled, or
     confidence < threshold, populate `missingFields` so the flow branches to
     clarification.
@@ -219,7 +226,7 @@ All under `com.zenzmoney.core`, mirroring existing service/connector style
 ### 5.7 Payee entity (domain amendment — replaces the free-text `payee` string)
 
 **Why.** The domain doc currently models `payee` as `String(300)` on `Transaction`
-and `RecurringTransaction` (§1.6 / §1.8), and F-1.19 lists "filter by payee" as a
+and `RecurringTransaction` (§1.6 / §1.8), and F-1.9 lists "filter by payee" as a
 first-class MVP capability. A free-text string makes that filtering weak:
 "Keells" / "keells" / "Keells Super" are distinct values — no autocomplete, no
 dedup, no "total spent at Keells" aggregation. We promote payee to a **user-owned
@@ -248,8 +255,7 @@ entity** with a FK from the transaction, mirroring how `Category` works.
 - `Transaction.payeeId` (`payee_id VARCHAR(36)`, nullable, indexed, FK → `payee`)
   **replaces** the `payee VARCHAR(300)` column.
 - `RecurringTransaction.payeeId` likewise; generated transactions copy `payeeId`.
-- Nullable because TRANSFER and unnamed one-off expenses ("$5 for burger") have no
-  payee.
+- Nullable because unnamed one-off expenses ("$5 for burger") have no payee.
 
 **Repository:** `PayeeRepository` — `findByUserIdAndNormalizedName(...)`,
 `findByUserId(...)` (autocomplete / "top payees"), `findByIdAndUserId(...)`.
@@ -270,7 +276,7 @@ entity** with a FK from the transaction, mirroring how `Category` works.
 `PayeeService.resolveOrCreate` and set `Transaction.payeeId`. (Draft stays
 name-only so the user can edit before a payee row is created.)
 
-**Filtering (F-1.19):** transactions filter/group by `payee_id` — enabling
+**Filtering (F-1.9):** transactions filter/group by `payee_id` — enabling
 "total spent at Keells", payee autocomplete, and a payees list, none of which a
 free-text column supports.
 
@@ -296,7 +302,7 @@ free-text column supports.
 ```json
 {
   "intent": "CREATE_TRANSACTION | UPDATE_TRANSACTION | QUERY | UNKNOWN",
-  "txnType": "INCOME | EXPENSE | TRANSFER | null",
+  "txnType": "INCOME | EXPENSE | null",
   "amount": 15.0,
   "categoryGuess": "grocery",
   "dateExpr": "today",
@@ -308,7 +314,7 @@ free-text column supports.
 
 **Model layer vs backend layer — strict split.** The backend — **not the model** —
 converts amount→minor units, guess→categoryId, dateExpr→epoch millis, and applies
-the user's currency/account. The model never sees or sets IDs, minor units, or
+the user's currency and account. The model never sees or sets IDs, minor units, or
 timestamps. This keeps money math and dates deterministic and auditable.
 
 **Date resolution (why the model only emits a phrase):**
@@ -389,8 +395,8 @@ self-hosted, so data never leaves the deployment.
   category matching incl. synonyms and no-match; confidence branching.
 - **Contract:** `OllamaExtractionClient` against a mocked `/api/chat` (WireMock-style)
   — valid JSON, malformed JSON, timeout.
-- **Integration:** `POST /chat` → draft → `POST /chat/confirm` → row exists +
-  balance re-derived; reject path writes nothing.
+- **Integration:** `POST /chat` → draft → `POST /chat/confirm` → row exists and
+  counts toward its month; reject path writes nothing.
 - **Prompt eval (manual/offline):** a fixture set of ~30 phrasings
   ("spent 5 on burger", "got salary 3000", "paid 12 for uber yesterday") checked
   against expected extractions before shipping.
@@ -416,8 +422,8 @@ self-hosted, so data never leaves the deployment.
 6. Integration tests + offline prompt eval.
 
 > **Dependencies:** step 0 (Payee) is independent and can land first. Step 4 needs
-> the Core-Ledger **service** layer (Transaction create + balance derivation),
-> which is planned but not yet implemented. The chat entity/LLM/resolver layers
+> the Core-Ledger **service** layer (Transaction create), which is now in place.
+> The chat entity/LLM/resolver layers
 > (1–3) can be built in parallel; confirm-write (4) lands after both
 > `TransactionService` and `PayeeService` exist.
 

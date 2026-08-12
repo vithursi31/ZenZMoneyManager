@@ -21,7 +21,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Chat-based transaction entry (F-1.9a). Two steps on purpose: posting a message
+ * Chat-based transaction entry (F-1.11). Two steps on purpose: posting a message
  * only ever returns a draft, and a separate confirm writes it to the ledger.
  */
 @RestController

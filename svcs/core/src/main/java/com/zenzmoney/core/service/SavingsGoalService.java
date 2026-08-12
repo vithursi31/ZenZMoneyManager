@@ -1,15 +1,13 @@
 package com.zenzmoney.core.service;
 
-import com.zenzmoney.common.domain.AccountStatus;
 import com.zenzmoney.common.domain.GoalStatus;
 import com.zenzmoney.common.domain.TimeUtils;
 import com.zenzmoney.common.exception.BadRequestException;
 import com.zenzmoney.common.exception.NotFoundException;
-import com.zenzmoney.core.entity.Account;
 import com.zenzmoney.core.entity.GoalContribution;
 import com.zenzmoney.core.entity.SavingsGoal;
 import com.zenzmoney.core.entity.Transaction;
-import com.zenzmoney.core.repository.AccountRepository;
+import com.zenzmoney.core.entity.User;
 import com.zenzmoney.core.repository.GoalContributionRepository;
 import com.zenzmoney.core.repository.SavingsGoalRepository;
 import com.zenzmoney.core.repository.TransactionRepository;
@@ -42,18 +40,15 @@ public class SavingsGoalService {
 
     private final SavingsGoalRepository goalRepository;
     private final GoalContributionRepository contributionRepository;
-    private final AccountRepository accountRepository;
     private final TransactionRepository transactionRepository;
     private final CurrentUserService currentUser;
 
     public SavingsGoalService(SavingsGoalRepository goalRepository,
                               GoalContributionRepository contributionRepository,
-                              AccountRepository accountRepository,
                               TransactionRepository transactionRepository,
                               CurrentUserService currentUser) {
         this.goalRepository = goalRepository;
         this.contributionRepository = contributionRepository;
-        this.accountRepository = accountRepository;
         this.transactionRepository = transactionRepository;
         this.currentUser = currentUser;
     }
@@ -62,23 +57,25 @@ public class SavingsGoalService {
 
     @Transactional
     public GoalResponse create(CreateGoalRequest req) {
-        String userId = currentUser.requireUserId();
-        Account account = requireActiveAccount(req.getAccountId(), userId);
+        User user = currentUser.requireUser();
+        String userId = user.getId();
+        if (req.getTargetAmount() <= 0) {
+            throw new BadRequestException("Target amount must be positive.");
+        }
 
         SavingsGoal goal = new SavingsGoal();
         goal.setUserId(userId);
-        goal.setAccountId(account.getId());
         goal.setName(req.getName().trim());
         goal.setTargetAmount(req.getTargetAmount());
-        goal.setCurrency(account.getCurrency());   // follows the backing account (§0.3)
+        goal.setCurrency(requireActiveCurrency(user));   // the user's active currency (§0.3)
         goal.setTargetDate(req.getTargetDate());
         goal.setStatus(GoalStatus.ACTIVE);
         goal.setColor(req.getColor());
         goal.setIcon(req.getIcon());
         SavingsGoal saved = goalRepository.save(goal);
-        log.info("Savings goal created: {} target={} {} on account {} (goal {}, user {})",
+        log.info("Savings goal created: {} target={} {} (goal {}, user {})",
                 saved.getName(), saved.getTargetAmount(), saved.getCurrency(),
-                saved.getAccountId(), saved.getId(), userId);
+                saved.getId(), userId);
         return GoalResponse.of(saved, 0);   // no contributions yet
     }
 
@@ -230,16 +227,13 @@ public class SavingsGoalService {
                 .orElseThrow(() -> new NotFoundException("Goal not found"));
     }
 
-    private Account requireActiveAccount(String id, String userId) {
-        Account a = accountRepository.findByIdAndUserId(id, userId)
-                .orElseThrow(() -> new NotFoundException("Account not found"));
-        if (a.getStatus() == AccountStatus.DELETED) {
-            throw new NotFoundException("Account not found");
+    private static String requireActiveCurrency(User user) {
+        String currency = user.getActiveCurrency();
+        if (currency == null || currency.isBlank()) {
+            throw new BadRequestException(
+                    "No active currency set; complete onboarding before creating a goal.");
         }
-        if (a.getStatus() == AccountStatus.ARCHIVED) {
-            throw new BadRequestException("Account is archived and cannot back a goal.");
-        }
-        return a;
+        return currency.toUpperCase();
     }
 
     private static String normalizeId(String id) {

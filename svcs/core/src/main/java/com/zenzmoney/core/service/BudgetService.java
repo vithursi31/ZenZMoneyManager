@@ -1,6 +1,6 @@
 package com.zenzmoney.core.service;
 
-import com.zenzmoney.common.domain.AccountStatus;
+import com.zenzmoney.common.domain.BudgetStatus;
 import com.zenzmoney.common.domain.BudgetPeriod;
 import com.zenzmoney.common.domain.CategoryKind;
 import com.zenzmoney.common.domain.TimeUtils;
@@ -77,7 +77,7 @@ public class BudgetService {
         budget.setStartDate(req.getStartDate() != null && req.getStartDate() > 0
                 ? req.getStartDate() : TimeUtils.now());
         budget.setRollover(req.isRollover());
-        budget.setStatus(AccountStatus.ACTIVE);
+        budget.setStatus(BudgetStatus.ACTIVE);
         Budget saved = budgetRepository.save(budget);
         log.info("Budget created: limit={} {} period={} category={} rollover={} (budget {}, user {})",
                 saved.getAmountLimit(), saved.getCurrency(), saved.getPeriod(),
@@ -90,7 +90,7 @@ public class BudgetService {
     public List<BudgetResponse> list(boolean includeArchived) {
         String userId = currentUser.requireUserId();
         return budgetRepository.findByUserId(userId).stream()
-                .filter(b -> includeArchived || b.getStatus() != AccountStatus.ARCHIVED)
+                .filter(b -> includeArchived || b.getStatus() != BudgetStatus.ARCHIVED)
                 .map(this::toResponse)
                 .toList();
     }
@@ -123,7 +123,7 @@ public class BudgetService {
     @Transactional
     public BudgetResponse archive(String id) {
         Budget budget = requireOwned(id, currentUser.requireUserId());
-        budget.setStatus(AccountStatus.ARCHIVED);
+        budget.setStatus(BudgetStatus.ARCHIVED);
         log.info("Budget archived: (budget {}, user {})", id, budget.getUserId());
         return toResponse(budgetRepository.save(budget));
     }
@@ -155,7 +155,7 @@ public class BudgetService {
     private void requireNoActiveDuplicate(String userId, String categoryId,
                                           BudgetPeriod period, String excludeId) {
         boolean clash = budgetRepository.findByUserId(userId).stream()
-                .filter(b -> b.getStatus() == AccountStatus.ACTIVE)
+                .filter(b -> b.getStatus() == BudgetStatus.ACTIVE)
                 .filter(b -> !b.getId().equals(excludeId))
                 .filter(b -> b.getPeriod() == period)
                 .anyMatch(b -> Objects.equals(b.getCategoryId(), categoryId));

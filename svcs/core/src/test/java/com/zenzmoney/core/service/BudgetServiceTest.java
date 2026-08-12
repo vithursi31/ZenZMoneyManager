@@ -1,6 +1,6 @@
 package com.zenzmoney.core.service;
 
-import com.zenzmoney.common.domain.AccountStatus;
+import com.zenzmoney.common.domain.BudgetStatus;
 import com.zenzmoney.common.domain.BudgetPeriod;
 import com.zenzmoney.common.domain.CategoryKind;
 import com.zenzmoney.common.exception.BadRequestException;
@@ -72,7 +72,7 @@ class BudgetServiceTest {
         b.setAmountLimit(50_000);
         b.setCurrency("USD");
         b.setStartDate(ANCHOR);
-        b.setStatus(AccountStatus.ACTIVE);
+        b.setStatus(BudgetStatus.ACTIVE);
         return b;
     }
 
@@ -101,7 +101,7 @@ class BudgetServiceTest {
         verify(budgetRepository).save(saved.capture());
         assertEquals("u1", saved.getValue().getUserId());
         assertEquals("USD", saved.getValue().getCurrency());
-        assertEquals(AccountStatus.ACTIVE, saved.getValue().getStatus());
+        assertEquals(BudgetStatus.ACTIVE, saved.getValue().getStatus());
         assertEquals(12_000L, resp.getSpent());
         assertEquals(38_000L, resp.getRemaining());   // 50_000 - 12_000
     }
@@ -197,7 +197,7 @@ class BudgetServiceTest {
 
         BudgetResponse resp = budgetService.archive("b1");
 
-        assertEquals(AccountStatus.ARCHIVED, resp.getStatus());
+        assertEquals(BudgetStatus.ARCHIVED, resp.getStatus());
     }
 
     @Test

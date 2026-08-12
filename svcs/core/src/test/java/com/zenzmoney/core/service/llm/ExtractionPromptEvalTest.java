@@ -20,7 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * The offline prompt eval from the chat entry plan §10 — a fixture set of phrasings
- * run against a real model, across the languages the app supports (F-1.24) and the
+ * run against a real model, across the languages the app supports (F-1.26) and the
  * terse styles people actually type.
  *
  * <p><b>Opt-in, and not part of the normal suite.</b> It needs a running Ollama and

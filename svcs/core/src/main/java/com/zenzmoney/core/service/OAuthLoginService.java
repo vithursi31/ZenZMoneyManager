@@ -113,9 +113,14 @@ public class OAuthLoginService {
         u.setLastName(lastName);
         u.setRoles(Set.of(Role.USER));
         u.setLastLoginTime(System.currentTimeMillis());
+        // Same provisional footing as a password signup (F-1.27), minus the currency:
+        // none of the three providers reports a locale, so onboarding asks for it.
+        u.setLanguage(SignupDefaults.LANGUAGE);
+        u.setOnboarded(false);
         User saved = userRepository.save(u);
-        audit.info("Account registered for {} via {} (user {}, roles={}) — email pre-verified by provider",
-                email, authMode, saved.getId(), saved.getRoles());
+        audit.info("Account registered for {} via {} (user {}, roles={}, language={}, onboarded=false) "
+                        + "— email pre-verified by provider",
+                email, authMode, saved.getId(), saved.getRoles(), saved.getLanguage());
         return saved;
     }
 }

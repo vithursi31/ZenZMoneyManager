@@ -22,7 +22,6 @@ public class ParsedIntentView {
     private final String currency;
     private final String categoryId;
     private final String categoryGuess;
-    private final String accountId;
     private final Long txnDate;
     private final String payeeName;
     private final String note;
@@ -37,7 +36,6 @@ public class ParsedIntentView {
         this.currency = intent.getCurrency();
         this.categoryId = intent.getCategoryId();
         this.categoryGuess = intent.getCategoryGuess();
-        this.accountId = intent.getAccountId();
         this.txnDate = intent.getTxnDate();
         this.payeeName = intent.getPayeeName();
         this.note = intent.getNote();

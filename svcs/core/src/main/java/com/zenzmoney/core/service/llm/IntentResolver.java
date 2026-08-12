@@ -1,15 +1,12 @@
 package com.zenzmoney.core.service.llm;
 
-import com.zenzmoney.common.domain.AccountStatus;
 import com.zenzmoney.common.domain.CategoryKind;
 import com.zenzmoney.common.domain.IntentType;
 import com.zenzmoney.common.domain.TimeUtils;
 import com.zenzmoney.common.domain.TransactionType;
-import com.zenzmoney.core.entity.Account;
 import com.zenzmoney.core.entity.Category;
 import com.zenzmoney.core.entity.ParsedIntent;
 import com.zenzmoney.core.entity.User;
-import com.zenzmoney.core.repository.AccountRepository;
 import com.zenzmoney.core.repository.CategoryRepository;
 import org.springframework.stereotype.Service;
 
@@ -20,7 +17,6 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.Currency;
 import java.util.List;
 import java.util.Locale;
@@ -53,7 +49,7 @@ public class IntentResolver {
     private static final int DEFAULT_FRACTION_DIGITS = 2;
 
     /**
-     * Keyword to category-name fragments (F-1.9b). Deliberately small: it covers
+     * Keyword to category-name fragments (F-1.14). Deliberately small: it covers
      * the words a capture message actually uses, and anything it misses simply
      * leaves the category unresolved for the user to pick.
      */
@@ -106,7 +102,7 @@ public class IntentResolver {
      * yesterday" on consecutive runs. A verb the user actually typed is a stronger
      * signal than that field, so it wins (see {@link #resolveType}).
      *
-     * <p>Listed per language the app supports (F-1.24), because the guard is only
+     * <p>Listed per language the app supports (F-1.26), because the guard is only
      * worth having in the language the user actually typed: qwen2.5 flipped
      * "pagué 250 por uber ayer" to INCOME exactly as it flipped the English one, and
      * an English-only list leaves those users unprotected. Accented and unaccented
@@ -132,11 +128,9 @@ public class IntentResolver {
             "recibí", "recibi", "gané", "gane", "sueldo", "salario", "ingreso", "reembolso");
 
     private final CategoryRepository categoryRepository;
-    private final AccountRepository accountRepository;
 
-    public IntentResolver(CategoryRepository categoryRepository, AccountRepository accountRepository) {
+    public IntentResolver(CategoryRepository categoryRepository) {
         this.categoryRepository = categoryRepository;
-        this.accountRepository = accountRepository;
     }
 
     /**
@@ -163,16 +157,12 @@ public class IntentResolver {
             return draft;
         }
 
-        Account account = defaultAccount(user.getId());
-        if (account == null) {
-            draft.getMissingFields().add("account");
-        } else {
-            draft.setAccountId(account.getId());
+        // The user has one account (§1.4) and it is provisioned on confirm, so the draft
+        // records only the currency. Nothing here can name someone else's account.
+        String currency = trimToNull(user.getActiveCurrency());
+        if (currency == null) {
+            draft.getMissingFields().add("currency");
         }
-
-        String currency = user.getActiveCurrency() != null && !user.getActiveCurrency().isBlank()
-                ? user.getActiveCurrency()
-                : (account != null ? account.getCurrency() : null);
         draft.setCurrency(currency);
 
         Long amount = currency == null ? null : toMinorUnits(extraction.getAmountRaw(), currency);
@@ -190,17 +180,13 @@ public class IntentResolver {
         // A guess whose kind contradicts the direction means one of the two is wrong,
         // and the draft cannot say which. Ask about the direction rather than silently
         // discarding a plausible category and asking the less useful "which category?".
-        if (type != null && type != TransactionType.TRANSFER
-                && contradictsGuessKind(categories, type, draft.getCategoryGuess())) {
+        if (type != null && contradictsGuessKind(categories, type, draft.getCategoryGuess())) {
             type = null;
         }
         draft.setTxnType(type);
 
         if (type == null) {
             draft.getMissingFields().add("type");
-        } else if (type == TransactionType.TRANSFER) {
-            // Out of scope for chat (§2): a transfer needs two accounts resolved.
-            draft.getMissingFields().add("transfer");
         } else {
             String categoryId = resolveCategory(categories, type, draft.getCategoryGuess(), message);
             if (categoryId == null) {
@@ -224,12 +210,6 @@ public class IntentResolver {
      * question the user can already see the answer to into no question at all.
      */
     static TransactionType resolveType(TransactionType modelType, String message) {
-        if (modelType == TransactionType.TRANSFER) {
-            // "paid 500 into my savings" carries an expense verb but is not an expense.
-            // A direction word cannot express "between the user's own accounts", so
-            // overriding TRANSFER would lose information rather than correct it.
-            return TransactionType.TRANSFER;
-        }
         String text = normalize(message);
         boolean out = EXPENSE_WORDS.stream().anyMatch(word -> containsWord(text, word));
         boolean in = INCOME_WORDS.stream().anyMatch(word -> containsWord(text, word));
@@ -388,7 +368,7 @@ public class IntentResolver {
         }
     }
 
-    // --- category (F-1.9b) ---
+    // --- category (F-1.14) ---
 
     /**
      * Resolves a category label to one of the user's own categories, kind-aware so
@@ -496,17 +476,6 @@ public class IntentResolver {
 
     private static String normalize(String value) {
         return value == null ? "" : value.trim().toLowerCase(Locale.ROOT).replaceAll("\\s+", " ");
-    }
-
-    // --- account ---
-
-    /** The account a chat capture lands in: the user's first active one by sort order. */
-    private Account defaultAccount(String userId) {
-        return accountRepository.findByUserId(userId).stream()
-                .filter(a -> a.getStatus() == AccountStatus.ACTIVE)
-                .min(Comparator.comparingInt(Account::getSortOrder)
-                        .thenComparing(Account::getName, String.CASE_INSENSITIVE_ORDER))
-                .orElse(null);
     }
 
     private static String trimToNull(String value) {

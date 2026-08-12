@@ -1,15 +1,13 @@
 package com.zenzmoney.core.service;
 
-import com.zenzmoney.common.domain.AccountStatus;
 import com.zenzmoney.common.domain.GoalStatus;
 import com.zenzmoney.common.domain.TransactionType;
 import com.zenzmoney.common.exception.BadRequestException;
 import com.zenzmoney.common.exception.NotFoundException;
-import com.zenzmoney.core.entity.Account;
 import com.zenzmoney.core.entity.GoalContribution;
 import com.zenzmoney.core.entity.SavingsGoal;
 import com.zenzmoney.core.entity.Transaction;
-import com.zenzmoney.core.repository.AccountRepository;
+import com.zenzmoney.core.entity.User;
 import com.zenzmoney.core.repository.GoalContributionRepository;
 import com.zenzmoney.core.repository.SavingsGoalRepository;
 import com.zenzmoney.core.repository.TransactionRepository;
@@ -40,25 +38,21 @@ class SavingsGoalServiceTest {
 
     @Mock SavingsGoalRepository goalRepository;
     @Mock GoalContributionRepository contributionRepository;
-    @Mock AccountRepository accountRepository;
     @Mock TransactionRepository transactionRepository;
     @Mock CurrentUserService currentUser;
     @InjectMocks SavingsGoalService goalService;
 
-    private Account account(String id, String userId, AccountStatus status) {
-        Account a = new Account();
-        a.setId(id);
-        a.setUserId(userId);
-        a.setCurrency("USD");
-        a.setStatus(status);
-        return a;
+    private User user(String activeCurrency) {
+        User u = new User();
+        u.setId("u1");
+        u.setActiveCurrency(activeCurrency);
+        return u;
     }
 
     private SavingsGoal goal(String id, String userId, GoalStatus status, long target) {
         SavingsGoal g = new SavingsGoal();
         g.setId(id);
         g.setUserId(userId);
-        g.setAccountId("a1");
         g.setName("Japan Trip");
         g.setCurrency("USD");
         g.setTargetAmount(target);
@@ -70,7 +64,7 @@ class SavingsGoalServiceTest {
         Transaction t = new Transaction();
         t.setId(id);
         t.setUserId(userId);
-        t.setType(TransactionType.TRANSFER);
+        t.setType(TransactionType.EXPENSE);
         t.setAmount(amount);
         t.setCurrency(currency);
         return t;
@@ -78,17 +72,14 @@ class SavingsGoalServiceTest {
 
     private CreateGoalRequest createReq() {
         CreateGoalRequest r = new CreateGoalRequest();
-        r.setAccountId("a1");
         r.setName("Japan Trip");
         r.setTargetAmount(500_000);
         return r;
     }
 
     @Test
-    void create_usesBackingAccountCurrency_andStartsAtZeroSaved() {
-        when(currentUser.requireUserId()).thenReturn("u1");
-        when(accountRepository.findByIdAndUserId("a1", "u1"))
-                .thenReturn(Optional.of(account("a1", "u1", AccountStatus.ACTIVE)));
+    void create_usesTheUsersActiveCurrency_andStartsAtZeroSaved() {
+        when(currentUser.requireUser()).thenReturn(user("USD"));
         when(goalRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         GoalResponse resp = goalService.create(createReq());
@@ -101,22 +92,23 @@ class SavingsGoalServiceTest {
         assertEquals(500_000, resp.getRemaining());
     }
 
+    /** A goal is denominated in the active currency, so it cannot precede onboarding. */
     @Test
-    void create_rejects_whenAccountArchived() {
-        when(currentUser.requireUserId()).thenReturn("u1");
-        when(accountRepository.findByIdAndUserId("a1", "u1"))
-                .thenReturn(Optional.of(account("a1", "u1", AccountStatus.ARCHIVED)));
+    void create_rejects_whenNoActiveCurrency() {
+        when(currentUser.requireUser()).thenReturn(user(null));
 
         assertThrows(BadRequestException.class, () -> goalService.create(createReq()));
         verify(goalRepository, never()).save(any());
     }
 
     @Test
-    void create_rejects_whenAccountNotFound() {
-        when(currentUser.requireUserId()).thenReturn("u1");
-        when(accountRepository.findByIdAndUserId("a1", "u1")).thenReturn(Optional.empty());
+    void create_rejects_nonPositiveTarget() {
+        when(currentUser.requireUser()).thenReturn(user("USD"));
 
-        assertThrows(NotFoundException.class, () -> goalService.create(createReq()));
+        CreateGoalRequest r = createReq();
+        r.setTargetAmount(0);
+        assertThrows(BadRequestException.class, () -> goalService.create(r));
+        verify(goalRepository, never()).save(any());
     }
 
     @Test

@@ -7,16 +7,13 @@ import lombok.Getter;
 import lombok.Setter;
 
 /**
- * Create a savings goal (§1.9). Currency is not sent — it is taken from the backing
- * account (single active currency, §0.3). {@code accountId} is the real account that
- * holds the earmarked money.
+ * Create a savings goal (§1.9, F-3.1). Currency is not sent — it is the user's
+ * active currency (§0.3). There is no backing account to name: the user has one
+ * account, and progress comes from recorded contributions.
  */
 @Getter
 @Setter
 public class CreateGoalRequest {
-
-    @NotBlank
-    private String accountId;
 
     @NotBlank
     @Size(max = 300)

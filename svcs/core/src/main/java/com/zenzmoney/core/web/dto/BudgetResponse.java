@@ -1,6 +1,6 @@
 package com.zenzmoney.core.web.dto;
 
-import com.zenzmoney.common.domain.AccountStatus;
+import com.zenzmoney.common.domain.BudgetStatus;
 import com.zenzmoney.common.domain.BudgetPeriod;
 import com.zenzmoney.core.entity.Budget;
 import lombok.Getter;
@@ -20,7 +20,7 @@ public class BudgetResponse {
     private final String currency;
     private final long startDate;
     private final boolean rollover;
-    private final AccountStatus status;
+    private final BudgetStatus status;
 
     // derived (current period window)
     private final long periodStart;

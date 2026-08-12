@@ -40,7 +40,7 @@ public class ChatMessage extends BaseEntity {
     @Column(nullable = false, length = 2000)
     private String content;
 
-    /** BCP-47 tag of the turn, when known (F-1.24). */
+    /** BCP-47 tag of the turn, when known (F-1.26). */
     @Column(length = 10)
     private String language;
 

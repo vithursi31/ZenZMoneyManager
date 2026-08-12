@@ -17,7 +17,11 @@ import java.util.List;
 
 /**
  * The core ledger record — one row per movement of money (§1.6). {@code amount}
- * is always a positive magnitude; effect on balance is derived from {@code type}.
+ * is always a positive magnitude; its sign comes from {@code type}.
+ *
+ * <p>Nothing is cached from this row: the monthly position is summed from the
+ * ledger on read (§1.10), and {@code txnDate} alone decides which month a row
+ * counts in.
  */
 @Getter
 @Setter
@@ -28,7 +32,7 @@ public class Transaction extends BaseEntity {
     @Column(name = "user_id", nullable = false, length = 36)
     private String userId;
 
-    /** Source account. */
+    /** The owner's single account (§1.4). Resolved server-side, never client-supplied. */
     @Column(name = "account_id", nullable = false, length = 36)
     private String accountId;
 
@@ -36,8 +40,8 @@ public class Transaction extends BaseEntity {
     @Column(nullable = false, length = 50)
     private TransactionType type;
 
-    /** Required for INCOME/EXPENSE, null for TRANSFER. */
-    @Column(name = "category_id", length = 36)
+    /** Required — every transaction is categorized, and the kind must match {@link #type}. */
+    @Column(name = "category_id", nullable = false, length = 36)
     private String categoryId;
 
     /** Minor units. Always positive; sign is derived from {@link #type}. */
@@ -47,15 +51,11 @@ public class Transaction extends BaseEntity {
     @Column(nullable = false, length = 3)
     private String currency;
 
-    /** Set only when {@link #type} is TRANSFER; the destination account. */
-    @Column(name = "transfer_account_id", length = 36)
-    private String transferAccountId;
-
-    /** Epoch millis of the transaction date. */
+    /** Epoch millis of the transaction date; decides the row's calendar month (§1.10). */
     @Column(name = "txn_date", nullable = false)
     private long txnDate;
 
-    /** Optional FK → payee (§1.5b). Null for TRANSFER and unnamed one-off entries. */
+    /** Optional FK → payee (§1.5b). Null for unnamed one-off entries. */
     @Column(name = "payee_id", length = 36)
     private String payeeId;
 

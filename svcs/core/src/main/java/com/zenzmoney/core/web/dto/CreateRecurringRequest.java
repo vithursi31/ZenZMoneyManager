@@ -10,10 +10,10 @@ import lombok.Getter;
 import lombok.Setter;
 
 /**
- * Create a recurring template (§1.8). Currency is not sent — it is taken from the
- * account (single active currency, §0.3). Field requirements mirror a transaction:
- * INCOME/EXPENSE need a matching {@code categoryId} and no {@code transferAccountId};
- * TRANSFER needs {@code transferAccountId} and no category.
+ * Create a recurring template — income, expense, or a subscription (§1.8, F-1.7).
+ * Neither currency nor account is sent: currency comes from the user's active
+ * currency (§0.3) and the account is their only one (§1.4). Field requirements
+ * mirror a transaction — a {@code categoryId} whose kind matches {@code type}.
  */
 @Getter
 @Setter
@@ -22,18 +22,13 @@ public class CreateRecurringRequest {
     @NotNull
     private TransactionType type;
 
+    /** Required; its kind must match {@code type}. */
     @NotBlank
-    private String accountId;
-
-    /** Required for INCOME/EXPENSE (kind must match type); must be null for TRANSFER. */
     private String categoryId;
 
-    /** Minor units, positive magnitude. */
+    /** Minor units, positive magnitude. The subscription's cost, for a subscription. */
     @Positive
     private long amount;
-
-    /** Required for TRANSFER (destination, ≠ accountId); must be null otherwise. */
-    private String transferAccountId;
 
     @NotNull
     private RecurringCadence cadence;
@@ -42,6 +37,9 @@ public class CreateRecurringRequest {
     @NotNull
     @Positive
     private Long nextRunDate;
+
+    /** Optional epoch millis; the free-trial end date for a subscription (F-1.7). */
+    private Long trialEndDate;
 
     /** Optional epoch millis; stop generating once the next run would pass it. */
     private Long endDate;

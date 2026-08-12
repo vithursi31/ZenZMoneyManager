@@ -11,9 +11,12 @@ import lombok.Getter;
 import lombok.Setter;
 
 /**
- * A target the user is saving toward, backed by a real account (§1.9). Progress
- * (saved / remaining) is derived from {@link GoalContribution} rows, never stored,
- * so the goal can never diverge from the ledger.
+ * A target the user is saving toward (§1.9, F-3.1). Progress (saved / remaining)
+ * is derived from {@link GoalContribution} rows, never stored, so the goal can
+ * never diverge from what was actually put aside.
+ *
+ * <p><b>Phase 3, built early.</b> Savings goals moved out of the MVP in BRD v1.0;
+ * this backend predates that and is kept because Phase 3 commits to it.
  */
 @Getter
 @Setter
@@ -23,10 +26,6 @@ public class SavingsGoal extends BaseEntity {
 
     @Column(name = "user_id", nullable = false, length = 36)
     private String userId;
-
-    /** FK → account that backs the goal (typically a SAVINGS account). */
-    @Column(name = "account_id", nullable = false, length = 36)
-    private String accountId;
 
     @Column(nullable = false, length = 300)
     private String name;

@@ -6,7 +6,7 @@ import lombok.Getter;
 import lombok.Setter;
 
 /**
- * A typed capture message (F-1.9a). The length cap is a real control, not a
+ * A typed capture message (F-1.11). The length cap is a real control, not a
  * formality: the message goes into a model prompt, so an unbounded one is
  * unbounded compute.
  */

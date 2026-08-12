@@ -20,7 +20,7 @@ public class GoalContribution extends BaseEntity {
     @Column(name = "goal_id", nullable = false, length = 36)
     private String goalId;
 
-    /** FK → transaction (the TRANSFER into the backing account). Nullable for a manual adjustment. */
+    /** FK → the transaction that moved the money. Nullable for a manual adjustment. */
     @Column(name = "transaction_id", length = 36)
     private String transactionId;
 

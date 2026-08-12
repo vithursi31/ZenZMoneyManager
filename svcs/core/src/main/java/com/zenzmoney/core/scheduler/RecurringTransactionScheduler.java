@@ -13,7 +13,7 @@ import java.util.List;
  * templates and processes each in its own transaction via
  * {@link RecurringTransactionService#runTemplate(String)} — a call across bean
  * boundaries so the per-template {@code @Transactional} actually applies, and so one
- * failing template (e.g. its account was archived) is isolated and the rest still run.
+ * failing template (e.g. its category was deleted) is isolated and the rest still run.
  *
  * <p>Catch-up lives in {@code runTemplate}, so the tick cadence only bounds latency,
  * not correctness: missed occurrences during downtime are generated on the next tick.
