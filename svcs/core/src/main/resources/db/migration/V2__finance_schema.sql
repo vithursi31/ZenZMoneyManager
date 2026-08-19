@@ -6,14 +6,14 @@
 ALTER TABLE app_user ADD COLUMN active_currency VARCHAR(3);
 ALTER TABLE app_user ADD COLUMN language        VARCHAR(10);
 
--- Exactly ONE account per user (domain §1.4, F-1.1): a container for the user's
--- activity, auto-created at onboarding and never named, typed, listed or picked.
--- It deliberately has NO balance columns — the user-facing figure is the monthly
--- position, derived from the ledger on read (§1.10). The unique index on user_id
--- is what actually enforces the one-account rule; service code alone would race.
+-- A user's account (F-F.1): a container for ledger activity. No balance
+-- columns — the user-facing figure is the monthly position, derived from the
+-- ledger on read (§1.10). Multiple accounts per user are allowed.
 CREATE TABLE account (
     id                VARCHAR(36) PRIMARY KEY,
     user_id           VARCHAR(36) NOT NULL,
+    name              VARCHAR(100),
+    status            VARCHAR(50) NOT NULL DEFAULT 'ACTIVE',
     currency          VARCHAR(3) NOT NULL,
     metadata          JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_time      BIGINT,
@@ -22,7 +22,7 @@ CREATE TABLE account (
     modified_by       VARCHAR(120),
     version           BIGINT
 );
-CREATE UNIQUE INDEX idx_account_user ON account(user_id);
+CREATE INDEX idx_account_user ON account(user_id);
 
 CREATE TABLE category (
     id                VARCHAR(36) PRIMARY KEY,
@@ -89,11 +89,10 @@ CREATE INDEX idx_transaction_txn_date ON transaction(txn_date);
 CREATE TABLE budget (
     id                VARCHAR(36) PRIMARY KEY,
     user_id           VARCHAR(36) NOT NULL,
+    account_id        VARCHAR(36) NOT NULL,
     category_id       VARCHAR(36),
     period            VARCHAR(50) NOT NULL,
     amount_limit      BIGINT NOT NULL,
-    currency          VARCHAR(3) NOT NULL,
-    start_date        BIGINT NOT NULL,
     rollover          BOOLEAN NOT NULL DEFAULT FALSE,
     status            VARCHAR(50) NOT NULL DEFAULT 'ACTIVE',
     created_time      BIGINT,
@@ -103,6 +102,7 @@ CREATE TABLE budget (
     version           BIGINT
 );
 CREATE INDEX idx_budget_user ON budget(user_id);
+CREATE INDEX idx_budget_account ON budget(account_id);
 CREATE INDEX idx_budget_category ON budget(category_id);
 
 CREATE TABLE recurring_transaction (

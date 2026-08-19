@@ -25,7 +25,7 @@ class ExtractionPromptTest {
 
     @Test
     void listsEveryCategoryTheUserOwns() {
-        String system = prompt.system(List.of("Food & Drinks", "Groceries", "Salary"));
+        String system = prompt.system(List.of("Food & Drinks", "Groceries", "Salary"), null);
 
         assertTrue(system.contains("- Food & Drinks"));
         assertTrue(system.contains("- Groceries"));
@@ -34,7 +34,7 @@ class ExtractionPromptTest {
 
     @Test
     void skipsBlankAndMissingCategoryNames() {
-        String system = prompt.system(Arrays.asList("Groceries", "  ", null));
+        String system = prompt.system(Arrays.asList("Groceries", "  ", null), null);
 
         assertTrue(system.contains("- Groceries"));
         assertFalse(system.contains("- \n"), "a blank name must not become an empty bullet");
@@ -42,7 +42,7 @@ class ExtractionPromptTest {
 
     @Test
     void tellsTheModelToGuessNothingWhenTheUserHasNoCategories() {
-        String system = prompt.system(List.of());
+        String system = prompt.system(List.of(), null);
 
         assertTrue(system.contains("(none)"), "the empty list marker the template's rule keys off");
         assertTrue(system.contains("categoryGuess to null"));
@@ -50,7 +50,7 @@ class ExtractionPromptTest {
 
     @Test
     void keepsCurrencyAndAbsoluteDatesOutOfTheModelsHands() {
-        String system = prompt.system(List.of("Groceries"));
+        String system = prompt.system(List.of("Groceries"), null);
 
         assertTrue(system.contains("Never infer or output a currency"));
         assertTrue(system.contains("never compute or"), "the model emits a date phrase, the backend resolves it");
@@ -58,7 +58,7 @@ class ExtractionPromptTest {
 
     @Test
     void leavesNoPlaceholderBehind() {
-        assertFalse(prompt.system(List.of("Groceries")).contains("{{"),
+        assertFalse(prompt.system(List.of("Groceries"), null).contains("{{"),
                 "an unsubstituted placeholder would be sent to the model verbatim");
     }
 

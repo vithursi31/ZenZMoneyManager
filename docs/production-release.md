@@ -235,12 +235,12 @@ The [docs/api/](api/) scripts do this with a `.env.local` pointed at the product
 cd docs/api && ./api-register.sh && ./api-verify-email.sh && ./api-me.sh
 ```
 
-Or by hand — note the contract is `email` / `password` / `displayName` on `POST /api/v1/register`:
+Or by hand — note the contract is `email` / `password` on `POST /api/v1/register`:
 
 ```bash
 curl -s -X POST http://<public-host>:8080/api/v1/register \
   -H 'Content-Type: application/json' \
-  -d '{"email":"release-check@example.com","password":"Passw0rd!","displayName":"Release Check"}'
+  -d '{"email":"release-check@example.com","password":"Passw0rd!"}'
 ```
 
 Expect the `ApiResponse` envelope: `{status, data, message, errorCode}`.
@@ -363,7 +363,7 @@ worth closing.
 | Image is always `:latest` | Rollback needs a rebuild unless you remember the `docker tag … :previous` step in §5. |
 | No health endpoint | Verification is `curl /` plus reading logs; there is no `/actuator/health` for compose or a proxy to probe. |
 | `/stripe/webhook` is permitted but unimplemented | An open path with no handler behind it. Remove it or implement it deliberately. |
-| DEPLOYMENT.md §A.7 smoke test is stale | It calls `POST /api/v1/register/begin` with a `username` field; the real endpoint is `POST /api/v1/register` with `email`/`password`/`displayName`. Use §6.2 above. |
+| DEPLOYMENT.md §A.7 smoke test is stale | It calls `POST /api/v1/register/begin` with a `username` field; the real endpoint is `POST /api/v1/register` with `email`/`password`. Use §6.2 above. |
 
 ---
 

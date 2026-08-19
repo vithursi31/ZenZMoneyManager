@@ -2,6 +2,7 @@ package com.zenzmoney.core.entity;
 
 import com.zenzmoney.common.domain.BaseEntity;
 import com.zenzmoney.common.domain.Role;
+import com.zenzmoney.common.domain.UserStatus;
 import jakarta.persistence.CollectionTable;
 import jakarta.persistence.Column;
 import jakarta.persistence.ElementCollection;
@@ -30,17 +31,15 @@ public class User extends BaseEntity {
     @Column(unique = true, nullable = false)
     private String email;
 
-    @Column(name = "display_name", length = 200)
-    private String displayName;
-
     @Column(name = "password_hash", nullable = false)
     private String passwordHash;
 
     @Column(name = "auth_mode", nullable = false, length = 50)
     private String authMode = "password";
 
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 50)
-    private String status = "pending";
+    private UserStatus status = UserStatus.PENDING;
 
     @Column(name = "email_verified", nullable = false)
     private boolean emailVerified;
@@ -57,24 +56,12 @@ public class User extends BaseEntity {
     @Column(nullable = false, length = 50)
     private String timezone = "UTC";
 
-    /**
-     * ISO-4217; the user's single active currency (§0.3). Seeded at signup from the
-     * locale the client reports, and null when it reported none — read it together
-     * with {@link #onboarded}, which says whether the user has confirmed it.
-     */
     @Column(name = "active_currency", length = 3)
     private String activeCurrency;
 
-    /** BCP-47 preferred language, e.g. en, ta, si (F-1.26). */
     @Column(length = 10)
     private String language;
 
-    /**
-     * Whether the user has confirmed their preferences in onboarding (F-1.27).
-     * While false the currency above is a guess and onboarding may still replace it;
-     * once true it is frozen, because every stored amount is a minor-unit figure
-     * denominated in it and re-denominating would reinterpret them all (§0.3).
-     */
     @Column(nullable = false)
     private boolean onboarded;
 
@@ -82,9 +69,6 @@ public class User extends BaseEntity {
 
     @Column(name = "last_login_time")
     private Long lastLoginTime;
-
-    @Column(name = "login_attempts")
-    private int loginAttempts;
 
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb")

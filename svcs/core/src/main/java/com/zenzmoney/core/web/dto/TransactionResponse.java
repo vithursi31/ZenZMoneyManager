@@ -6,15 +6,12 @@ import lombok.Getter;
 
 import java.util.List;
 
-/**
- * A ledger row as the client sees it. {@code accountId} is deliberately absent —
- * the user has one account and never chooses it (§1.4), so exposing the id would
- * only invite clients to build account UI that has nothing to switch between.
- */
+/** A ledger row as the client sees it. */
 @Getter
 public class TransactionResponse {
 
     private final String id;
+    private final String accountId;
     private final TransactionType type;
     private final String categoryId;
     private final long amount;
@@ -27,6 +24,7 @@ public class TransactionResponse {
 
     private TransactionResponse(Transaction t) {
         this.id = t.getId();
+        this.accountId = t.getAccountId();
         this.type = t.getType();
         this.categoryId = t.getCategoryId();
         this.amount = t.getAmount();

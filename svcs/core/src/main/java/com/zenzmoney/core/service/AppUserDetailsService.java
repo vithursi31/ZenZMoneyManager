@@ -1,5 +1,6 @@
 package com.zenzmoney.core.service;
 
+import com.zenzmoney.common.domain.UserStatus;
 import com.zenzmoney.core.entity.User;
 import com.zenzmoney.core.logging.AppLog;
 import com.zenzmoney.core.repository.UserRepository;
@@ -43,8 +44,7 @@ public class AppUserDetailsService implements UserDetailsService {
                         .map(r -> new SimpleGrantedAuthority("ROLE_" + r.name()))
                         .collect(Collectors.toList()))
                 .accountLocked(u.isLocked())
-                .accountExpired("expired".equals(u.getStatus()))
-                .disabled(!"active".equals(u.getStatus()))
+                .disabled(u.getStatus() != UserStatus.ACTIVE)
                 .build();
     }
 }

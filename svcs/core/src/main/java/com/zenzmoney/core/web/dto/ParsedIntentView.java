@@ -21,6 +21,8 @@ public class ParsedIntentView {
     private final Long amountMinor;
     private final String currency;
     private final String categoryId;
+    /** The resolved category's name, so a preview renders without a second lookup. */
+    private final String categoryName;
     private final String categoryGuess;
     private final Long txnDate;
     private final String payeeName;
@@ -35,6 +37,7 @@ public class ParsedIntentView {
         this.amountMinor = intent.getAmountMinor();
         this.currency = intent.getCurrency();
         this.categoryId = intent.getCategoryId();
+        this.categoryName = intent.getCategoryName();
         this.categoryGuess = intent.getCategoryGuess();
         this.txnDate = intent.getTxnDate();
         this.payeeName = intent.getPayeeName();

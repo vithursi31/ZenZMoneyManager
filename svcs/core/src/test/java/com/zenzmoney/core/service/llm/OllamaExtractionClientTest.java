@@ -59,7 +59,7 @@ class OllamaExtractionClientTest {
     @Test
     void buildRequestBody_asksForOneNonStreamedJsonAnswer() {
         Map<String, Object> body = clientReturning("{}")
-                .buildRequestBody("I have spent $5 for burger", List.of("Food & Drinks"));
+                .buildRequestBody("I have spent $5 for burger", List.of("Food & Drinks"), null);
 
         assertEquals("qwen2.5:3b-instruct", body.get("model"));
         assertEquals(Boolean.FALSE, body.get("stream"));
@@ -83,7 +83,7 @@ class OllamaExtractionClientTest {
     void buildRequestBody_truncatesAnOverlongMessage() {
         String essay = "a".repeat(OllamaExtractionClient.MAX_MESSAGE_CHARS + 250);
 
-        Map<String, Object> body = clientReturning("{}").buildRequestBody(essay, List.of());
+        Map<String, Object> body = clientReturning("{}").buildRequestBody(essay, List.of(), null);
 
         @SuppressWarnings("unchecked")
         List<Map<String, String>> messages = (List<Map<String, String>>) body.get("messages");
@@ -99,7 +99,7 @@ class OllamaExtractionClientTest {
                 """;
 
         LlmExtraction extraction = clientReturning(ollamaReply(content))
-                .extract("I spent $15.50 at Keells yesterday for tea things", List.of("Groceries"));
+                .extract("I spent $15.50 at Keells yesterday for tea things", List.of("Groceries"), null);
 
         assertFalse(extraction.isFailed());
         assertEquals(IntentType.CREATE_TRANSACTION, extraction.getIntent());
@@ -116,7 +116,7 @@ class OllamaExtractionClientTest {
     void extract_keepsAnAmountTheModelWroteAsANumber() throws Exception {
         LlmExtraction extraction = clientReturning(ollamaReply(
                 "{\"intent\":\"CREATE_TRANSACTION\",\"txnType\":\"EXPENSE\",\"amount\":5,\"confidence\":0.9}"))
-                .extract("spent 5 on burger", List.of());
+                .extract("spent 5 on burger", List.of(), null);
 
         assertEquals("5", extraction.getAmountRaw());
     }
@@ -125,7 +125,7 @@ class OllamaExtractionClientTest {
     void extract_treatsBlankAndLiteralNullFieldsAsAbsent() throws Exception {
         LlmExtraction extraction = clientReturning(ollamaReply(
                 "{\"intent\":\"CREATE_TRANSACTION\",\"payee\":\"null\",\"note\":\"   \",\"categoryGuess\":null}"))
-                .extract("spent 5 on burger", List.of());
+                .extract("spent 5 on burger", List.of(), null);
 
         assertNull(extraction.getPayee(), "instruct models write the string \"null\" often enough to matter");
         assertNull(extraction.getNote());
@@ -137,7 +137,7 @@ class OllamaExtractionClientTest {
     void extract_fallsBackWhenTheModelInventsAnEnumValue() throws Exception {
         LlmExtraction extraction = clientReturning(ollamaReply(
                 "{\"intent\":\"BUY_SOMETHING\",\"txnType\":\"SPENDING\",\"amount\":\"5\"}"))
-                .extract("spent 5 on burger", List.of());
+                .extract("spent 5 on burger", List.of(), null);
 
         assertFalse(extraction.isFailed(), "a bad guess is not a broken call");
         assertEquals(IntentType.UNKNOWN, extraction.getIntent());
@@ -148,7 +148,7 @@ class OllamaExtractionClientTest {
     void extract_clampsAConfidenceGivenAsAPercentage() throws Exception {
         LlmExtraction extraction = clientReturning(ollamaReply(
                 "{\"intent\":\"CREATE_TRANSACTION\",\"confidence\":95}"))
-                .extract("spent 5 on burger", List.of());
+                .extract("spent 5 on burger", List.of(), null);
 
         assertEquals(1.0d, extraction.getConfidence());
     }
@@ -156,7 +156,7 @@ class OllamaExtractionClientTest {
     @Test
     void extract_failsWhenTheModelAnswersWithProse() throws Exception {
         LlmExtraction extraction = clientReturning(ollamaReply("Sure! You spent five dollars."))
-                .extract("spent 5 on burger", List.of());
+                .extract("spent 5 on burger", List.of(), null);
 
         assertTrue(extraction.isFailed());
         assertEquals(IntentType.UNKNOWN, extraction.getIntent());
@@ -164,7 +164,7 @@ class OllamaExtractionClientTest {
 
     @Test
     void extract_failsWhenTheModelAnswersWithAnEmptyReply() throws Exception {
-        LlmExtraction extraction = clientReturning(ollamaReply("")).extract("spent 5", List.of());
+        LlmExtraction extraction = clientReturning(ollamaReply("")).extract("spent 5", List.of(), null);
 
         assertTrue(extraction.isFailed());
     }
@@ -175,7 +175,7 @@ class OllamaExtractionClientTest {
                         .header("Content-Type", MediaType.APPLICATION_JSON_VALUE)
                         .body("{\"error\":\"model not found\"}")
                         .build()))
-                .extract("spent 5 on burger", List.of());
+                .extract("spent 5 on burger", List.of(), null);
 
         assertTrue(extraction.isFailed(), "a 5xx from the model must not become a 5xx to the user");
     }
@@ -183,7 +183,7 @@ class OllamaExtractionClientTest {
     @Test
     void extract_failsWhenOllamaIsUnreachable() {
         LlmExtraction extraction = client(request -> Mono.error(new java.net.ConnectException("connection refused")))
-                .extract("spent 5 on burger", List.of());
+                .extract("spent 5 on burger", List.of(), null);
 
         assertTrue(extraction.isFailed(), "the model is optional infrastructure — being down is not an outage");
     }
@@ -191,7 +191,7 @@ class OllamaExtractionClientTest {
     @Test
     void extract_failsOnABlankMessageWithoutCallingTheModel() {
         LlmExtraction extraction = client(request -> Mono.error(new AssertionError("must not call the model")))
-                .extract("   ", List.of());
+                .extract("   ", List.of(), null);
 
         assertTrue(extraction.isFailed());
     }

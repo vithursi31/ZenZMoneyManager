@@ -4,10 +4,21 @@
 #   message   : max 500 chars, non-blank (the cap bounds model compute)
 #   sessionId : optional; omit to start a conversation, pass it back to continue one
 #
-# The reply carries {messageId, sessionId, status, reply, draft}:
+# The reply carries {messageId, sessionId, status, reply, draft, prompt}:
 #   PARSED              -> draft is complete + confident; confirm it
-#   NEEDS_CLARIFICATION -> draft.missingFields says what to ask about
-#   FAILED              -> the model was unreachable or unreadable; nothing stored
+#   NEEDS_CLARIFICATION -> prompt.field says what is still open and prompt.options
+#                          what to offer for it; answer with api-chat-draft.sh, or
+#                          just send another message on the same sessionId
+#   ANSWERED            -> the message was a question ("how can I reduce my
+#                          expenses?"), answered from the user's own aggregates;
+#                          `insight` carries the figures, `draft` is null, and any
+#                          capture in progress is left untouched
+#   FAILED              -> the model was unreachable or unreadable; nothing stored,
+#                          and any draft already in progress stays live
+#
+# Pass sessionId to continue a conversation: a follow-up folds into the draft the
+# earlier turn built rather than starting a new one, so "I spent 20" then "food"
+# is one transaction, not two halves of nothing.
 # Money in the draft is minor units + currency; the client formats it.
 #
 # Requires the optional Ollama service:

@@ -1,0 +1,152 @@
+/* Chat capture screen (F-1.11). Plain CSS on purpose — the app has no design
+   system yet, and this screen should not be the thing that picks one. */
+
+:root {
+    --ink: #1c1e21;
+    --muted: #5c6470;
+    --line: #d8dce3;
+    --surface: #ffffff;
+    --raised: #f4f6f9;
+    --accent: #1f6f4a;
+    --danger: #a3261f;
+}
+
+body {
+    margin: 0;
+    color: var(--ink);
+    background: var(--raised);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+nav {
+    display: flex;
+    gap: 1rem;
+    padding: 0.75rem 1rem;
+    background: var(--surface);
+    border-bottom: 1px solid var(--line);
+}
+
+nav a { color: var(--accent); text-decoration: none; }
+
+.chat {
+    max-width: 42rem;
+    margin: 0 auto;
+    padding: 1.5rem 1rem 3rem;
+}
+
+.chat h1 { font-size: 1.25rem; margin: 0 0 1rem; }
+
+button {
+    font: inherit;
+    padding: 0.45rem 0.9rem;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--surface);
+    cursor: pointer;
+}
+
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+    font-weight: 600;
+}
+
+input, select {
+    font: inherit;
+    padding: 0.45rem 0.6rem;
+    border: 1px solid var(--line);
+    border-radius: 0.4rem;
+    background: var(--surface);
+}
+
+label { display: block; margin-bottom: 0.6rem; }
+label input, label select { display: block; width: 100%; margin-top: 0.2rem; }
+
+.signin, .preview, .insight {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 0.6rem;
+    padding: 1rem;
+}
+
+.signin-hint { margin-top: 0; color: var(--muted); }
+
+/* --- transcript --- */
+
+.transcript {
+    list-style: none;
+    margin: 0 0 0.75rem;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.turn {
+    max-width: 80%;
+    padding: 0.5rem 0.85rem;
+    border-radius: 1rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+}
+
+.turn.user {
+    align-self: flex-end;
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+
+/* --- suggestion chips --- */
+
+.chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+}
+
+/* --- answered question: the figures beside the prose --- */
+
+.insight { margin-bottom: 0.75rem; }
+.insight h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em;
+              color: var(--muted); margin: 0 0 0.75rem; }
+.insight-month { margin-bottom: 0.9rem; }
+.insight-month:last-child { margin-bottom: 0; }
+.insight-month h3 { font-size: 0.9rem; margin: 0 0 0.35rem; }
+.insight-month p { margin: 0 0 0.4rem; color: var(--muted); }
+
+.insight-rows { display: grid; grid-template-columns: 1fr auto; gap: 0.2rem 1rem; margin: 0; }
+.insight-rows dt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.insight-rows dd { margin: 0; font-variant-numeric: tabular-nums; text-align: right; }
+
+/* --- draft preview --- */
+
+.preview { margin-bottom: 0.75rem; }
+.preview h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em;
+              color: var(--muted); margin: 0 0 0.75rem; }
+
+.preview-fields {
+    display: grid;
+    grid-template-columns: 7rem 1fr;
+    gap: 0.35rem 1rem;
+    margin: 0 0 1rem;
+}
+
+.preview-fields dt { color: var(--muted); }
+.preview-fields dd { margin: 0; }
+.preview-fields dd.pending { color: var(--muted); font-style: italic; }
+.preview-fields dd.amount { font-variant-numeric: tabular-nums; font-weight: 600; }
+
+.preview-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+
+/* --- composer --- */
+
+.composer { display: flex; gap: 0.5rem; }
+.composer input { flex: 1; }
+
+.error { color: var(--danger); margin: 0.6rem 0 0; }

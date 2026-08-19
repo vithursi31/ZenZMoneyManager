@@ -24,8 +24,9 @@ and have the backend:
    resolve the date.
 4. Return a **draft** the user confirms.
 5. On confirm, write a real `Transaction` to the ledger (Part 1) — reusing the
-   existing transaction rules. The account is the user's single account, resolved
-   server-side (domain §1.4).
+   existing transaction rules. The account is the user's primary account, resolved
+   server-side (domain §1.4) — chat can't yet target a different one of the
+   user's accounts, same as manual entry.
 
 **Worked example A — item, no merchant**
 
@@ -82,14 +83,15 @@ Draft:     EXPENSE · $15.00 · Groceries · today · payee="Keells" · note="te
 - Self-hosted **Qwen2.5 via Ollama**, called over an OpenAI-compatible HTTP API.
 
 **Out of scope (later phases / separate plans)**
-- `QUERY` intent / financial assistant (F-1.16) — read-side, deterministic aggregates.
+- ~~`QUERY` intent / financial assistant (F-1.16)~~ — **shipped**, see §5.5b.
 - `UPDATE_TRANSACTION` — needs session-target resolution; add after create works.
 - Voice entry (F-1.12) — reuses this pipeline behind speech-to-text. Now MVP, not Phase 2.
 - OCR / receipts (F-1.13) — same draft→confirm funnel, different extractor (§3.5).
 
-> **`TRANSFER` is gone, not deferred.** The single-account model removed the
-> transaction type entirely (domain §1.6); a transfer needs two accounts. It
-> returns only with F-F.1.
+> **`TRANSFER` is gone, not deferred.** The transaction type was removed entirely
+> (domain §1.6); a transfer needs an explicit second account on the write path,
+> which still doesn't exist even though a user may now hold more than one
+> account. It returns only with the rest of F-F.1.
 
 ---
 
@@ -200,28 +202,136 @@ All under `com.zenzmoney.core`, mirroring existing service/connector style
     it before any `Payee` row is created. Resolution to `payeeId` happens only at
     confirm, via `PayeeService.resolveOrCreate` (§5.7). The prompt already enforces
     payee=merchant/person-or-null and note=item/description.
-  - **Account:** the user's single account (domain §1.4) — never chosen, never sent by the client.
+  - **Account:** the user's primary account (domain §1.4) — never chosen, never sent by the client, even though the user may hold more than one.
   - **missingFields / confidence:** if amount or category can't be filled, or
     confidence < threshold, populate `missingFields` so the flow branches to
     clarification.
 
 ### 5.5 Orchestration
 - `ChatService.handle(userId, message, sessionId)` — the pipeline in §4.
+- `ChatService.amendDraft(messageId, fields)` — applies an answer the user picked,
+  or an edit they made in the preview. No model call and no rate limit: the values
+  are already structured, so re-reading them as language would only add latency and
+  a chance to get them wrong.
 - `ChatService.confirm(userId, messageId)` — validates the draft, resolves the
   draft's `payeeName` to a `payeeId` via `PayeeService.resolveOrCreate` (§5.7),
   calls the existing `TransactionService` (Core-Ledger service layer) to create the
   row with that `payeeId`, sets `status = CONFIRMED` + `transactionId`.
 - `ChatService.reject(userId, messageId)` — `status = REJECTED`, no write.
 
+### 5.5a Clarification is a conversation, not a dead end
+
+**Shipped after the first cut.** The original flow asked "How much was that?" and
+then read the answer as a brand-new message — so the `$20` from the turn before was
+thrown away and the user had to restate the whole thing. Three pieces fixed that,
+and the reasoning behind each is in
+[domain §3.3 / §3.4](../domain/domain-documentation.md#33-parsedintent-value-object):
+
+1. **Slot filling** — `IntentResolver.resolve(..., pending)` merges the new reading
+   into the open draft, including reading a message that is *only* an amount or a
+   category name deterministically. That last part is not a nicety: the local model
+   is `qwen2.5:1.5b`, and a one-word reply carries almost no signal for it.
+2. **`ChatSuggestions`** — decides the single question to ask and the answers to
+   offer for it, so the sentence and the chips under it can never disagree.
+3. **`SUPERSEDED`** — retires the turn a newer draft grew out of, so a conversation
+   never holds two confirmable drafts.
+
+A message the model gives up on is still treated as a capture when it plainly talks
+about money (a number, a direction word, a category word). Asking "how much?" beats
+answering "I couldn't tell what you wanted to record" for a message that clearly
+wanted to record something.
+
+### 5.5b Answering a question (F-1.16)
+
+**Shipped.** A message the first pass flags `QUERY` — *"how can I reduce my
+expenses?"*, *"how much did I spend on food last month?"* — takes a **second model
+pass**, and the split between the two is the whole design:
+
+```
+POST /api/v1/chat  "how can I reduce my expenses?"
+  │
+  ├─ pass 1  LlmExtractionClient  ──► intent = QUERY          (the flag)
+  │
+  ├─ SpendingSnapshotService      ──► SQL aggregates: this month + last,
+  │                                   income / expenses / position, and
+  │                                   expense-by-category (top 8)
+  │
+  └─ pass 2  LlmAdviceClient      ──► the question + those figures
+                                      ──► one grounded paragraph
+     status = ANSWERED · no draft · aggregates returned beside the prose
+```
+
+**Why two passes rather than one prompt that does both:** extraction is constrained
+JSON at temperature 0.1 and answering is prose at 0.3, and a single prompt asked to
+do both does neither well. The flag also costs nothing extra — the message had to be
+read anyway to know it was not a capture.
+
+**Why the model never touches the arithmetic.** Asked to total a ledger it returns
+something plausible and wrong, and a wrong figure about someone's own money is worse
+than no answer. So the numbers are SQL aggregates over the same half-open month
+windows as the monthly position (§1.10), the prompt forbids inventing a number, and
+the same aggregates go back on the response so the sentence can be checked against
+them.
+
+**Why amounts are rendered to major units in the prompt** despite the
+never-format-money rule (§0.2): a model handed `45005` writes advice about
+forty-five thousand. `AdvicePrompt` renders `450.05 USD` — exact, from
+`BigDecimal.valueOf(minor, scale)`, never a float, never localized, and only inside
+the prompt. The API response still carries minor units.
+
+**What does not leave.** Category names and summed amounts only. Notes, payees, and
+individual transactions stay in the database — nothing in *"how can I reduce my
+spending?"* needs them (§9).
+
+**Cost.** A second, much longer generation than extraction, so it has its own
+tighter limit on top of the chat one (5/min, 30/hour, 100/day, fail-closed). A user
+with nothing recorded is answered deterministically, without a model call.
+
+### 5.5c Direction is asked, not guessed
+
+**Measured, not assumed.** The prompt eval (§10) against `qwen2.5:1.5b-instruct`,
+run 2026-08-19:
+
+| | direction | amount |
+|---|---|---|
+| en, full sentences | 6/8 | 8/8 |
+| terse ("coffee 500") | 0/8 | 8/8 |
+| fr | 4/6 | 6/6 |
+| es | 2/6 | 6/6 |
+
+Amount extraction is exact and every `categoryGuess` came from the closed set — the
+parts the backend treats as a contract hold. **Direction does not.** Those are raw
+model figures; `IntentResolver.resolveType` repairs 7 of the 16 from a direction verb
+the user typed, leaving **9/28 wrong**, all of them a bare noun and a number.
+
+The model's errors are one-sided: **EXPENSE 8/8 correct, INCOME 4/16.** It reaches
+for INCOME on exactly the input that carries no verb. And several of those messages
+have no correct answer from the text alone — a landlord collects the `rent 45000` a
+tenant pays, a driver earns the `uber 250` a passenger spends.
+
+So the rule is: a direction word the user typed wins; failing that the model's
+EXPENSE is taken and **its INCOME is not** — `resolveType` returns null and the
+two-option question goes to the user. One tap, always right, and it cannot book
+somebody's rent as income. A wrong EXPENSE understates a month; a wrong INCOME flips
+its sign.
+
+> `got` is deliberately **not** an income word. "got paid" and "got a coffee" go
+> opposite ways, so it asks — which is the correct answer for an ambiguous verb.
+
 ### 5.6 Controller + DTOs
 - `ChatController` (`/api/v1/chat`):
   - `POST /api/v1/chat` `{ message, sessionId? }` → `ChatReplyResponse`
-    (assistant text + draft `ParsedIntent` + status).
+    (assistant text + draft `ParsedIntent` + status + the `prompt` to offer).
+  - `POST /api/v1/chat/draft` `{ messageId, txnType?, amountMinor?, categoryId?,
+    txnDate?, note?, payeeName? }` → the same `ChatReplyResponse`, refined.
   - `POST /api/v1/chat/confirm` `{ messageId }` → the created transaction (or draft echo).
   - `POST /api/v1/chat/reject` `{ messageId }` → ack.
   - `GET  /api/v1/chat?sessionId=` → conversation history (optional, for replay).
 - All authenticated (JWT filter already covers `/api/v1/**` non-public paths).
 - Wrapped in the existing `ApiResponse<T>` envelope.
+- **Amount options carry `amountMinor` and no label.** The backend never renders
+  money into text (domain §0.2); a label of "$5.00" would take on locale and
+  currency formatting for every future client.
 
 ### 5.7 Payee entity (domain amendment — replaces the free-text `payee` string)
 

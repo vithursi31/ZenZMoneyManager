@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # POST /api/v1/budgets/{id}/archive — set status ARCHIVED (USER/ADMIN). Hides the
-# budget from the default listing and frees its (category, period) slot for a new
-# active budget. Pass the id as arg 1 or set BUDGET_ID.
+# budget from the default listing and frees its (account, category, period) slot
+# for a new active budget. Pass the id as arg 1 or set BUDGET_ID.
 source define-envars.sh;
 
 BUDGET_ID="${1:-${BUDGET_ID:-}}"

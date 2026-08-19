@@ -16,8 +16,10 @@ public class ChatMessageResponse {
     private final String transactionId;
     private final Long createdTime;
     private final ParsedIntentView draft;
+    /** Set only on the turn still awaiting an answer — an earlier question is spent. */
+    private final ChatPromptView prompt;
 
-    private ChatMessageResponse(ChatMessage message) {
+    private ChatMessageResponse(ChatMessage message, ChatPromptView prompt) {
         this.id = message.getId();
         this.role = message.getRole();
         this.content = message.getContent();
@@ -25,9 +27,14 @@ public class ChatMessageResponse {
         this.transactionId = message.getTransactionId();
         this.createdTime = message.getCreatedTime();
         this.draft = ParsedIntentView.of(message.getParsedIntent());
+        this.prompt = prompt;
     }
 
     public static ChatMessageResponse of(ChatMessage message) {
-        return new ChatMessageResponse(message);
+        return new ChatMessageResponse(message, null);
+    }
+
+    public static ChatMessageResponse of(ChatMessage message, ChatPromptView prompt) {
+        return new ChatMessageResponse(message, prompt);
     }
 }

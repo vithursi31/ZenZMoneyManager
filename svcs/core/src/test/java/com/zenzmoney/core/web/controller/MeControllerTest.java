@@ -2,8 +2,12 @@ package com.zenzmoney.core.web.controller;
 
 import com.zenzmoney.common.dto.ApiResponse;
 import com.zenzmoney.core.entity.User;
+import com.zenzmoney.core.service.ChangePasswordService;
 import com.zenzmoney.core.service.CurrentUserService;
+import com.zenzmoney.core.service.ProfileService;
+import com.zenzmoney.core.web.dto.ChangePasswordRequest;
 import com.zenzmoney.core.web.dto.MeResponse;
+import com.zenzmoney.core.web.dto.UpdateProfileRequest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -11,11 +15,14 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.ResponseEntity;
 
+import java.util.Map;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -28,6 +35,8 @@ import static org.mockito.Mockito.when;
 class MeControllerTest {
 
     @Mock CurrentUserService currentUser;
+    @Mock ProfileService profileService;
+    @Mock ChangePasswordService changePasswordService;
     @InjectMocks MeController meController;
 
     private MeResponse me() {
@@ -75,5 +84,35 @@ class MeControllerTest {
         assertNull(body.getActiveCurrency());
         assertNull(body.getLanguage());
         assertFalse(body.isOnboarded());
+    }
+
+    @Test
+    void updateProfile_delegatesToTheProfileService() {
+        UpdateProfileRequest req = new UpdateProfileRequest();
+        req.setFirstName("Ada");
+        req.setLastName("Lovelace");
+        User u = new User();
+        u.setFirstName("Ada");
+        u.setLastName("Lovelace");
+        when(profileService.updateProfile(req)).thenReturn(MeResponse.of(u));
+
+        ResponseEntity<ApiResponse<MeResponse>> resp = meController.updateProfile(req);
+
+        assertEquals(200, resp.getStatusCode().value());
+        assertEquals("Ada", resp.getBody().getData().getFirstName());
+        assertEquals("Lovelace", resp.getBody().getData().getLastName());
+    }
+
+    @Test
+    void changePassword_delegatesToTheChangePasswordService() {
+        ChangePasswordRequest req = new ChangePasswordRequest();
+        req.setCurrentPassword("Curr3nt-Pass!");
+        req.setNewPassword("NewPassw0rd!");
+
+        ResponseEntity<ApiResponse<Map<String, String>>> resp = meController.changePassword(req);
+
+        assertEquals(200, resp.getStatusCode().value());
+        assertEquals("Password changed", resp.getBody().getData().get("message"));
+        verify(changePasswordService).changePassword("Curr3nt-Pass!", "NewPassw0rd!");
     }
 }

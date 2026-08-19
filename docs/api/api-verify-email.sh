@@ -5,6 +5,6 @@
 source load-env.sh;
 
 curl -kv -H "Content-Type: application/json" -X POST "$HOST/api/v1/verify-email" --data-raw '{
-    "email": "newuser@example.com",
-    "code": "123456"
+    "email": "vithursiha@gmail.com",
+    "code": "070465"
 }'

@@ -1,13 +1,17 @@
 package com.zenzmoney.core.service;
 
+import com.zenzmoney.common.domain.AccountStatus;
 import com.zenzmoney.common.domain.BudgetStatus;
 import com.zenzmoney.common.domain.BudgetPeriod;
 import com.zenzmoney.common.domain.CategoryKind;
+import com.zenzmoney.common.domain.TimeUtils;
 import com.zenzmoney.common.exception.BadRequestException;
 import com.zenzmoney.common.exception.NotFoundException;
+import com.zenzmoney.core.entity.Account;
 import com.zenzmoney.core.entity.Budget;
 import com.zenzmoney.core.entity.Category;
 import com.zenzmoney.core.entity.User;
+import com.zenzmoney.core.repository.AccountRepository;
 import com.zenzmoney.core.repository.BudgetRepository;
 import com.zenzmoney.core.repository.CategoryRepository;
 import com.zenzmoney.core.repository.TransactionRepository;
@@ -21,6 +25,11 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.Instant;
+import java.time.Year;
+import java.time.YearMonth;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 
@@ -38,20 +47,26 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class BudgetServiceTest {
 
-    private static final long DAY = 86_400_000L;
-    private static final long ANCHOR = 1_700_000_000_000L;   // 2023-11-14T22:13:20Z
-
     @Mock BudgetRepository budgetRepository;
     @Mock CategoryRepository categoryRepository;
     @Mock TransactionRepository transactionRepository;
+    @Mock AccountRepository accountRepository;
     @Mock CurrentUserService currentUser;
     @InjectMocks BudgetService budgetService;
 
-    private User user(String id, String currency) {
+    private User user(String id) {
         User u = new User();
         u.setId(id);
-        u.setActiveCurrency(currency);
         return u;
+    }
+
+    private Account account(String id, String userId, String currency) {
+        Account a = new Account();
+        a.setId(id);
+        a.setUserId(userId);
+        a.setCurrency(currency);
+        a.setStatus(AccountStatus.ACTIVE);
+        return a;
     }
 
     private Category category(String id, String userId, CategoryKind kind) {
@@ -63,31 +78,32 @@ class BudgetServiceTest {
         return c;
     }
 
-    private Budget owned(String id, String userId, String categoryId) {
+    private Budget owned(String id, String userId, String accountId, String categoryId) {
         Budget b = new Budget();
         b.setId(id);
         b.setUserId(userId);
+        b.setAccountId(accountId);
         b.setCategoryId(categoryId);
         b.setPeriod(BudgetPeriod.MONTHLY);
         b.setAmountLimit(50_000);
-        b.setCurrency("USD");
-        b.setStartDate(ANCHOR);
         b.setStatus(BudgetStatus.ACTIVE);
         return b;
     }
 
-    private CreateBudgetRequest createReq(String categoryId, BudgetPeriod period, long limit) {
+    private CreateBudgetRequest createReq(String accountId, String categoryId, BudgetPeriod period, long limit) {
         CreateBudgetRequest r = new CreateBudgetRequest();
+        r.setAccountId(accountId);
         r.setCategoryId(categoryId);
         r.setPeriod(period);
         r.setAmountLimit(limit);
-        r.setStartDate(ANCHOR);
         return r;
     }
 
     @Test
-    void create_categoryBudget_usesActiveCurrency_andComputesSpentForCategory() {
-        when(currentUser.requireUser()).thenReturn(user("u1", "USD"));
+    void create_categoryBudget_derivesCurrencyFromAccount_andComputesSpentForCategory() {
+        when(currentUser.requireUser()).thenReturn(user("u1"));
+        when(accountRepository.findByIdAndUserId("acc1", "u1")).thenReturn(Optional.of(account("acc1", "u1", "USD")));
+        when(accountRepository.findById("acc1")).thenReturn(Optional.of(account("acc1", "u1", "USD")));
         when(categoryRepository.findByIdAndUserId("c1", "u1"))
                 .thenReturn(Optional.of(category("c1", "u1", CategoryKind.EXPENSE)));
         when(budgetRepository.findByUserId("u1")).thenReturn(List.of());
@@ -95,25 +111,28 @@ class BudgetServiceTest {
         when(transactionRepository.sumExpenseByCategoryInWindow(eq("u1"), eq("c1"), anyLong(), anyLong()))
                 .thenReturn(12_000L);
 
-        BudgetResponse resp = budgetService.create(createReq("c1", BudgetPeriod.MONTHLY, 50_000));
+        BudgetResponse resp = budgetService.create(createReq("acc1", "c1", BudgetPeriod.MONTHLY, 50_000));
 
         ArgumentCaptor<Budget> saved = ArgumentCaptor.forClass(Budget.class);
         verify(budgetRepository).save(saved.capture());
         assertEquals("u1", saved.getValue().getUserId());
-        assertEquals("USD", saved.getValue().getCurrency());
+        assertEquals("acc1", saved.getValue().getAccountId());
         assertEquals(BudgetStatus.ACTIVE, saved.getValue().getStatus());
+        assertEquals("USD", resp.getCurrency());
         assertEquals(12_000L, resp.getSpent());
         assertEquals(38_000L, resp.getRemaining());   // 50_000 - 12_000
     }
 
     @Test
     void create_overallBudget_hasNullCategory_andSumsAllExpense() {
-        when(currentUser.requireUser()).thenReturn(user("u1", "USD"));
+        when(currentUser.requireUser()).thenReturn(user("u1"));
+        when(accountRepository.findByIdAndUserId("acc1", "u1")).thenReturn(Optional.of(account("acc1", "u1", "USD")));
+        when(accountRepository.findById("acc1")).thenReturn(Optional.of(account("acc1", "u1", "USD")));
         when(budgetRepository.findByUserId("u1")).thenReturn(List.of());
         when(budgetRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(transactionRepository.sumExpenseInWindow(eq("u1"), anyLong(), anyLong())).thenReturn(9_000L);
 
-        BudgetResponse resp = budgetService.create(createReq(null, BudgetPeriod.MONTHLY, 30_000));
+        BudgetResponse resp = budgetService.create(createReq("acc1", null, BudgetPeriod.MONTHLY, 30_000));
 
         assertNull(resp.getCategoryId());
         assertEquals(9_000L, resp.getSpent());
@@ -121,59 +140,121 @@ class BudgetServiceTest {
     }
 
     @Test
+    void create_rejects_whenAccountNotFound() {
+        when(currentUser.requireUser()).thenReturn(user("u1"));
+        when(accountRepository.findByIdAndUserId("acc1", "u1")).thenReturn(Optional.empty());
+
+        assertThrows(NotFoundException.class,
+                () -> budgetService.create(createReq("acc1", null, BudgetPeriod.MONTHLY, 50_000)));
+        verify(budgetRepository, never()).save(any());
+    }
+
+    @Test
+    void create_rejects_whenAccountIsDeleted() {
+        Account deleted = account("acc1", "u1", "USD");
+        deleted.setStatus(AccountStatus.DELETED);
+        when(currentUser.requireUser()).thenReturn(user("u1"));
+        when(accountRepository.findByIdAndUserId("acc1", "u1")).thenReturn(Optional.of(deleted));
+
+        assertThrows(BadRequestException.class,
+                () -> budgetService.create(createReq("acc1", null, BudgetPeriod.MONTHLY, 50_000)));
+        verify(budgetRepository, never()).save(any());
+    }
+
+    @Test
     void create_rejects_whenCategoryIsIncome() {
-        when(currentUser.requireUser()).thenReturn(user("u1", "USD"));
+        when(currentUser.requireUser()).thenReturn(user("u1"));
+        when(accountRepository.findByIdAndUserId("acc1", "u1")).thenReturn(Optional.of(account("acc1", "u1", "USD")));
         when(categoryRepository.findByIdAndUserId("c1", "u1"))
                 .thenReturn(Optional.of(category("c1", "u1", CategoryKind.INCOME)));
 
         assertThrows(BadRequestException.class,
-                () -> budgetService.create(createReq("c1", BudgetPeriod.MONTHLY, 50_000)));
+                () -> budgetService.create(createReq("acc1", "c1", BudgetPeriod.MONTHLY, 50_000)));
         verify(budgetRepository, never()).save(any());
     }
 
     @Test
     void create_rejects_whenCategoryNotFound() {
-        when(currentUser.requireUser()).thenReturn(user("u1", "USD"));
+        when(currentUser.requireUser()).thenReturn(user("u1"));
+        when(accountRepository.findByIdAndUserId("acc1", "u1")).thenReturn(Optional.of(account("acc1", "u1", "USD")));
         when(categoryRepository.findByIdAndUserId("c1", "u1")).thenReturn(Optional.empty());
 
         assertThrows(NotFoundException.class,
-                () -> budgetService.create(createReq("c1", BudgetPeriod.MONTHLY, 50_000)));
+                () -> budgetService.create(createReq("acc1", "c1", BudgetPeriod.MONTHLY, 50_000)));
         verify(budgetRepository, never()).save(any());
     }
 
     @Test
-    void create_rejects_duplicateActiveForSameCategoryAndPeriod() {
-        when(currentUser.requireUser()).thenReturn(user("u1", "USD"));
+    void create_rejects_duplicateActiveForSameAccountCategoryAndPeriod() {
+        when(currentUser.requireUser()).thenReturn(user("u1"));
+        when(accountRepository.findByIdAndUserId("acc1", "u1")).thenReturn(Optional.of(account("acc1", "u1", "USD")));
         when(categoryRepository.findByIdAndUserId("c1", "u1"))
                 .thenReturn(Optional.of(category("c1", "u1", CategoryKind.EXPENSE)));
-        when(budgetRepository.findByUserId("u1")).thenReturn(List.of(owned("b1", "u1", "c1")));
+        when(budgetRepository.findByUserId("u1")).thenReturn(List.of(owned("b1", "u1", "acc1", "c1")));
 
         assertThrows(BadRequestException.class,
-                () -> budgetService.create(createReq("c1", BudgetPeriod.MONTHLY, 50_000)));
+                () -> budgetService.create(createReq("acc1", "c1", BudgetPeriod.MONTHLY, 50_000)));
         verify(budgetRepository, never()).save(any());
     }
 
     @Test
-    void create_allowsSecondBudget_whenPeriodDiffers() {
-        when(currentUser.requireUser()).thenReturn(user("u1", "USD"));
+    void create_allowsSecondBudget_whenAccountDiffers() {
+        when(currentUser.requireUser()).thenReturn(user("u1"));
+        when(accountRepository.findByIdAndUserId("acc2", "u1")).thenReturn(Optional.of(account("acc2", "u1", "USD")));
+        when(accountRepository.findById("acc2")).thenReturn(Optional.of(account("acc2", "u1", "USD")));
         when(categoryRepository.findByIdAndUserId("c1", "u1"))
                 .thenReturn(Optional.of(category("c1", "u1", CategoryKind.EXPENSE)));
-        when(budgetRepository.findByUserId("u1")).thenReturn(List.of(owned("b1", "u1", "c1"))); // MONTHLY
+        when(budgetRepository.findByUserId("u1")).thenReturn(List.of(owned("b1", "u1", "acc1", "c1"))); // different account
         when(budgetRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(transactionRepository.sumExpenseByCategoryInWindow(eq("u1"), eq("c1"), anyLong(), anyLong()))
                 .thenReturn(0L);
 
-        BudgetResponse resp = budgetService.create(createReq("c1", BudgetPeriod.WEEKLY, 10_000));
+        BudgetResponse resp = budgetService.create(createReq("acc2", "c1", BudgetPeriod.MONTHLY, 10_000));
 
-        assertEquals(BudgetPeriod.WEEKLY, resp.getPeriod());
+        assertEquals("acc2", resp.getAccountId());
+    }
+
+    @Test
+    void create_allowsSecondBudget_whenPeriodDiffers() {
+        when(currentUser.requireUser()).thenReturn(user("u1"));
+        when(accountRepository.findByIdAndUserId("acc1", "u1")).thenReturn(Optional.of(account("acc1", "u1", "USD")));
+        when(accountRepository.findById("acc1")).thenReturn(Optional.of(account("acc1", "u1", "USD")));
+        when(categoryRepository.findByIdAndUserId("c1", "u1"))
+                .thenReturn(Optional.of(category("c1", "u1", CategoryKind.EXPENSE)));
+        when(budgetRepository.findByUserId("u1")).thenReturn(List.of(owned("b1", "u1", "acc1", "c1"))); // MONTHLY
+        when(budgetRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(transactionRepository.sumExpenseByCategoryInWindow(eq("u1"), eq("c1"), anyLong(), anyLong()))
+                .thenReturn(0L);
+
+        BudgetResponse resp = budgetService.create(createReq("acc1", "c1", BudgetPeriod.YEARLY, 10_000));
+
+        assertEquals(BudgetPeriod.YEARLY, resp.getPeriod());
+    }
+
+    @Test
+    void list_returnsMappedBudgets_excludingArchivedByDefault() {
+        Budget active = owned("b1", "u1", "acc1", "c1");
+        Budget archived = owned("b2", "u1", "acc1", "c1");
+        archived.setStatus(BudgetStatus.ARCHIVED);
+        when(currentUser.requireUser()).thenReturn(user("u1"));
+        when(budgetRepository.findByUserId("u1")).thenReturn(List.of(active, archived));
+        when(accountRepository.findById("acc1")).thenReturn(Optional.of(account("acc1", "u1", "USD")));
+        when(transactionRepository.sumExpenseByCategoryInWindow(eq("u1"), eq("c1"), anyLong(), anyLong()))
+                .thenReturn(0L);
+
+        List<BudgetResponse> resp = budgetService.list(false);
+
+        assertEquals(1, resp.size());
+        assertEquals("b1", resp.get(0).getId());
     }
 
     @Test
     void update_changesLimitAndRollover() {
-        Budget b = owned("b1", "u1", "c1");
-        when(currentUser.requireUserId()).thenReturn("u1");
+        Budget b = owned("b1", "u1", "acc1", "c1");
+        when(currentUser.requireUser()).thenReturn(user("u1"));
         when(budgetRepository.findByIdAndUserId("b1", "u1")).thenReturn(Optional.of(b));
         when(budgetRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(accountRepository.findById("acc1")).thenReturn(Optional.of(account("acc1", "u1", "USD")));
         when(transactionRepository.sumExpenseByCategoryInWindow(eq("u1"), eq("c1"), anyLong(), anyLong()))
                 .thenReturn(0L);
 
@@ -188,10 +269,11 @@ class BudgetServiceTest {
 
     @Test
     void archive_setsStatusArchived() {
-        Budget b = owned("b1", "u1", "c1");
-        when(currentUser.requireUserId()).thenReturn("u1");
+        Budget b = owned("b1", "u1", "acc1", "c1");
+        when(currentUser.requireUser()).thenReturn(user("u1"));
         when(budgetRepository.findByIdAndUserId("b1", "u1")).thenReturn(Optional.of(b));
         when(budgetRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(accountRepository.findById("acc1")).thenReturn(Optional.of(account("acc1", "u1", "USD")));
         when(transactionRepository.sumExpenseByCategoryInWindow(eq("u1"), eq("c1"), anyLong(), anyLong()))
                 .thenReturn(0L);
 
@@ -202,7 +284,7 @@ class BudgetServiceTest {
 
     @Test
     void delete_hardDeletes() {
-        Budget b = owned("b1", "u1", "c1");
+        Budget b = owned("b1", "u1", "acc1", "c1");
         when(currentUser.requireUserId()).thenReturn("u1");
         when(budgetRepository.findByIdAndUserId("b1", "u1")).thenReturn(Optional.of(b));
 
@@ -213,35 +295,48 @@ class BudgetServiceTest {
 
     @Test
     void get_notOwned_throwsNotFound() {
-        when(currentUser.requireUserId()).thenReturn("u1");
+        when(currentUser.requireUser()).thenReturn(user("u1"));
         when(budgetRepository.findByIdAndUserId("x", "u1")).thenReturn(Optional.empty());
 
         assertThrows(NotFoundException.class, () -> budgetService.get("x"));
     }
 
-    @Test
-    void currentWindow_weekly_firstAndCrossingWindows() {
-        long[] first = BudgetService.currentWindow(ANCHOR, BudgetPeriod.WEEKLY, ANCHOR + 3 * DAY);
-        assertEquals(ANCHOR, first[0]);
-        assertEquals(ANCHOR + 7 * DAY, first[1]);
+    // --- currentWindow: calendar-aligned, per-user-zone period boundaries ---
 
-        long[] second = BudgetService.currentWindow(ANCHOR, BudgetPeriod.WEEKLY, ANCHOR + 8 * DAY);
-        assertEquals(ANCHOR + 7 * DAY, second[0]);
-        assertEquals(ANCHOR + 14 * DAY, second[1]);
+    @Test
+    void currentWindow_monthly_returnsTheCalendarMonthContainingNow() {
+        long now = Instant.parse("2026-08-15T12:00:00Z").toEpochMilli();
+
+        long[] w = BudgetService.currentWindow(BudgetPeriod.MONTHLY, ZoneOffset.UTC, now);
+
+        assertEquals(TimeUtils.startOfMonth(YearMonth.of(2026, 8), ZoneOffset.UTC), w[0]);
+        assertEquals(TimeUtils.startOfMonth(YearMonth.of(2026, 9), ZoneOffset.UTC), w[1]);
     }
 
     @Test
-    void currentWindow_beforeAnchor_returnsFirstWindow() {
-        long[] w = BudgetService.currentWindow(ANCHOR, BudgetPeriod.WEEKLY, ANCHOR - 3 * DAY);
-        assertEquals(ANCHOR, w[0]);
-        assertEquals(ANCHOR + 7 * DAY, w[1]);
+    void currentWindow_yearly_returnsTheCalendarYearContainingNow() {
+        long now = Instant.parse("2026-06-15T00:00:00Z").toEpochMilli();
+
+        long[] w = BudgetService.currentWindow(BudgetPeriod.YEARLY, ZoneOffset.UTC, now);
+
+        assertEquals(TimeUtils.startOfYear(Year.of(2026), ZoneOffset.UTC), w[0]);
+        assertEquals(TimeUtils.startOfYear(Year.of(2027), ZoneOffset.UTC), w[1]);
     }
 
+    /**
+     * 2026-03-31T20:00:00Z is still March in UTC but already 2026-04-01T01:30 in
+     * Colombo (UTC+5:30) — the same instant must resolve to different calendar
+     * months depending on whose zone it's read in.
+     */
     @Test
-    void currentWindow_monthly_containsNow_andAnchorsFirstWindow() {
-        long[] w = BudgetService.currentWindow(ANCHOR, BudgetPeriod.MONTHLY, ANCHOR);
-        assertEquals(ANCHOR, w[0]);          // now == anchor ⇒ first window
-        assertTrue(w[1] > ANCHOR);           // month length honored
-        assertTrue(ANCHOR >= w[0] && ANCHOR < w[1]);
+    void currentWindow_monthly_usesTheGivenZone_notAFixedOne() {
+        long now = Instant.parse("2026-03-31T20:00:00Z").toEpochMilli();
+        ZoneId colombo = ZoneId.of("Asia/Colombo");
+
+        long[] utcWindow = BudgetService.currentWindow(BudgetPeriod.MONTHLY, ZoneOffset.UTC, now);
+        long[] colomboWindow = BudgetService.currentWindow(BudgetPeriod.MONTHLY, colombo, now);
+
+        assertEquals(TimeUtils.startOfMonth(YearMonth.of(2026, 3), ZoneOffset.UTC), utcWindow[0]);
+        assertEquals(TimeUtils.startOfMonth(YearMonth.of(2026, 4), colombo), colomboWindow[0]);
     }
 }

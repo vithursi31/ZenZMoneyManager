@@ -1,5 +1,6 @@
 package com.zenzmoney.core.service;
 
+import com.zenzmoney.common.domain.UserStatus;
 import com.zenzmoney.common.exception.BadRequestException;
 import com.zenzmoney.core.entity.User;
 import com.zenzmoney.core.entity.Verification.Purpose;
@@ -89,10 +90,9 @@ public class PasswordResetService {
 
         user.setPasswordHash(passwordEncoder.encode(newPassword));
         user.setSystemGeneratedPassword(false);
-        user.setLoginAttempts(0);
         user.setLocked(false);
-        if (!"active".equals(user.getStatus())) {
-            user.setStatus("active");
+        if (user.getStatus() != UserStatus.ACTIVE) {
+            user.setStatus(UserStatus.ACTIVE);
         }
         user.setEmailVerified(true);
         user.setLastLoginTime(System.currentTimeMillis());

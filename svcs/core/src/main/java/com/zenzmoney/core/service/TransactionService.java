@@ -19,6 +19,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -106,13 +109,37 @@ public class TransactionService {
         return TransactionResponse.of(requireOwned(id, currentUser.requireUserId()));
     }
 
-    /** Lists the caller's transactions, optionally within a date range, newest first. */
+    /**
+     * Lists the caller's transactions, newest first, optionally narrowed by any
+     * combination of account, type, and a date range. A user may hold more than
+     * one account (F-1.1); omitting {@code accountId} spans all of them.
+     *
+     * <p>{@code startDate} and {@code endDate} are ISO {@code yyyy-MM-dd} and inclusive
+     * at both ends, resolved in the caller's own timezone — the client sends the dates
+     * its picker produced and never computes an instant boundary itself.
+     */
     @Transactional(readOnly = true)
-    public List<TransactionResponse> list(Long from, Long to) {
-        String userId = currentUser.requireUserId();
-        return transactionRepository.findByUserId(userId).stream()
+    public List<TransactionResponse> list(String accountId, String type, String startDate, String endDate) {
+        User user = currentUser.requireUser();
+        ZoneId zone = TimeUtils.zoneOrUtc(user.getTimezone());
+        TransactionType typeFilter = parseType(type);
+        LocalDate start = parseDate(startDate, "startDate");
+        LocalDate end = parseDate(endDate, "endDate");
+        if (start != null && end != null && start.isAfter(end)) {
+            throw new BadRequestException("startDate must not be after endDate.");
+        }
+
+        // Half-open [from, to) on the same boundaries the monthly position uses (§1.10): an
+        // inclusive endDate becomes the start of the following day, so a transaction stamped at
+        // midnight is counted by this list and that figure identically.
+        Long from = start == null ? null : TimeUtils.startOfDay(start, zone);
+        Long to = end == null ? null : TimeUtils.startOfDay(end.plusDays(1), zone);
+
+        return transactionRepository.findByUserId(user.getId()).stream()
+                .filter(t -> accountId == null || accountId.isBlank() || accountId.equals(t.getAccountId()))
+                .filter(t -> typeFilter == null || typeFilter == t.getType())
                 .filter(t -> from == null || t.getTxnDate() >= from)
-                .filter(t -> to == null || t.getTxnDate() <= to)
+                .filter(t -> to == null || t.getTxnDate() < to)
                 .sorted(Comparator.comparingLong(Transaction::getTxnDate).reversed())
                 .map(TransactionResponse::of)
                 .toList();
@@ -181,5 +208,29 @@ public class TransactionService {
     private Transaction requireOwned(String id, String userId) {
         return transactionRepository.findByIdAndUserId(id, userId)
                 .orElseThrow(() -> new NotFoundException("Transaction not found"));
+    }
+
+    /** ISO {@code yyyy-MM-dd}, or null when the bound is omitted. */
+    private static LocalDate parseDate(String raw, String field) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            return LocalDate.parse(raw.trim());
+        } catch (DateTimeParseException e) {
+            throw new BadRequestException(field + " must be in yyyy-MM-dd format, e.g. 2026-08-01.");
+        }
+    }
+
+    /** A bad filter value fails at the seam with a clear message, not a silent empty-list result. */
+    private static TransactionType parseType(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            return TransactionType.valueOf(raw.trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new BadRequestException("Unknown transaction type: " + raw);
+        }
     }
 }

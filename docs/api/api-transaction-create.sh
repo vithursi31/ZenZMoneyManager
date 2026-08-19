@@ -14,13 +14,13 @@ curl -kv -H "Authorization:Bearer $ACCESS_TOKEN" \
   -X POST "$HOST/api/v1/transactions" \
   -H "Content-Type: application/json" \
   -d '{
-    "type": "EXPENSE",
-    "accountId": "<account-id>",
-    "categoryId": "<expense-category-id>",
-    "amount": 1500,
-    "payeeName": "Keells",
-    "note": "tea things",
-    "tags": ["groceries"]
+    "type": "INCOME",
+    "accountId": "2089780641691471872",
+    "categoryId": "2089780641733414912",
+    "amount": 5000,
+    "payeeName": "",
+    "note": "Salary",
+    "tags": ["salary"]
   }'
 
 # --- TRANSFER example (uncomment) ---

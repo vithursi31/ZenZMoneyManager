@@ -36,9 +36,8 @@ a decision rather than an oversight — **do not build these**.
 |---|---|
 | A stored or opening account balance | The position is derived from the month's transactions, not stored. There is no starting balance to enter and none to carry forward (F-1.2). |
 | Balance reconciliation against a real bank balance | The position is derived from what the user records, so there is no independent figure to reconcile against. |
-| Multiple accounts per user | The committed phases manage exactly one account per user (F-1.1). Future: F-F.1. |
-| Assigning a transaction to a specific account | Follows from the single-account model — the account is never chosen by the user. Future: F-F.1. |
-| Transfers between accounts | Requires multiple accounts. Future: F-F.1. |
+| Assigning a transaction to a specific account | A user may hold multiple accounts (F-1.1), but the ledger-write path still resolves one implicit account server-side — the account is still never chosen by the user. Remaining future work: F-F.1. |
+| Transfers between accounts | Requires assigning a transaction to a specific account first. Remaining future work: F-F.1. |
 | Active session management (device list, remote sign-out) | Not required for the MVP; access is protected by App Lock (F-1.23). |
 | Attaching receipt or image files to a transaction | Receipt scanning (F-1.13) extracts the data that matters; storing the image is not required. |
 | Multiple currencies per user | One active currency per user (F-1.25). Future: F-F.2. |
@@ -47,7 +46,7 @@ a decision rather than an oversight — **do not build these**.
 
 ## Phase 1 — MVP
 
-A complete personal finance experience built around **one account**, on a
+A complete personal finance experience built around **one or more accounts**, on a
 **monthly cycle**: see this month's position, track income and expenses, budget,
 manage recurring commitments, capture transactions by typing / speaking /
 scanning, and get insight — in the user's language and currency, behind a lock.
@@ -56,7 +55,7 @@ scanning, and get insight — in the user's language and currency, behind a lock
 
 | ID | Feature | Description | Status |
 |---|---|---|---|
-| **F-1.1** | Single account per user | Each user has exactly **one** account, created automatically during onboarding. It is a container for the user's financial activity — the user does not create, name, type, select, or switch accounts, and is never asked which account a transaction belongs to. No starting balance is requested. See [domain-documentation.md §1.4](domain/domain-documentation.md#14-account). | 🚧 |
+| **F-1.1** | Accounts | An account is a container for the user's financial activity; one is created automatically at onboarding, and the user may add, rename, list, and soft-delete more (F-F.1's account-CRUD slice, pulled into Phase 1 on 2026-08-18) — a user must always keep at least one active. No starting balance is requested, and the user is still never asked which account a transaction belongs to — that resolves to one implicit account server-side. See [domain-documentation.md §1.4](domain/domain-documentation.md#14-account). | 🚧 |
 | **F-1.2** | Monthly position (income − expenses) | The account has **no stored balance**. The figure shown is computed as *total income − total expenses for the selected calendar month*. Nothing carries forward across months, nothing accumulates, and there is no reset. Any past month can be selected and its position computed. Adding / editing / deleting a transaction recalculates **only** the month that transaction falls in. See [domain-documentation.md §1.10](domain/domain-documentation.md#110-monthly-position-invariant). | 🚧 |
 
 ### 2. Income & expense management
@@ -75,7 +74,7 @@ scanning, and get insight — in the user's language and currency, behind a lock
 
 | ID | Feature | Description | Status |
 |---|---|---|---|
-| **F-1.10** | Budgets | Spending caps per category and overall, for a weekly / monthly / yearly period, showing how much of the budget is used. Unused amounts may optionally carry forward to the next period (see [OQ-3](#open-questions)). | 🚧 |
+| **F-1.10** | Budgets | Spending caps per account, per category and overall, for a monthly or yearly calendar period, showing how much of the budget is used. Unused amounts may optionally carry forward to the next period (see [OQ-3](#open-questions)). | 🚧 |
 
 ### 4. Quick entry & intelligent assistance
 
@@ -122,7 +121,7 @@ scanning, and get insight — in the user's language and currency, behind a lock
 |---|---|---|---|
 | **F-1.25** | Active currency | The user selects the currency they manage money in; it is used consistently across the account, transactions, budgets, and reports, and can be changed. One active currency at a time — mixing is not supported (F-F.2). See [domain-documentation.md §0.3](domain/domain-documentation.md#03-one-active-currency-per-user). | 🚧 |
 | **F-1.26** | Multi-language support | The user picks a preferred language, honoured across the application **and** the intelligent-assistance features. | 📋 |
-| **F-1.27** | Onboarding & default setup | First run: pick currency and language, the single account is created automatically (**no starting balance requested**), and a useful set of default categories is seeded. | 🚧 |
+| **F-1.27** | Onboarding & default setup | First run: pick currency and language, the primary account is created automatically (**no starting balance requested**), and a useful set of default categories is seeded. | 🚧 |
 | **F-1.28** | Post-download user follow-up | Users who download the product review are identified and sent the **feedback form link** and the **meeting link**. Follow-up is tracked — who was contacted, when, and whether they responded — and a user is never sent a duplicate follow-up for the same download. Blocked on [OQ-5 / OQ-6](#open-questions). | 📋 |
 
 ---
@@ -171,7 +170,7 @@ Not committed. Each needs a business decision before it enters a phase.
 
 | ID | Feature | Description | Status |
 |---|---|---|---|
-| **F-F.1** | Multiple accounts & transfers | Multiple accounts per user (bank, savings, cash, card) each with name, type, and currency; transactions recorded against a specific account; per-account and all-account views; and transfers between the user's own accounts that count as neither income nor expense. **This is the single largest departure from the MVP model** — F-1.1, F-1.2, and the ledger all assume one account. | 💡 |
+| **F-F.1** | Per-account transactions & transfers | The remaining slice of the multi-account model: transactions recorded against a specific account, per-account and all-account views, and transfers between the user's own accounts that count as neither income nor expense. **Account CRUD itself (create, rename, list, soft-delete) shipped early, under F-1.1, on 2026-08-18** — what's left assumes a client can choose which account a transaction lands in, which the ledger-write path still doesn't allow. | 💡 |
 | **F-F.2** | Multiple currency support | More than one currency per user, with conversion — for international users, accounts in different currencies, and Phase 3 groups whose members differ. | 💡 |
 | **F-F.3** | Detailed receipt splitting | Identify individual line items on a scanned receipt and let the user categorise them separately (Groceries / Household / Personal) instead of one lump total. | 💡 |
 | **F-F.4** | Automatic bank transaction sync | Synchronise transactions directly from supported banks instead of importing files (F-1.22). | 💡 |
@@ -268,3 +267,4 @@ the left column.
 | 2026-07-20 | Major expansion: accounts/transfers/income detailed; transaction edit/duplicate/search/attachments; auto-category detection & financial assistant; dashboard split into summary/analysis/reports with net worth; debt/loan management and subscription tracking added to MVP; security features added to MVP; notifications, export/import, onboarding promoted to committed MVP. Phase 3 sharing detailed. |
 | 2026-07-26 | Added **Payees** as a first-class entity; transaction `payee` became a `payeeId` FK. Detailed **chat-based entry**: self-hosted Qwen2.5 via Ollama, two-step draft→confirm gate, clarification-on-uncertainty, backend field resolution, conversation logging. Added balance reconciliation via adjustment transactions. |
 | 2026-08-08 | **Realigned to BRD v1.0.** Every ID renumbered (see the [mapping](#id-mapping-2026-08-08)). Accounts collapse to **exactly one per user**, auto-created, unnamed, untyped. Stored/derived balances replaced by the **monthly position** (income − expenses, per calendar month, nothing carried forward). **Transfers**, **balance reconciliation**, **receipt attachments**, and **session management** moved out of scope; **multiple accounts** and **multi-currency** to Future. **Savings goals** and **debt** moved MVP → Phase 3; **voice entry** promoted Phase 2 → MVP; **subscriptions** merged into recurring (F-1.7). Login history, category merge, and duplicate-transaction dropped. Added **F-1.28** post-download follow-up and the **open questions** table. |
+| 2026-08-18 | **Reversed the one-account rule.** F-1.1's account-CRUD slice of F-F.1 (create, rename, list-active, soft-delete) pulled forward into Phase 1 — a user may now hold multiple named accounts, each with a lifecycle `status`. `Budget` (F-1.10) now links to a specific account instead of storing its own currency; `BudgetPeriod` dropped `WEEKLY` (`MONTHLY`/`YEARLY` only) and period windows are now calendar-aligned and computed in the owner's timezone rather than anchored to an arbitrary `startDate`. The remaining slice of F-F.1 — per-transaction account selection and transfers — is still not built; the ledger-write path still resolves one implicit account. |

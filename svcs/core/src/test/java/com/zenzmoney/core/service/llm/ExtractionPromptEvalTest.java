@@ -109,7 +109,7 @@ class ExtractionPromptEvalTest {
         System.out.printf("%-6s %-48s %-8s %-9s %s%n", "lang", "message", "type", "amount", "category");
 
         for (Fixture f : FIXTURES) {
-            LlmExtraction got = client.extract(f.message(), CATEGORIES);
+            LlmExtraction got = client.extract(f.message(), CATEGORIES, null);
             int[] tally = score.computeIfAbsent(f.lang(), k -> new int[3]);
             tally[2]++;
 

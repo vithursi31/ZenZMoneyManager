@@ -19,7 +19,7 @@ commits.
 ## Contents
 
 - **Part 0 — [Foundations](#part-0--foundations)** — conventions, money, currency.
-- **Part 1 — [Core Ledger](#part-1--core-ledger-mvp)** (MVP) — the single account, categories, transactions, budgets, recurring, the monthly position, access.
+- **Part 1 — [Core Ledger](#part-1--core-ledger-mvp)** (MVP) — accounts, categories, transactions, budgets, recurring, the monthly position, access.
 - **Part 2 — [Debts & Commitments](#part-2--debts--commitments-phase-3)** (Phase 3) — loans/EMI. *(Subscriptions folded into recurring, [§1.8](#18-recurringtransaction).)*
 - **Part 3 — [Ingestion & AI](#part-3--ingestion--ai-mvp)** (MVP) — chat/NLP entry, voice, auto-categorization, OCR receipts, AI insights, financial assistant.
 - **Part 4 — [Security](#part-4--security-mvp)** (MVP) — app lock, data protection.
@@ -28,13 +28,17 @@ commits.
 
 > ### The two rules that shape Part 1
 >
-> **One account per user, and no stored balance.** A user has exactly one
-> `Account`, created automatically at onboarding — never named, typed, chosen, or
-> switched (F-1.1), and it holds **no balance column at all**. The figure the user
-> sees is the **monthly position**: income − expenses for one calendar month,
-> computed on read and carried forward nowhere ([§1.10](#110-monthly-position-invariant)).
-> Consequently there are **no transfers** — a transfer needs two accounts. Multiple
-> accounts, per-account transactions, and transfers are future work (F-F.1).
+> **No stored balance, and (since 2026-08-18) a user may hold more than one
+> account.** An `Account` is auto-provisioned (unnamed) the first time it's
+> needed, and the user may add, rename, list, and soft-delete more — but none has
+> **any balance column at all** (F-1.1). The figure the user sees is the
+> **monthly position**: income − expenses for one calendar month, computed on
+> read across all the user's transactions regardless of account, and carried
+> forward nowhere ([§1.10](#110-monthly-position-invariant)). Ledger writes still
+> resolve one implicit account server-side — there is still no way to choose which
+> account a transaction lands in, so there are still **no transfers**.
+> Per-transaction account selection and transfers are the remaining, unscheduled
+> slice of F-F.1 ([§1.4](#14-account)).
 
 ---
 
@@ -124,7 +128,7 @@ This is the core personal ledger — the tables every other part builds on.
 
 | Entity | Aggregate root | Purpose |
 |---|---|---|
-| `Account` | ✔ | The user's **single** container for financial activity. One row per user, auto-created, balance-less. |
+| `Account` | ✔ | A container for financial activity. A user may hold more than one, auto-created, balance-less. |
 | `Category` | ✔ | A hierarchical label for income/expense classification. |
 | `Payee` | ✔ | A named merchant/person a transaction is paid to or received from. |
 | `Transaction` | ✔ | The core ledger record — income or expense. |
@@ -137,7 +141,7 @@ This is the core personal ledger — the tables every other part builds on.
 
 ```mermaid
 erDiagram
-    APP_USER ||--|| ACCOUNT : "owns exactly one"
+    APP_USER ||--o{ ACCOUNT : owns
     APP_USER ||--o{ CATEGORY : owns
     APP_USER ||--o{ PAYEE : owns
     APP_USER ||--o{ TRANSACTION : owns
@@ -146,6 +150,7 @@ erDiagram
     APP_USER ||--o{ SAVINGS_GOAL : owns
 
     ACCOUNT  ||--o{ TRANSACTION : contains
+    ACCOUNT  ||--o{ BUDGET : "budgeted against"
     CATEGORY ||--o{ TRANSACTION : classifies
     CATEGORY ||--o{ CATEGORY : "parent of"
     CATEGORY ||--o{ BUDGET : "budgeted by"
@@ -162,7 +167,6 @@ erDiagram
     APP_USER {
         string id PK
         string email
-        string display_name
         string active_currency
         string language
         string timezone
@@ -170,7 +174,9 @@ erDiagram
     }
     ACCOUNT {
         string id PK
-        string user_id UK
+        string user_id FK
+        string name
+        string status
         string currency
     }
     CATEGORY {
@@ -200,10 +206,10 @@ erDiagram
     BUDGET {
         string id PK
         string user_id FK
+        string account_id FK
         string category_id FK
         string period
         bigint amount_limit
-        bigint start_date
     }
     RECURRING_TRANSACTION {
         string id PK
@@ -239,43 +245,53 @@ Defined in `com.<pkg>.common.domain` (replacing `HabitStatus`), stored as
 `VARCHAR(50)` via `EnumType.STRING`.
 
 ```java
+public enum AccountStatus    { ACTIVE, INACTIVE, DELETED }
 public enum CategoryKind     { INCOME, EXPENSE }
 public enum TransactionType  { INCOME, EXPENSE }
-public enum BudgetPeriod     { WEEKLY, MONTHLY, YEARLY }
+public enum BudgetPeriod     { MONTHLY, YEARLY }
 public enum BudgetStatus     { ACTIVE, ARCHIVED }
 public enum RecurringCadence { DAILY, WEEKLY, MONTHLY, YEARLY }
 public enum GoalStatus       { ACTIVE, ACHIEVED, ARCHIVED }
 ```
 
-> **Removed with the single-account model:** `AccountType` (the account is never
-> typed) and `AccountStatus` (a user's only account is never archived or deleted —
-> `Budget` now uses its own `BudgetStatus`). `TransactionType.TRANSFER` is gone
-> because a transfer needs a second account.
+> **`AccountStatus` was restored on 2026-08-18** when the one-account rule was
+> reversed — a user's accounts now have a lifecycle (delete is soft, via
+> `DELETED`), which a single mandatory account never needed. `AccountType` is
+> still gone, though: accounts have a `name` but are not typed (bank/cash/card/
+> etc.) — that's still F-F.1 territory. `TransactionType.TRANSFER` is also still
+> gone, since a transfer needs an explicit second account on the write path,
+> which doesn't exist yet. `BudgetPeriod` dropped `WEEKLY` the same day, once
+> budgets became calendar-aligned ([§1.7](#17-budget)) — a week doesn't nest
+> inside a calendar month or year the way both remaining periods do.
 
 ## 1.4 Account
 
-**Exactly one per user** (F-1.1). The account is a *container* for the user's
-financial activity, not something they manage: it is created automatically at
-onboarding and is never named, typed, listed, picked, archived, or deleted. It is
-also **balance-less** — see [§1.10](#110-monthly-position-invariant).
+**A container for the user's financial activity.** One is created automatically
+at onboarding; the user may add, rename, list, and soft-delete more (F-1.1,
+carrying forward F-F.1's account-CRUD slice as of 2026-08-18). It is still
+**balance-less** — see [§1.10](#110-monthly-position-invariant).
 
 | Field | Type | Notes |
 |---|---|---|
 | `id` | `String` (UUID) | PK, from `BaseEntity`. |
-| `userId` | `String` | Owner. Not null, **unique** — the one-account rule is enforced by a unique index, not by service code alone. |
+| `userId` | `String` | Owner. Not null, indexed — **not unique** since a user may hold more than one account. |
+| `name` | `String(100)` | Optional. An auto-provisioned account starts unnamed. |
+| `status` | `AccountStatus` | `ACTIVE` / `INACTIVE` / `DELETED`. Default `ACTIVE`. |
 | `currency` | `String(3)` | ISO-4217. Always equals the owner's `active_currency` ([§0.3](#03-one-active-currency-per-user)); stored here so a later multi-currency phase is additive. |
 | `metadata` | `jsonb` | Free-form. |
 
 **Rules**
-- **Auto-provisioned.** The account is get-or-created the first time the user needs one — at onboarding (currency + language, F-1.27), or earlier on any read or ledger write once a currency exists, since registration seeds one. It cannot be created, updated, or deleted through the API — the only account endpoint is a read of the caller's own account.
-- **No balance columns.** There is no `openingBalance` and no `currentBalance`, so the user is never asked for a starting balance and no figure can drift out of step with the ledger. What replaces them is the monthly position ([§1.10](#110-monthly-position-invariant)).
-- `currency` mirrors the owner's active currency; re-denominating is a user-level switch ([§0.3](#03-one-active-currency-per-user)). Because provisioning can precede onboarding, the account may already hold the *seeded* currency when the user picks a different one — onboarding moves it, and refuses once any transaction exists.
-- The account is **implicit on every write**: `Transaction.accountId` and `RecurringTransaction.accountId` are resolved server-side from the caller, never accepted from the client. A client that could name an account could name someone else's.
+- **Auto-provisioned.** The user's primary account — the oldest `ACTIVE` one — is get-or-created the first time it's needed: at onboarding (currency + language, F-1.27), or earlier on any read or ledger write once a currency exists, since registration seeds one.
+- **A user may add more.** `POST /api/v1/account` creates another account in the caller's active currency, with an optional `name`; `PUT /api/v1/account/{id}/name` renames one; `GET /api/v1/account/active` lists the caller's `ACTIVE` accounts; `DELETE /api/v1/account/{id}` soft-deletes one (moves it to `DELETED`) and refuses if it is the caller's last `ACTIVE` account.
+- **`DELETED` is soft.** The row is never removed — ledger rows and budgets still carry its `account_id`.
+- **No balance columns.** There is no `openingBalance` and no `currentBalance`, so the user is never asked for a starting balance and no figure can drift out of step with the ledger. What replaces them is the monthly position ([§1.10](#110-monthly-position-invariant)), which sums across all the user's accounts regardless of which one a transaction is in.
+- `currency` mirrors the owner's active currency; re-denominating is a user-level switch ([§0.3](#03-one-active-currency-per-user)). Because provisioning can precede onboarding, the primary account may already hold the *seeded* currency when the user picks a different one — onboarding moves it, and refuses once any transaction exists anywhere for the user.
+- **The account is still implicit on every ledger write.** `Transaction.accountId` and `RecurringTransaction.accountId` are resolved server-side to the caller's primary account, never accepted from the client, and there is still no way to name a *different* one of the caller's accounts on a write. A client that could name an account could name someone else's — that constraint doesn't relax just because the caller now may have several.
 
-> **Why keep an `Account` entity at all for a single account?** It is the seam for
-> F-F.1 (multiple accounts). Ledger rows already carry `account_id`, so adding a
-> second account later is additive; folding the currency onto `app_user` and
-> dropping the table would make that a schema rewrite.
+> **What F-F.1 still hasn't shipped.** Per-transaction account selection and
+> transfers between a user's own accounts. Both need the ledger write path to
+> accept (and validate ownership of) an explicit `accountId` instead of resolving
+> one implicitly — a bigger change than account CRUD, and not yet scheduled.
 
 ## 1.5 Category
 
@@ -341,7 +357,7 @@ The core ledger record. Every movement of money is one transaction row.
 |---|---|---|
 | `id` | `String` (UUID) | PK. |
 | `userId` | `String` | Owner. Not null, indexed. |
-| `accountId` | `String` | FK → `account`. Not null. **Resolved server-side** from the caller's single account ([§1.4](#14-account)) — never sent by the client. |
+| `accountId` | `String` | FK → `account`. Not null. **Resolved server-side** to the caller's primary account ([§1.4](#14-account)) — never sent by the client, and not yet choosable even though the caller may hold more than one account. |
 | `type` | `TransactionType` | `INCOME` / `EXPENSE`. Not null. |
 | `categoryId` | `String` | FK → `category`. Required — every transaction is categorized. |
 | `amount` | `long` | Minor units. **Always positive**; sign is derived from `type`. Not null. |
@@ -355,31 +371,35 @@ The core ledger record. Every movement of money is one transaction row.
 **Rules**
 - `amount` is stored as a positive magnitude. Effect on the monthly position is determined by `type`: INCOME adds, EXPENSE subtracts.
 - Every transaction **requires** a `categoryId` whose `kind` matches its `type` (INCOME→INCOME, EXPENSE→EXPENSE).
-- **There is no `TRANSFER`.** A transfer moves money between two accounts and a user has one, so the type, the `transferAccountId` column, and the "destination account" validation are all gone. This returns with F-F.1.
+- **There is no `TRANSFER`.** A transfer moves money between two accounts the client picks, and the write path still resolves only one account implicitly ([§1.4](#14-account)), so the type, the `transferAccountId` column, and the "destination account" validation are all gone. This returns with the rest of F-F.1.
 - Creating, editing, or deleting a transaction changes **only the position of the month its `txnDate` falls in** ([§1.10](#110-monthly-position-invariant)). Nothing is written back to the account. Moving a transaction's date *across* a month boundary changes two months' positions — both are simply recomputed on next read.
 - **Receipt images are not stored** — scanning (F-1.13) extracts merchant/date/total into an ordinary transaction and the image is discarded. There is no `Attachment` entity.
 - **Search & filter** (F-1.9) over transactions (keyword, date range, category, amount, payee, tags) is a first-class MVP capability; the indexed `txnDate`, `userId`, `categoryId`, and `payeeId` columns support it. Payee filtering is by `payeeId` ([§1.5b](#15b-payee)), not free-text match.
 
 ## 1.7 Budget
 
-A spending cap for a category (or overall) across a recurring period.
+A spending cap for a category (or overall) on a specific account, across a
+recurring calendar period. **Linked to an account since 2026-08-18** — a budget
+no longer stores its own currency or an anchor date; both changed because a
+budget now belongs to one of the user's (possibly several) accounts.
 
 | Field | Type | Notes |
 |---|---|---|
 | `id` | `String` (UUID) | PK. |
 | `userId` | `String` | Owner. Not null, indexed. |
+| `accountId` | `String` | FK → `account`. Not null — every budget targets one specific account. |
 | `categoryId` | `String` | FK → `category`. Nullable ⇒ overall budget. |
-| `period` | `BudgetPeriod` | `WEEKLY` / `MONTHLY` / `YEARLY`. Not null. |
+| `period` | `BudgetPeriod` | `MONTHLY` / `YEARLY`. Not null. |
 | `amountLimit` | `long` | Minor units cap for the period. Not null. |
-| `currency` | `String(3)` | ISO-4217. |
-| `startDate` | `long` | Epoch millis; anchors the period cycle. Not null. |
 | `rollover` | `boolean` | Carry unused amount into the next period. Default `false`. |
 | `status` | `BudgetStatus` | `ACTIVE` / `ARCHIVED`. |
 
 **Rules**
-- A budget's `categoryId` (if set) must be an `EXPENSE` category.
-- At most one active budget per (`categoryId`, `period`) per user.
-- "Spent" is computed from EXPENSE transactions in the current period window; budgets store the cap, not the running total. A MONTHLY budget's window is the same calendar month as the position ([§1.10](#110-monthly-position-invariant)).
+- A budget's `categoryId` (if set) must be an `EXPENSE` category; its `accountId` must be one of the caller's own, and not `DELETED` ([§1.4](#14-account)).
+- At most one active budget per (`accountId`, `categoryId`, `period`) — a user may run the same category/period combination on two different accounts.
+- **Currency is derived, not stored** — a budget's currency is its linked account's `currency`, read at request time. (In the MVP, every account still shares the user's one active currency ([§0.3](#03-one-active-currency-per-user)), so this is only observably different once accounts can diverge, future work under F-F.2.)
+- **Periods are calendar-aligned, computed in the owner's timezone** (`app_user.timezone`, same rule as [§1.10](#110-monthly-position-invariant)) — a `MONTHLY` budget's window is the current calendar month, a `YEARLY` budget's is the current calendar year, both resolved fresh on every read. There is no anchor date: `startDate` was dropped along with the arbitrary-cycle model it supported (a monthly budget started mid-month used to run mid-month to mid-month; it no longer can).
+- "Spent" is computed from EXPENSE transactions in the current period window; budgets store the cap, not the running total.
 - **Rollover is a budget-only concept.** A budget may carry unused headroom into the next period; the monthly position never does. The two are not inconsistent — a budget is a plan the user sets, the position is a fact about what happened (OQ-3).
 - Budget usage feeds alerts (F-1.20), e.g. *"You've used 90% of your Food budget."*
 
@@ -486,7 +506,7 @@ position(m) = income(m) − expenses(m)
 - **Any month is computable** — past months are the same query with a different window.
 - **A write only affects its own month.** Creating / editing / deleting a transaction changes the position of the month its `txnDate` falls in, and no other. Moving a date across a boundary affects exactly the two months involved.
 - Spending analysis (F-1.18), reports (F-1.19), and the dashboard (F-1.17) all use **this** window rule, so every month-labelled figure on screen agrees with every other.
-- **Budgets are the deliberate exception.** A budget window is anchored at the budget's own `startDate` and rolls by its period ([§1.7](#17-budget)) — a weekly budget starting on the 3rd is not a calendar week, and a monthly budget started mid-month is not a calendar month. Its "spent" figure therefore need not equal the month's expenses, and that is correct: the user chose when their budget cycle begins.
+- **Budgets follow the same calendar-alignment rule** ([§1.7](#17-budget)) — a `MONTHLY` budget's window is the current calendar month, `YEARLY` the current calendar year, both resolved in the *account owner's* timezone exactly like the position above. This changed on 2026-08-18: budgets previously anchored to an arbitrary `startDate` and rolled every period from there, so a monthly budget started mid-month wasn't a calendar month; that flexibility was traded away for a simpler, always-calendar-aligned model, and `startDate` was dropped.
 
 > **Why derived rather than stored.** A stored balance has to be maintained on
 > every write, which means it can be wrong — the classic reconciliation bug this
@@ -801,6 +821,7 @@ inline (`jsonb`) on the message/attachment that produced it.
 | `txnType` | `TransactionType` | Inferred `INCOME` / `EXPENSE`. |
 | `amount` | `long` | Minor units, in the user's active currency. |
 | `categoryId` | `String` | Best-match category; null if unresolved. |
+| `categoryName` | `String` | The matched category's name, snapshotted so a draft preview renders without a second lookup. Null until `categoryId` resolves. |
 | `categoryGuess` | `String` | Raw label the model proposed (e.g. "food") before matching. |
 | `accountId` | `String` | Target account; defaults to the user's default account. |
 | `txnDate` | `long` | Resolved date ("yesterday" → epoch millis). Defaults to now. |
@@ -815,6 +836,8 @@ inline (`jsonb`) on the message/attachment that produced it.
 - **Auto-category detection (F-1.14):** category matching resolves `categoryGuess` against the user's categories (case-insensitive, synonym/alias aware, language-aware). The parser infers a category (and sub-category) from merchant/keywords — *"Spent $15 at Starbucks"* → **Food & Drinks → Coffee** — and the user can **correct** the suggestion, which is fed back as a preference for future matching. If no match and confidence is high, the UI may offer to **create** the category.
 - Relative dates ("today", "yesterday", "last Friday") resolve against the user's timezone.
 - If `confidence < threshold` or `missingFields` is non-empty, the assistant asks a clarifying question instead of proposing a transaction.
+- **A conversation refines one draft.** When a message arrives on a session whose last assistant turn is still open, each field is filled from the freshest source that has one — what the model just read, then the message read as a bare answer ("20", "Food"), then the open draft. So "I spent $20" followed by "Food" is one transaction, not two half-empty ones. An answered question narrows uncertainty, so the merged `confidence` is the higher of the two; a message the model reads as a *different* intent is believed and leaves the open draft alone.
+- **One question at a time, most blocking first** — amount, then direction, then category. The category list to offer depends on the direction, so the direction cannot be asked second. Only fields the user can answer are asked about: an unset `currency` needs onboarding, not a reply.
 
 ```java
 public enum IntentType {
@@ -845,13 +868,20 @@ message.
 
 ```java
 public enum ChatRole          { USER, ASSISTANT }
-public enum ChatMessageStatus { RECEIVED, PARSED, NEEDS_CLARIFICATION, CONFIRMED, REJECTED, FAILED }
+public enum ChatMessageStatus { RECEIVED, PARSED, NEEDS_CLARIFICATION, CONFIRMED, REJECTED, SUPERSEDED, ANSWERED, FAILED }
 ```
 
 **Rules**
 - A `USER` message with `intent = CREATE_TRANSACTION` and sufficient confidence produces a **draft**; the transaction is only written after the user confirms, at which point `status = CONFIRMED` and `transactionId` is set.
+- **At most one confirmable draft per session.** Taking a draft further with a new message moves the turn it grew out of to `SUPERSEDED`, which is terminal — otherwise "actually make that 30" would leave the 20 still confirmable and a client holding the old id could commit it. A turn is *not* superseded when the model was unreachable or the user changed the subject: an outage must not cost someone the capture they had in progress.
+- **Editing a draft amends its turn in place** rather than appending a new one. A tapped suggestion and the question it answers are one exchange, and writing the user's side of it into `content` would mean the backend rendering an amount into text — which belongs to the client ([§0.2](#02-money-is-integer-minor-units)).
 - `UPDATE_TRANSACTION` requires a resolvable target (the last transaction in the session, or one the user names); otherwise `NEEDS_CLARIFICATION`.
-- `QUERY` intents do not create transactions; they read the ledger and reply. This is the **financial assistant** (F-1.16) — *"How much did I spend on food last month?"* → *"You spent $320 on food, 15% more than June."* Answers come from deterministic ledger aggregates ([§3.6](#36-aiinsight-insights--reports)) rendered into natural language in the user's language; it never fabricates figures. Query capability deepens in Phase 2 (F-2.2).
+- `QUERY` intents do not create transactions; they read the ledger and reply — status `ANSWERED`, no `parsedIntent`, nothing confirmable. This is the **financial assistant** (F-1.16) — *"How much did I spend on food last month?"*, *"How can I reduce my expenses?"*
+  - **Two model passes, and the second one cannot do arithmetic.** The first pass reads the message and flags it `QUERY`; the backend then aggregates the figures itself and hands them to the model with the question. A language model asked to total a ledger returns something plausible and wrong, and a wrong figure about someone's own money is worse than no answer — so the prompt forbids inventing a number and the model's only job is the sentence.
+  - **The snapshot is aggregates only** — the month in progress and the last complete one, each with income, expenses, position, and expense-by-category (top 8). Notes, payees, and individual transactions never leave: nothing in *"how can I reduce my spending?"* needs them ([§9 privacy](#9-privacy)).
+  - The same aggregates come back on the response beside the prose, so a client renders the breakdown from the numbers the model was given and a reader can check the sentence against them.
+  - **Windows match the monthly position exactly** ([§1.10](#110-monthly-position-invariant)) — same half-open `[month start, next month start)` in the user's timezone — so a figure the assistant quotes and the one on the dashboard can never disagree.
+  - Answering costs a second, much longer generation than extraction, so it carries **its own tighter rate limit** on top of the chat one (5/min, 30/hour, 100/day, fail-closed). A user with nothing recorded is answered without any model call at all. Query capability deepens in Phase 2 (F-2.2).
 
 ## 3.5 Receipt scanning (OCR)
 
@@ -1377,7 +1407,7 @@ net(m) = paid_total(m) - owed_total(m) - settled_out(m) + settled_in(m)
 ## 5.5 How sharing touches the MVP model
 
 - **No change to the core `Transaction` table's shape for personal use.** The one addition is a nullable `space_id` column on `account`, `category`, `budget`, `transaction`, and `recurring_transaction` (Family): `NULL` = personal (unchanged, **no row migration**), a family id = shared.
-- **A family space needs more than one account**, so it depends on the same groundwork as F-F.1 — the single-account rule ([§1.4](#14-account)) is a *personal-scope* rule, and a shared space is where it first has to bend.
+- **A family space needs transactions assignable to a specific account**, which is the remaining, unbuilt slice of F-F.1 ([§1.4](#14-account)) — account CRUD itself is no longer the gap (a user may already hold several personal accounts); per-transaction account selection is.
 - **Access control** is the real departure: shared entities are scoped by a membership join (`family_member` / `goal_member` / `group_member`) or by `space_id`, not by a single `user_id`. `user_id` is retained on owned rows as creator/attribution.
 - **Invitations** reuse the existing email/OTP infrastructure — a placeholder member with `status = INVITED` and an email; on signup the `user_id` is backfilled.
 
@@ -1389,10 +1419,10 @@ net(m) = paid_total(m) - owed_total(m) - settled_out(m) + settled_in(m)
 
 | Phase | Domain delivers |
 |---|---|
-| **MVP** | Core ledger ([Part 1](#part-1--core-ledger-mvp)): the single account, categories, payees, transactions, budgets, recurring (incl. subscriptions), and the monthly position. Ingestion & AI ([Part 3](#part-3--ingestion--ai-mvp)): chat, voice, OCR, auto-category, insights, assistant. Security ([Part 4](#part-4--security-mvp)): app lock, data protection. Single active currency, no sharing. |
+| **MVP** | Core ledger ([Part 1](#part-1--core-ledger-mvp)): accounts (one or more per user), categories, payees, transactions, budgets, recurring (incl. subscriptions), and the monthly position. Ingestion & AI ([Part 3](#part-3--ingestion--ai-mvp)): chat, voice, OCR, auto-category, insights, assistant. Security ([Part 4](#part-4--security-mvp)): app lock, data protection. Single active currency, no sharing. |
 | **Phase 2** | Free/Premium plans, advanced financial assistant, activity history & undo. No new sharing entities. |
 | **Phase 3** | Savings goals ([§1.9](#19-savingsgoal--goalcontribution)) and debts/loans ([Part 2](#part-2--debts--commitments-phase-3)); then sharing ([Part 5](#part-5--sharing--multi-user-phase-3)): family spaces, shared budgets, shared goals, group expense sharing. |
-| **Future** | Multiple accounts & transfers (F-F.1), multi-currency/FX (F-F.2), receipt splitting (F-F.3), bank sync (F-F.4), quick add (F-F.5), payoff strategies (F-F.6). |
+| **Future** | Per-transaction account selection & transfers — the remaining slice of F-F.1 (account CRUD itself shipped 2026-08-18), multi-currency/FX (F-F.2), receipt splitting (F-F.3), bank sync (F-F.4), quick add (F-F.5), payoff strategies (F-F.6). |
 
 **Built ahead of its phase:** savings goals ([§1.9](#19-savingsgoal--goalcontribution))
 have a working backend from when they were an MVP feature. They stay — Phase 3
@@ -1408,6 +1438,8 @@ Actual migrations in `svcs/core/src/main/resources/db/migration/`:
 | `V2__finance_schema.sql` | `account`, `category`, `payee`, `transaction`, `budget`, `recurring_transaction`, `savings_goal`, `goal_contribution` ([Part 1](#part-1--core-ledger-mvp)), plus `app_user.active_currency` / `language`. |
 | `V3__chat_ingestion.sql` | `chat_message` ([Part 3](#part-3--ingestion--ai-mvp)). |
 | `V4__onboarding_state.sql` | `app_user.onboarded` — separates a currency the user confirmed from one seeded at signup ([§0.3](#03-one-active-currency-per-user)). Backfills `TRUE` for anyone who already had an `active_currency`. |
+| `V5__multiple_accounts.sql` | Drops the unique index on `account.user_id`; adds `account.name` and `account.status` ([§1.4](#14-account)). |
+| `V6__budget_account_link.sql` | Adds `budget.account_id` (backfilled from each user's oldest account, then `NOT NULL`); drops `budget.currency` and `budget.start_date`; folds any `WEEKLY` budgets into `MONTHLY` ([§1.7](#17-budget)). |
 
 Not yet written: security columns ([Part 4](#part-4--security-mvp)), loans
 ([Part 2](#part-2--debts--commitments-phase-3)), `ai_insight`, and the Phase 3
@@ -1418,7 +1450,7 @@ sharing tables.
 | Domain concept | Schema | API |
 |---|---|---|
 | Core entities & enums ([Part 1](#part-1--core-ledger-mvp)) | `V2__finance_schema.sql` | DTOs & endpoints under `/api/v1` |
-| The single account ([§1.4](#14-account)) | `account`, unique on `user_id` | `GET /api/v1/account` (read only) |
+| Accounts ([§1.4](#14-account)) | `account`, indexed (not unique) on `user_id` | `GET /api/v1/account` (primary), `GET /api/v1/account/active`, `POST /api/v1/account`, `PUT /api/v1/account/{id}/name`, `DELETE /api/v1/account/{id}` |
 | Monthly position ([§1.10](#110-monthly-position-invariant)) | **no column** — derived from `transaction` | `GET /api/v1/summary/monthly` |
 | Savings goals ([§1.9](#19-savingsgoal--goalcontribution)) | `savings_goal`, `goal_contribution` | goal + contribution endpoints |
 | Money as minor units ([§0.2](#02-money-representation)) | `BIGINT amount`, `int` basis points | integer `amount` + `currency` in DTOs |

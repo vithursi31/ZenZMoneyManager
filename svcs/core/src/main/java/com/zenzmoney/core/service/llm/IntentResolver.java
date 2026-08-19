@@ -45,6 +45,13 @@ public class IntentResolver {
 
     private static final Pattern DAYS_AGO = Pattern.compile("(\\d{1,3})\\s+days?\\s+ago");
 
+    /** A whole message that is only an amount, with or without a symbol: "20", "$20", "rs 1500.50". */
+    private static final Pattern BARE_AMOUNT =
+            Pattern.compile("^[^\\d]{0,4}?(\\d{1,15}(?:\\.\\d{1,6})?)[^\\d]{0,4}?$");
+
+    /** Any run of digits — the cheapest signal that a message the model gave up on is about money. */
+    private static final Pattern DIGITS = Pattern.compile("\\d");
+
     /** Currencies with no minor unit still need a divisor; default to 2 decimals. */
     private static final int DEFAULT_FRACTION_DIGITS = 2;
 
@@ -112,7 +119,7 @@ public class IntentResolver {
     private static final List<String> EXPENSE_WORDS = List.of(
             // en
             "spent", "spend", "paid", "pay", "bought", "buy", "purchased", "purchase",
-            "cost", "withdrew", "withdraw", "donated",
+            "cost", "withdrew", "withdraw", "donated", "expense", "expenses",
             // fr
             "dépensé", "depense", "dépense", "payé", "paye", "acheté", "achete", "retiré", "retire",
             // es
@@ -134,48 +141,71 @@ public class IntentResolver {
     }
 
     /**
-     * Builds the draft. Never throws — anything that can't be resolved is recorded
-     * in {@link ParsedIntent#getMissingFields()} so the flow can ask about it
-     * instead of failing.
+     * Builds the draft from a standalone message — the first turn of a capture.
+     * Never throws: anything that can't be resolved is recorded in
+     * {@link ParsedIntent#getMissingFields()} so the flow can ask about it instead
+     * of failing.
      *
      * @param message the user's original text, used as a second signal for category
      *                matching when the model's label is a worse fit than a word the
      *                user actually typed.
      */
     public ParsedIntent resolve(User user, String message, LlmExtraction extraction) {
-        ParsedIntent draft = new ParsedIntent();
-        draft.setIntent(extraction.getIntent());
-        draft.setTxnType(extraction.getTxnType());
-        draft.setCategoryGuess(trimToNull(extraction.getCategoryGuess()));
-        draft.setNote(trimToNull(extraction.getNote()));
-        draft.setPayeeName(trimToNull(extraction.getPayee()));
-        draft.setConfidence(extraction.getConfidence());
+        return resolve(user, message, extraction, null);
+    }
 
-        if (extraction.getIntent() != IntentType.CREATE_TRANSACTION) {
-            // Not a capture. Mark it incomplete so no later code path can confirm it.
-            draft.getMissingFields().add("intent");
+    /**
+     * Builds the draft, folding in whatever an earlier turn of the same conversation
+     * already established.
+     *
+     * <p><b>Slot filling is what makes chat a conversation.</b> "I spent $20" leaves
+     * the category open; the user's next word — "Food" — is not a new transaction but
+     * the answer to a question, and a resolver that read it standalone would throw the
+     * $20 away. So each slot is filled from the freshest source that has one: what the
+     * model just read, then the message itself read as a bare answer, then
+     * {@code pending}.
+     *
+     * <p>The message-as-bare-answer step exists because the extraction model is small
+     * and a one-word reply carries almost no signal for it. "20" is unambiguous to a
+     * regex and genuinely ambiguous to a 1.5B model, so the deterministic reading wins
+     * where it applies.
+     *
+     * @param pending the live draft this conversation is refining, or null for a fresh
+     *                capture.
+     */
+    public ParsedIntent resolve(User user, String message, LlmExtraction extraction, ParsedIntent pending) {
+        ParsedIntent carried = continuationOf(pending);
+        ParsedIntent draft = new ParsedIntent();
+        draft.setIntent(resolveIntent(extraction, message, carried));
+        draft.setCategoryGuess(firstNonNull(trimToNull(extraction.getCategoryGuess()),
+                carried == null ? null : carried.getCategoryGuess()));
+        draft.setNote(firstNonNull(trimToNull(extraction.getNote()),
+                carried == null ? null : carried.getNote()));
+        draft.setPayeeName(firstNonNull(trimToNull(extraction.getPayee()),
+                carried == null ? null : carried.getPayeeName()));
+        // An answered question only ever narrows the uncertainty the earlier turn had,
+        // so a low-confidence one-word reply must not drag a good draft below the
+        // threshold and strand the user in a clarification loop.
+        draft.setConfidence(carried == null
+                ? extraction.getConfidence()
+                : Math.max(extraction.getConfidence(), carried.getConfidence()));
+
+        if (draft.getIntent() != IntentType.CREATE_TRANSACTION) {
+            // Not a capture. revalidate marks it incomplete so nothing can confirm it.
+            revalidate(draft);
             return draft;
         }
 
-        // The user has one account (§1.4) and it is provisioned on confirm, so the draft
-        // records only the currency. Nothing here can name someone else's account.
+        // The account is provisioned on confirm (§1.4), so the draft records only the
+        // currency. Nothing here can name someone else's account.
         String currency = trimToNull(user.getActiveCurrency());
-        if (currency == null) {
-            draft.getMissingFields().add("currency");
-        }
         draft.setCurrency(currency);
-
-        Long amount = currency == null ? null : toMinorUnits(extraction.getAmountRaw(), currency);
-        if (amount == null || amount <= 0) {
-            draft.getMissingFields().add("amount");
-        } else {
-            draft.setAmountMinor(amount);
-        }
-
-        draft.setTxnDate(resolveDate(extraction.getDateExpr(), zoneOf(user), TimeUtils.now()));
+        draft.setAmountMinor(resolveAmount(extraction.getAmountRaw(), message, currency, carried));
+        draft.setTxnDate(resolveTxnDate(extraction.getDateExpr(), user, carried));
 
         List<Category> categories = categoryRepository.findByUserId(user.getId());
-        TransactionType type = resolveType(extraction.getTxnType(), message);
+        TransactionType type = firstNonNull(resolveType(extraction.getTxnType(), message),
+                carried == null ? null : carried.getTxnType());
 
         // A guess whose kind contradicts the direction means one of the two is wrong,
         // and the draft cannot say which. Ask about the direction rather than silently
@@ -185,40 +215,176 @@ public class IntentResolver {
         }
         draft.setTxnType(type);
 
-        if (type == null) {
-            draft.getMissingFields().add("type");
-        } else {
-            String categoryId = resolveCategory(categories, type, draft.getCategoryGuess(), message);
-            if (categoryId == null) {
-                draft.getMissingFields().add("category");
-            } else {
-                draft.setCategoryId(categoryId);
+        if (type != null) {
+            Category category = firstNonNull(
+                    matchCategory(categories, type, draft.getCategoryGuess(), message),
+                    carriedCategory(categories, type, carried));
+            if (category != null) {
+                draft.setCategoryId(category.getId());
+                draft.setCategoryName(category.getName());
             }
         }
+        revalidate(draft);
         return draft;
+    }
+
+    /**
+     * Recomputes {@link ParsedIntent#getMissingFields()} from what the draft currently
+     * holds. The single definition of "incomplete", so a draft the user edited in the
+     * preview is judged by exactly the rule that judged the model's first reading.
+     */
+    public void revalidate(ParsedIntent draft) {
+        List<String> missing = draft.getMissingFields();
+        missing.clear();
+        if (draft.getIntent() != IntentType.CREATE_TRANSACTION) {
+            missing.add("intent");
+            return;
+        }
+        if (trimToNull(draft.getCurrency()) == null) {
+            missing.add("currency");
+        }
+        if (draft.getAmountMinor() == null || draft.getAmountMinor() <= 0) {
+            missing.add("amount");
+        }
+        if (draft.getTxnType() == null) {
+            // Asking which category before knowing the direction offers the wrong half
+            // of the list, so the direction is the only thing worth asking about here.
+            missing.add("type");
+        } else if (trimToNull(draft.getCategoryId()) == null) {
+            missing.add("category");
+        }
+    }
+
+    // --- continuation ---
+
+    /** The pending draft, but only when it is one this turn could actually be answering. */
+    private static ParsedIntent continuationOf(ParsedIntent pending) {
+        return pending != null && pending.getIntent() == IntentType.CREATE_TRANSACTION ? pending : null;
+    }
+
+    /**
+     * What the user is asking for. A reply inside an open capture stays a capture even
+     * when the model reads nothing usable in it — "20" on its own is UNKNOWN to the
+     * model and obviously an answer to the question that preceded it. A model that
+     * reads a <em>different</em> intent is believed: the user changed the subject.
+     *
+     * <p>With no capture open, a message the model gave up on is still treated as one
+     * when it plainly talks about money, so the flow asks what is missing rather than
+     * answering "I couldn't tell what you wanted to record".
+     */
+    private static IntentType resolveIntent(LlmExtraction extraction, String message, ParsedIntent carried) {
+        IntentType read = extraction.getIntent();
+        if (read != IntentType.UNKNOWN) {
+            return read;
+        }
+        if (extraction.isFailed()) {
+            // Nothing was read at all; the flow answers "try again" rather than guessing.
+            return IntentType.UNKNOWN;
+        }
+        if (carried != null || looksFinancial(message)) {
+            return IntentType.CREATE_TRANSACTION;
+        }
+        return IntentType.UNKNOWN;
+    }
+
+    /**
+     * True when the message carries a number, a direction word, or a word the synonym
+     * map knows — the three signals that make an unreadable message worth a question
+     * instead of a shrug.
+     */
+    static boolean looksFinancial(String message) {
+        String text = normalize(message);
+        if (text.isEmpty()) {
+            return false;
+        }
+        if (DIGITS.matcher(text).find()) {
+            return true;
+        }
+        return EXPENSE_WORDS.stream().anyMatch(word -> containsWord(text, word))
+                || INCOME_WORDS.stream().anyMatch(word -> containsWord(text, word))
+                || SYNONYMS.keySet().stream().anyMatch(word -> containsWord(text, word));
+    }
+
+    // --- slot filling ---
+
+    private static Long resolveAmount(String amountRaw, String message, String currency, ParsedIntent carried) {
+        if (currency == null) {
+            return null;
+        }
+        Long amount = firstNonNull(toMinorUnits(amountRaw, currency), bareAmount(message, currency));
+        if (amount == null && carried != null) {
+            amount = carried.getAmountMinor();
+        }
+        return amount != null && amount > 0 ? amount : null;
+    }
+
+    /**
+     * Reads a message that is <em>nothing but</em> an amount — "20", "$20", "20.50" —
+     * as the answer to "how much was that?". Anchored at both ends on purpose: a
+     * number buried in a sentence is the model's to interpret, and grabbing it here
+     * would turn "paid at pump 7" into a 7-rupee expense.
+     */
+    static Long bareAmount(String message, String currency) {
+        if (message == null) {
+            return null;
+        }
+        Matcher matcher = BARE_AMOUNT.matcher(message.trim());
+        return matcher.matches() ? toMinorUnits(matcher.group(1), currency) : null;
+    }
+
+    /**
+     * The date the draft should carry. A follow-up that says nothing about time keeps
+     * the day the original message named — otherwise answering "which category?"
+     * would silently move yesterday's expense to today.
+     */
+    private static Long resolveTxnDate(String dateExpr, User user, ParsedIntent carried) {
+        if ((dateExpr == null || dateExpr.isBlank()) && carried != null && carried.getTxnDate() != null) {
+            return carried.getTxnDate();
+        }
+        return resolveDate(dateExpr, zoneOf(user), TimeUtils.now());
+    }
+
+    /** The carried category, re-checked against the current direction before it is reused. */
+    private static Category carriedCategory(List<Category> categories, TransactionType type, ParsedIntent carried) {
+        if (carried == null || carried.getCategoryId() == null) {
+            return null;
+        }
+        return categories.stream()
+                .filter(c -> c.getId().equals(carried.getCategoryId()))
+                .filter(c -> c.getKind() == kindFor(type))
+                .findFirst()
+                .orElse(null);
     }
 
     // --- direction ---
 
     /**
      * Decides income-vs-expense, preferring a direction word the user typed over the
-     * model's {@code txnType}. A message carrying words from <em>both</em> directions
-     * ("paid salary 3000") is genuinely ambiguous, so the model's answer stands — an
-     * override is only worth having where the user's own wording is unambiguous.
+     * model's {@code txnType}. Also fills the direction the model left null, which
+     * turns a clarifying question the user can already see the answer to into no
+     * question at all.
      *
-     * <p>Also fills the direction the model left null, which turns a clarifying
-     * question the user can already see the answer to into no question at all.
+     * <p><b>With no such word, an unsupported INCOME becomes a question rather than a
+     * guess.</b> "rent 45000" does not say whether the user paid rent or collected
+     * it, and neither does "uber 250" — a driver's fare and a passenger's are the
+     * same three characters. The prompt eval measured the model at 4/16 on INCOME and
+     * 8/8 on EXPENSE, so its EXPENSE is worth taking and its INCOME is not: a wrong
+     * EXPENSE understates a month, a wrong INCOME flips its sign. Returning null puts
+     * the two-option question in front of the user, which is one tap and always right.
+     *
+     * @return the direction, or null when nothing has established it.
      */
     static TransactionType resolveType(TransactionType modelType, String message) {
         String text = normalize(message);
         boolean out = EXPENSE_WORDS.stream().anyMatch(word -> containsWord(text, word));
         boolean in = INCOME_WORDS.stream().anyMatch(word -> containsWord(text, word));
 
-        if (out == in) {
-            // Neither direction named, or both: nothing better than what the model said.
-            return modelType;
+        if (out != in) {
+            return out ? TransactionType.EXPENSE : TransactionType.INCOME;
         }
-        return out ? TransactionType.EXPENSE : TransactionType.INCOME;
+        // Neither direction named, or both. All that is left is the model's answer,
+        // and it is only worth trusting in one direction.
+        return modelType == TransactionType.INCOME ? null : modelType;
     }
 
     /**
@@ -250,7 +416,7 @@ public class IntentResolver {
      * so "0.1" is exactly 10 and not 9.999… rounded. Half-up on the first dropped
      * digit. Returns null when the text isn't a plain decimal number.
      */
-    static Long toMinorUnits(String rawAmount, String currencyCode) {
+    public static Long toMinorUnits(String rawAmount, String currencyCode) {
         if (rawAmount == null) {
             return null;
         }
@@ -386,6 +552,12 @@ public class IntentResolver {
 
     /** The same resolution against categories already loaded, so one draft is one query. */
     static String resolveCategory(List<Category> categories, TransactionType type, String guess, String message) {
+        Category match = matchCategory(categories, type, guess, message);
+        return match == null ? null : match.getId();
+    }
+
+    /** The matched row rather than its id, so the draft can carry the name it will display. */
+    static Category matchCategory(List<Category> categories, TransactionType type, String guess, String message) {
         CategoryKind kind = kindFor(type);
         List<Category> candidates = categories.stream()
                 .filter(c -> c.getKind() == kind)
@@ -401,7 +573,7 @@ public class IntentResolver {
                 .filter(c -> containsWord(text, normalize(c.getName())))
                 .findFirst();
         if (named.isPresent()) {
-            return named.get().getId();
+            return named.get();
         }
 
         String label = normalize(guess);
@@ -411,7 +583,7 @@ public class IntentResolver {
                     .filter(c -> normalize(c.getName()).equals(label))
                     .findFirst();
             if (exact.isPresent()) {
-                return exact.get().getId();
+                return exact.get();
             }
             // 3. Partial overlap either way ("grocery" vs "Groceries").
             if (label.length() >= 3) {
@@ -422,7 +594,7 @@ public class IntentResolver {
                         })
                         .findFirst();
                 if (partial.isPresent()) {
-                    return partial.get().getId();
+                    return partial.get();
                 }
             }
         }
@@ -433,7 +605,7 @@ public class IntentResolver {
                     .filter(c -> normalize(c.getName()).contains(fragment))
                     .findFirst();
             if (match.isPresent()) {
-                return match.get().getId();
+                return match.get();
             }
         }
         return null;
@@ -484,5 +656,10 @@ public class IntentResolver {
         }
         String trimmed = value.trim();
         return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    /** The freshest of two candidate slot values — this turn's reading, else the conversation's. */
+    private static <T> T firstNonNull(T fresh, T carried) {
+        return fresh != null ? fresh : carried;
     }
 }

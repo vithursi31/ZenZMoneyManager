@@ -43,10 +43,17 @@ class TransactionServiceTest {
 
     private static final long JAN_2026 = 1_767_225_600_000L;   // 2026-01-01T00:00:00Z
 
+    /** Leaves User's own default timezone (UTC) in place. */
     private User user() {
         User u = new User();
         u.setId("u1");
         u.setActiveCurrency("USD");
+        return u;
+    }
+
+    private User user(String timezone) {
+        User u = user();
+        u.setTimezone(timezone);
         return u;
     }
 
@@ -224,6 +231,148 @@ class TransactionServiceTest {
         transactionService.delete("t1");
 
         verify(transactionRepository).delete(txn);
+    }
+
+    // --- list filtering: account, type, date range, and combinations (F-1.9) ---
+
+    private static final long DAY = 86_400_000L;
+
+    private Transaction txn(String id, String accountId, TransactionType type, long amount, long date) {
+        Transaction t = new Transaction();
+        t.setId(id);
+        t.setUserId("u1");
+        t.setAccountId(accountId);
+        t.setType(type);
+        t.setAmount(amount);
+        t.setTxnDate(date);
+        return t;
+    }
+
+    private void stubLister(User u, Transaction... rows) {
+        when(currentUser.requireUser()).thenReturn(u);
+        when(transactionRepository.findByUserId("u1")).thenReturn(java.util.List.of(rows));
+    }
+
+    @Test
+    void list_withNoFilters_returnsEverything_newestFirst() {
+        stubLister(user(),
+                txn("t1", "a1", TransactionType.EXPENSE, 1_000, JAN_2026),
+                txn("t2", "a2", TransactionType.INCOME, 50_000, JAN_2026 + 1_000));
+
+        var results = transactionService.list(null, null, null, null);
+
+        assertEquals(2, results.size());
+        assertEquals("t2", results.get(0).getId());   // newer first
+        assertEquals("t1", results.get(1).getId());
+    }
+
+    @Test
+    void list_filtersByAccount() {
+        stubLister(user(),
+                txn("t1", "a1", TransactionType.EXPENSE, 1_000, JAN_2026),
+                txn("t2", "a2", TransactionType.EXPENSE, 2_000, JAN_2026));
+
+        var results = transactionService.list("a2", null, null, null);
+
+        assertEquals(1, results.size());
+        assertEquals("t2", results.get(0).getId());
+    }
+
+    @Test
+    void list_filtersByType() {
+        stubLister(user(),
+                txn("t1", "a1", TransactionType.EXPENSE, 1_000, JAN_2026),
+                txn("t2", "a1", TransactionType.INCOME, 50_000, JAN_2026));
+
+        var results = transactionService.list(null, "income", null, null);
+
+        assertEquals(1, results.size());
+        assertEquals("t2", results.get(0).getId());
+    }
+
+    @Test
+    void list_unknownType_rejected() {
+        when(currentUser.requireUser()).thenReturn(user());
+
+        assertThrows(BadRequestException.class,
+                () -> transactionService.list(null, "bogus", null, null));
+    }
+
+    @Test
+    void list_combinesAccountTypeAndDateRange() {
+        stubLister(user(),
+                txn("t1", "a1", TransactionType.EXPENSE, 1_000, JAN_2026),           // wrong account
+                txn("t2", "a2", TransactionType.INCOME, 50_000, JAN_2026),           // wrong type
+                txn("t3", "a2", TransactionType.EXPENSE, 500, JAN_2026 - DAY),       // outside range
+                txn("t4", "a2", TransactionType.EXPENSE, 2_000, JAN_2026));          // matches all
+
+        var results = transactionService.list("a2", "expense", "2026-01-01", "2026-01-01");
+
+        assertEquals(1, results.size());
+        assertEquals("t4", results.get(0).getId());
+    }
+
+    /** endDate is an inclusive calendar date: everything up to 23:59:59.999 that day counts. */
+    @Test
+    void list_endDateIncludesTheWholeOfThatDay() {
+        stubLister(user(),
+                txn("t1", "a1", TransactionType.EXPENSE, 1_000, JAN_2026),                 // 00:00:00.000
+                txn("t2", "a1", TransactionType.EXPENSE, 2_000, JAN_2026 + DAY - 1));      // 23:59:59.999
+
+        var results = transactionService.list(null, null, "2026-01-01", "2026-01-01");
+
+        assertEquals(2, results.size());
+    }
+
+    /**
+     * The upper bound is half-open underneath (§1.10): midnight opening the day after endDate
+     * belongs to the next day only — the same rule the monthly position applies, so a row on the
+     * stroke of midnight can never be counted by both or neither.
+     */
+    @Test
+    void list_excludesMidnightOpeningTheDayAfterEndDate() {
+        stubLister(user(),
+                txn("t1", "a1", TransactionType.EXPENSE, 1_000, JAN_2026 + DAY - 1),   // 01 Jan 23:59:59.999
+                txn("t2", "a1", TransactionType.EXPENSE, 2_000, JAN_2026 + DAY));      // 02 Jan 00:00:00.000
+
+        var results = transactionService.list(null, null, "2026-01-01", "2026-01-01");
+
+        assertEquals(1, results.size());
+        assertEquals("t1", results.get(0).getId());
+    }
+
+    /**
+     * The dates are resolved in the caller's zone, not UTC. In {@code Asia/Colombo} (UTC+5:30)
+     * 2026-01-01 starts at 2025-12-31T18:30Z, so the two rows either side of that instant fall
+     * on different calendar days for this user than they would for a UTC one.
+     */
+    @Test
+    void list_resolvesDatesInTheCallersTimezone() {
+        long colomboMidnight = JAN_2026 - (5 * 60 + 30) * 60_000L;   // 2025-12-31T18:30Z
+        stubLister(user("Asia/Colombo"),
+                txn("t1", "a1", TransactionType.EXPENSE, 1_000, colomboMidnight - 1),   // 31 Dec, Colombo
+                txn("t2", "a1", TransactionType.EXPENSE, 2_000, colomboMidnight));      // 01 Jan, Colombo
+
+        var results = transactionService.list(null, null, "2026-01-01", "2026-01-01");
+
+        assertEquals(1, results.size());
+        assertEquals("t2", results.get(0).getId());
+    }
+
+    @Test
+    void list_badDateFormat_rejected() {
+        when(currentUser.requireUser()).thenReturn(user());
+
+        assertThrows(BadRequestException.class,
+                () -> transactionService.list(null, null, "01/01/2026", null));
+    }
+
+    @Test
+    void list_startDateAfterEndDate_rejected() {
+        when(currentUser.requireUser()).thenReturn(user());
+
+        assertThrows(BadRequestException.class,
+                () -> transactionService.list(null, null, "2026-01-31", "2026-01-01"));
     }
 
     @Test

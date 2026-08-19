@@ -15,6 +15,8 @@ import lombok.Getter;
 public class MeResponse {
 
     private final String email;
+    private final String firstName;
+    private final String lastName;
 
     /** Always true — the endpoint is role-gated. Kept so existing clients reading it do not break. */
     private final boolean authenticated;
@@ -26,6 +28,8 @@ public class MeResponse {
 
     private MeResponse(User u) {
         this.email = u.getEmail();
+        this.firstName = u.getFirstName();
+        this.lastName = u.getLastName();
         this.authenticated = true;
         this.onboarded = u.isOnboarded();
         this.activeCurrency = u.getActiveCurrency();

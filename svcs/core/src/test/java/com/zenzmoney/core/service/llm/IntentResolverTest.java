@@ -226,16 +226,42 @@ class IntentResolverTest {
     }
 
     @Test
-    void type_keepsTheModelsAnswerWhenTheMessageNamesNoDirection() {
+    void type_keepsTheModelsExpenseWhenTheMessageNamesNoDirection() {
         assertEquals(TransactionType.EXPENSE, IntentResolver.resolveType(TransactionType.EXPENSE, "uber 250"));
         assertNull(IntentResolver.resolveType(null, "uber 250"));
     }
 
-    /** Both directions named is genuine ambiguity — an override would be a coin toss. */
+    /**
+     * The terse entries the prompt eval caught: a bare noun and a number, where the
+     * model answered INCOME for every one of them. None of these messages says which
+     * way the money went, and two of them genuinely could go either way — a landlord
+     * collects the rent a tenant pays, and a driver earns the fare a passenger spends.
+     * Asking costs one tap; guessing books somebody's rent as income.
+     */
     @Test
-    void type_keepsTheModelsAnswerWhenTheMessageNamesBothDirections() {
+    void type_asksRatherThanGuessingWhenNothingSupportsTheModelsIncome() {
+        assertNull(IntentResolver.resolveType(TransactionType.INCOME, "rent 45000"));
+        assertNull(IntentResolver.resolveType(TransactionType.INCOME, "uber 250"));
+        assertNull(IntentResolver.resolveType(TransactionType.INCOME, "coffee 500"));
+        assertNull(IntentResolver.resolveType(TransactionType.INCOME, "lunch 1500"));
+        assertNull(IntentResolver.resolveType(TransactionType.INCOME, "café 500"));
+    }
+
+    @Test
+    void type_takesTheModelsIncomeOnceTheUsersOwnWordsSupportIt() {
+        assertEquals(TransactionType.INCOME, IntentResolver.resolveType(TransactionType.INCOME, "rent 45000 received"));
+        assertEquals(TransactionType.INCOME, IntentResolver.resolveType(TransactionType.INCOME, "got salary 3000 today"));
         assertEquals(TransactionType.INCOME,
-                IntentResolver.resolveType(TransactionType.INCOME, "paid my salary into savings"));
+                IntentResolver.resolveType(TransactionType.INCOME, "received 450 freelance payment"));
+    }
+
+    /**
+     * Both directions named is genuine ambiguity, and the model's coin toss is not a
+     * tiebreaker — the same rule as naming neither.
+     */
+    @Test
+    void type_asksWhenTheMessageNamesBothDirectionsAndTheModelSaysIncome() {
+        assertNull(IntentResolver.resolveType(TransactionType.INCOME, "paid my salary into savings"));
     }
 
     @Test
@@ -280,9 +306,8 @@ class IntentResolverTest {
 
     /** Same ambiguity rule across languages: two directions named means don't guess. */
     @Test
-    void type_keepsTheModelsAnswerWhenAFrenchMessageNamesBothDirections() {
-        assertEquals(TransactionType.INCOME,
-                IntentResolver.resolveType(TransactionType.INCOME, "j'ai payé avec mon salaire"));
+    void type_asksWhenAFrenchMessageNamesBothDirectionsAndTheModelSaysIncome() {
+        assertNull(IntentResolver.resolveType(TransactionType.INCOME, "j'ai payé avec mon salaire"));
     }
 
     // --- non-English messages through the whole draft ---
@@ -490,7 +515,7 @@ class IntentResolverTest {
         when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
                 category("c-salary", "Salary", CategoryKind.INCOME)));
 
-        ParsedIntent draft = resolver.resolve(user, "got 3000 consulting fee",
+        ParsedIntent draft = resolver.resolve(user, "received 3000 consulting fee",
                 extraction(IntentType.CREATE_TRANSACTION, TransactionType.INCOME,
                         "3000", "Consulting", "today", null, null, 0.9));
 
@@ -510,6 +535,222 @@ class IntentResolverTest {
         assertTrue(draft.getMissingFields().contains("intent"));
     }
 
+    // --- income, end to end ---
+
+    @Test
+    void resolve_buildsACompleteIncomeDraft() {
+        User user = user("u1", "USD", "UTC");
+        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+                category("c-free", "Freelance", CategoryKind.INCOME),
+                category("c-food", "Food & Drinks", CategoryKind.EXPENSE)));
+
+        ParsedIntent draft = resolver.resolve(user, "I received $500 from freelancing",
+                extraction(IntentType.CREATE_TRANSACTION, TransactionType.INCOME,
+                        "500", "Freelance", "today", null, "freelancing", 0.93));
+
+        assertTrue(draft.isComplete(), () -> "unexpected missing: " + draft.getMissingFields());
+        assertEquals(TransactionType.INCOME, draft.getTxnType());
+        assertEquals(50000L, draft.getAmountMinor());
+        assertEquals("c-free", draft.getCategoryId());
+        assertEquals("Freelance", draft.getCategoryName(), "the preview renders the name, not the id");
+    }
+
+    @Test
+    void resolve_asksOnlyForTheAmountWhenTheIncomeCategoryIsAlreadyClear() {
+        User user = user("u1", "USD", "UTC");
+        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+                category("c-salary", "Salary", CategoryKind.INCOME)));
+
+        ParsedIntent draft = resolver.resolve(user, "my salary was deposited",
+                extraction(IntentType.CREATE_TRANSACTION, TransactionType.INCOME,
+                        null, "Salary", "today", null, "salary", 0.9));
+
+        assertEquals(List.of("amount"), draft.getMissingFields());
+        assertEquals(TransactionType.INCOME, draft.getTxnType());
+        assertEquals("c-salary", draft.getCategoryId());
+    }
+
+    // --- a message that is plainly about money but unreadable to the model ---
+
+    @Test
+    void resolve_treatsAnUnreadMessageAsACaptureWhenItPlainlyTalksAboutMoney() {
+        User user = user("u1", "USD", "UTC");
+        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+                category("c-food", "Food & Drinks", CategoryKind.EXPENSE)));
+
+        ParsedIntent draft = resolver.resolve(user, "20",
+                extraction(IntentType.UNKNOWN, null, null, null, null, null, null, 0.2));
+
+        assertEquals(IntentType.CREATE_TRANSACTION, draft.getIntent(),
+                "asking which direction beats answering \"I couldn't tell what you wanted\"");
+        assertEquals(2000L, draft.getAmountMinor(), "a message that is only a number is an amount");
+        assertTrue(draft.getMissingFields().contains("type"));
+    }
+
+    @Test
+    void resolve_leavesAMessageWithNoMoneySignalAlone() {
+        User user = user("u1", "USD", "UTC");
+
+        ParsedIntent draft = resolver.resolve(user, "hello there",
+                extraction(IntentType.UNKNOWN, null, null, null, null, null, null, 0.2));
+
+        assertEquals(IntentType.UNKNOWN, draft.getIntent());
+        assertTrue(draft.getMissingFields().contains("intent"));
+    }
+
+    @Test
+    void resolve_doesNotGuessAtACaptureWhenTheModelWasNeverReached() {
+        User user = user("u1", "USD", "UTC");
+
+        ParsedIntent draft = resolver.resolve(user, "spent 20 on fuel", LlmExtraction.failed());
+
+        assertEquals(IntentType.UNKNOWN, draft.getIntent(),
+                "an outage is answered with \"try again\", not with a half-invented draft");
+    }
+
+    @Test
+    void bareAmount_onlyReadsAMessageThatIsNothingButAnAmount() {
+        assertEquals(2000L, IntentResolver.bareAmount("20", "USD"));
+        assertEquals(2000L, IntentResolver.bareAmount("$20", "USD"));
+        assertEquals(1750L, IntentResolver.bareAmount("17.50", "USD"));
+        assertEquals(150000L, IntentResolver.bareAmount("rs 1500", "USD"));
+        assertNull(IntentResolver.bareAmount("paid at pump 7", "USD"),
+                "a number inside a sentence is the model's to read, not a bare answer");
+        assertNull(IntentResolver.bareAmount("Food & Drinks", "USD"));
+    }
+
+    // --- slot filling across turns ---
+
+    @Test
+    void resolve_keepsTheAmountFromTheEarlierTurnWhenTheAnswerNamesTheCategory() {
+        User user = user("u1", "USD", "UTC");
+        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+                category("c-food", "Food & Drinks", CategoryKind.EXPENSE)));
+
+        // "I spent $20" left the category open; the user answers with one word.
+        ParsedIntent draft = resolver.resolve(user, "Food",
+                extraction(IntentType.UNKNOWN, null, null, null, null, null, null, 0.2),
+                pending(TransactionType.EXPENSE, 2000L, null, 0.9));
+
+        assertTrue(draft.isComplete(), () -> "unexpected missing: " + draft.getMissingFields());
+        assertEquals(2000L, draft.getAmountMinor(), "the $20 must survive the follow-up");
+        assertEquals("c-food", draft.getCategoryId());
+        assertEquals(TransactionType.EXPENSE, draft.getTxnType());
+    }
+
+    @Test
+    void resolve_keepsTheCategoryFromTheEarlierTurnWhenTheAnswerIsAnAmount() {
+        User user = user("u1", "USD", "UTC");
+        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+                category("c-food", "Food & Drinks", CategoryKind.EXPENSE)));
+
+        // "I paid for food" left the amount open.
+        ParsedIntent draft = resolver.resolve(user, "20",
+                extraction(IntentType.UNKNOWN, null, null, null, null, null, null, 0.2),
+                pending(TransactionType.EXPENSE, null, "c-food", 0.9));
+
+        assertTrue(draft.isComplete(), () -> "unexpected missing: " + draft.getMissingFields());
+        assertEquals(2000L, draft.getAmountMinor());
+        assertEquals("c-food", draft.getCategoryId());
+    }
+
+    @Test
+    void resolve_doesNotLetAOneWordAnswerDragAGoodDraftBelowTheThreshold() {
+        User user = user("u1", "USD", "UTC");
+        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+                category("c-food", "Food & Drinks", CategoryKind.EXPENSE)));
+
+        ParsedIntent draft = resolver.resolve(user, "Food",
+                extraction(IntentType.UNKNOWN, null, null, null, null, null, null, 0.1),
+                pending(TransactionType.EXPENSE, 2000L, null, 0.9));
+
+        assertEquals(0.9, draft.getConfidence(),
+                "an answered question narrows the uncertainty; it cannot widen it");
+    }
+
+    @Test
+    void resolve_keepsTheDayTheFirstMessageNamedWhenTheAnswerSaysNothingAboutTime() {
+        User user = user("u1", "USD", "Asia/Colombo");
+        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+                category("c-fuel", "Fuel", CategoryKind.EXPENSE)));
+        ParsedIntent pending = pending(TransactionType.EXPENSE, 3000L, null, 0.9);
+        pending.setTxnDate(instant("2026-07-27T00:00:00Z"));
+
+        ParsedIntent draft = resolver.resolve(user, "Fuel",
+                extraction(IntentType.UNKNOWN, null, null, null, null, null, null, 0.2), pending);
+
+        assertEquals(instant("2026-07-27T00:00:00Z"), draft.getTxnDate(),
+                "answering \"which category?\" must not move yesterday's expense to today");
+    }
+
+    @Test
+    void resolve_letsAFreshValueWinOverTheCarriedOne() {
+        User user = user("u1", "USD", "UTC");
+        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+                category("c-fuel", "Fuel", CategoryKind.EXPENSE)));
+
+        ParsedIntent draft = resolver.resolve(user, "actually it was 30 on fuel",
+                extraction(IntentType.CREATE_TRANSACTION, TransactionType.EXPENSE,
+                        "30", "Fuel", "today", null, "fuel", 0.9),
+                pending(TransactionType.EXPENSE, 2000L, null, 0.9));
+
+        assertEquals(3000L, draft.getAmountMinor(), "a correction replaces, it does not merge underneath");
+    }
+
+    @Test
+    void resolve_dropsACarriedCategoryTheNewDirectionInvalidates() {
+        User user = user("u1", "USD", "UTC");
+        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+                category("c-food", "Food & Drinks", CategoryKind.EXPENSE),
+                category("c-salary", "Salary", CategoryKind.INCOME)));
+
+        ParsedIntent draft = resolver.resolve(user, "no, I received that",
+                extraction(IntentType.CREATE_TRANSACTION, TransactionType.INCOME,
+                        null, null, null, null, null, 0.9),
+                pending(TransactionType.EXPENSE, 2000L, "c-food", 0.9));
+
+        assertEquals(TransactionType.INCOME, draft.getTxnType());
+        assertNull(draft.getCategoryId(), "an expense category cannot carry into an income draft");
+        assertTrue(draft.getMissingFields().contains("category"));
+    }
+
+    @Test
+    void resolve_believesTheModelWhenTheUserChangesTheSubject() {
+        User user = user("u1", "USD", "UTC");
+
+        ParsedIntent draft = resolver.resolve(user, "how much did I spend on food?",
+                extraction(IntentType.QUERY, null, null, null, null, null, null, 0.9),
+                pending(TransactionType.EXPENSE, 2000L, null, 0.9));
+
+        assertEquals(IntentType.QUERY, draft.getIntent());
+        assertTrue(draft.getMissingFields().contains("intent"));
+    }
+
+    // --- revalidate: one definition of "incomplete" ---
+
+    @Test
+    void revalidate_recomputesWhatIsMissingAfterTheUserEditsTheDraft() {
+        ParsedIntent draft = pending(TransactionType.EXPENSE, 2000L, "c-food", 0.9);
+        draft.getMissingFields().add("category");
+
+        resolver.revalidate(draft);
+        assertTrue(draft.isComplete(), "the category the edit supplied clears the question");
+
+        draft.setAmountMinor(0L);
+        resolver.revalidate(draft);
+        assertEquals(List.of("amount"), draft.getMissingFields(), "a zero amount is no amount");
+    }
+
+    @Test
+    void revalidate_asksAboutDirectionBeforeCategory() {
+        ParsedIntent draft = pending(null, 2000L, null, 0.9);
+
+        resolver.revalidate(draft);
+
+        assertEquals(List.of("type"), draft.getMissingFields(),
+                "which half of the category list to offer depends on the answer");
+    }
+
     // --- fixtures ---
 
     private static long instant(String iso) {
@@ -526,6 +767,19 @@ class IntentResolverTest {
         u.setActiveCurrency(currency);
         u.setTimezone(timezone);
         return u;
+    }
+
+    /** A draft an earlier turn of the same conversation left open. */
+    private static ParsedIntent pending(TransactionType type, Long amountMinor,
+                                        String categoryId, double confidence) {
+        ParsedIntent draft = new ParsedIntent();
+        draft.setIntent(IntentType.CREATE_TRANSACTION);
+        draft.setTxnType(type);
+        draft.setAmountMinor(amountMinor);
+        draft.setCurrency("USD");
+        draft.setCategoryId(categoryId);
+        draft.setConfidence(confidence);
+        return draft;
     }
 
     private static Category category(String id, String name, CategoryKind kind) {

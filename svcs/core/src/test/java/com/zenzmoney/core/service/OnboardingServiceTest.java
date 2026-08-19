@@ -5,6 +5,7 @@ import com.zenzmoney.core.entity.Account;
 import com.zenzmoney.core.entity.User;
 import com.zenzmoney.core.repository.UserRepository;
 import com.zenzmoney.core.web.dto.CategoryResponse;
+import com.zenzmoney.core.web.dto.CurrencyResponse;
 import com.zenzmoney.core.web.dto.OnboardingRequest;
 import com.zenzmoney.core.web.dto.OnboardingResponse;
 import org.junit.jupiter.api.Test;
@@ -132,6 +133,19 @@ class OnboardingServiceTest {
         verify(userRepository, never()).save(any());
     }
 
+    /**
+     * RUR is a code the JDK still recognizes but no country has used since 1998 —
+     * it must be rejected the same way a nonsense code is, not treated as valid
+     * just because {@code Currency.getInstance} doesn't throw for it.
+     */
+    @Test
+    void complete_retiredCurrency_rejected() {
+        when(currentUser.requireUser()).thenReturn(user(null));
+
+        assertThrows(BadRequestException.class, () -> onboardingService.complete(req("RUR", null, null)));
+        verify(userRepository, never()).save(any());
+    }
+
     /** The timezone decides where the user's months begin, so a bad one cannot be stored. */
     @Test
     void complete_unknownTimezone_rejected() {
@@ -152,5 +166,22 @@ class OnboardingServiceTest {
         onboardingService.complete(req("LKR", "en", null));
 
         assertEquals("Asia/Colombo", u.getTimezone());
+    }
+
+    @Test
+    void listCurrencies_isSortedAndExcludesPseudoCurrencies() {
+        List<CurrencyResponse> currencies = onboardingService.listCurrencies();
+
+        assertTrue(currencies.stream().anyMatch(c -> c.getCode().equals("USD")));
+        assertTrue(currencies.stream().anyMatch(c -> c.getCode().equals("LKR")));
+        // JPY has no minor unit — the exact opposite of USD/LKR — so this also
+        // proves fractionDigits is read per-currency, not hard-coded to 2.
+        assertTrue(currencies.stream().anyMatch(
+                c -> c.getCode().equals("JPY") && c.getFractionDigits() == 0));
+        assertTrue(currencies.stream().noneMatch(c -> c.getCode().equals("XXX")),
+                "XXX is 'no currency', not a real answer to what an account is denominated in");
+
+        List<String> codes = currencies.stream().map(CurrencyResponse::getCode).toList();
+        assertEquals(codes.stream().sorted().toList(), codes);
     }
 }

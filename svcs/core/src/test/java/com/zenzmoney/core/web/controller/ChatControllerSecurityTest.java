@@ -58,6 +58,14 @@ class ChatControllerSecurityTest {
     }
 
     @Test
+    void anonymousCannotAmendADraft() throws Exception {
+        mockMvc.perform(post("/api/v1/chat/draft")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"messageId\":\"some-id\",\"categoryId\":\"c1\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     void anonymousCannotRejectADraft() throws Exception {
         mockMvc.perform(post("/api/v1/chat/reject")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -110,6 +118,27 @@ class ChatControllerSecurityTest {
         mockMvc.perform(post("/api/v1/chat")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"message\":\"   \"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    /**
+     * The draft endpoint takes money, so the amount is bounded at the seam. A
+     * zero or negative amount is refused here rather than reaching a draft the
+     * user could then confirm into the ledger.
+     */
+    @Test
+    void aNonPositiveDraftAmountIsRejectedByValidation() throws Exception {
+        mockMvc.perform(post("/api/v1/chat/draft")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"messageId\":\"some-id\",\"amountMinor\":0}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void aDraftEditWithNoMessageIdIsRejectedByValidation() throws Exception {
+        mockMvc.perform(post("/api/v1/chat/draft")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"amountMinor\":500}"))
                 .andExpect(status().isBadRequest());
     }
 

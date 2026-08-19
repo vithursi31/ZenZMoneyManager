@@ -8,7 +8,6 @@ import lombok.Setter;
 public class RegisterRequest {
     private String email;
     private String password;
-    private String displayName;
 
     /**
      * BCP-47 locale the client is running in, e.g. {@code si-LK}. Optional hint only:

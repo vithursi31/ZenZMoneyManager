@@ -4,11 +4,15 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.LoggerContext;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import com.zenzmoney.common.domain.UserStatus;
+import com.zenzmoney.common.exception.TooManyRequestsException;
 import com.zenzmoney.common.exception.UnauthorizedException;
 import com.zenzmoney.core.entity.User;
 import com.zenzmoney.core.repository.UserRepository;
 import com.zenzmoney.core.service.JwtTokenService;
 import com.zenzmoney.core.service.LoginService;
+import com.zenzmoney.core.service.ratelimit.RateLimitResult;
+import com.zenzmoney.core.service.ratelimit.RedisRateLimitService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -28,6 +32,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
 /**
@@ -44,6 +49,7 @@ class AuditLogTest {
 
     @Mock UserRepository userRepository;
     @Mock JwtTokenService jwtTokenService;
+    @Mock RedisRateLimitService rateLimitService;
 
     private ListAppender<ILoggingEvent> appender;
     private ch.qos.logback.classic.Logger auditLogger;
@@ -65,9 +71,10 @@ class AuditLogTest {
         // is not trivially satisfied by a stub returning the plaintext.
         loginService = new LoginService(userRepository,
                 new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder(),
-                jwtTokenService);
+                jwtTokenService, rateLimitService);
         when(jwtTokenService.generateAccessToken(anyString())).thenReturn("access-token");
         when(jwtTokenService.generateRefreshToken(anyString())).thenReturn("refresh-token");
+        when(rateLimitService.tryConsumeOrDeny(anyString(), any())).thenReturn(RateLimitResult.allow());
     }
 
     @AfterEach
@@ -83,9 +90,8 @@ class AuditLogTest {
         u.setPasswordHash(new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder()
                 .encode(PASSWORD));
         u.setAuthMode("password");
-        u.setStatus("active");
+        u.setStatus(UserStatus.ACTIVE);
         u.setLocked(false);
-        u.setLoginAttempts(0);
         u.setSystemGeneratedPassword(false);
         return u;
     }
@@ -107,7 +113,7 @@ class AuditLogTest {
     }
 
     @Test
-    void failedLoginIsAuditedWithTheAttemptCount() {
+    void failedLoginIsAudited() {
         when(userRepository.findByEmail("someone@example.com")).thenReturn(Optional.of(activeUser()));
         when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
 
@@ -115,19 +121,23 @@ class AuditLogTest {
                 () -> loginService.login("someone@example.com", "wrong-password"));
 
         assertTrue(auditLines().stream().anyMatch(l -> l.contains("Login denied")
-                        && l.contains("wrong password")
-                        && l.contains("attempt 1")),
+                        && l.contains("wrong password")),
                 "expected a failed-login audit line, got: " + auditLines());
     }
 
+    /**
+     * Attempt-counting moved into Redis ({@code LoginService.LOGIN_POLICY}); a denial there is
+     * what now drives the hard lock, so this simulates the rate limiter rejecting the attempt
+     * rather than a stored count reaching a threshold.
+     */
     @Test
     void lockoutIsAuditedAtWarn() {
-        User user = activeUser();
-        user.setLoginAttempts(5);
-        when(userRepository.findByEmail("someone@example.com")).thenReturn(Optional.of(user));
+        when(userRepository.findByEmail("someone@example.com")).thenReturn(Optional.of(activeUser()));
         when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(rateLimitService.tryConsumeOrDeny(eq("login:someone@example.com"), any()))
+                .thenReturn(RateLimitResult.deny(java.time.Duration.ofMinutes(15)));
 
-        assertThrows(UnauthorizedException.class,
+        assertThrows(TooManyRequestsException.class,
                 () -> loginService.login("someone@example.com", "wrong-password"));
 
         ILoggingEvent lockLine = appender.list.stream()

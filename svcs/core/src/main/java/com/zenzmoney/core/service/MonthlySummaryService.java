@@ -9,7 +9,6 @@ import com.zenzmoney.core.web.dto.MonthlySummaryResponse;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.DateTimeException;
 import java.time.YearMonth;
 import java.time.ZoneId;
 import java.time.format.DateTimeParseException;
@@ -74,12 +73,7 @@ public class MonthlySummaryService {
         }
     }
 
-    /** A stored zone the JVM does not recognise must not take the dashboard down. */
     private static ZoneId zoneOf(User user) {
-        try {
-            return ZoneId.of(user.getTimezone());
-        } catch (DateTimeException | NullPointerException e) {
-            return ZoneId.of("UTC");
-        }
+        return TimeUtils.zoneOrUtc(user.getTimezone());
     }
 }

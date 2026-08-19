@@ -95,6 +95,9 @@ app:
 
 ## 3. User entity (JPA)
 
+No `loginAttempts` counter on the row — failed-attempt counting lives in the rate
+limiter (§11), keyed by account, so it doesn't need a persisted column at all.
+
 `User.java`
 
 ```java
@@ -130,7 +133,6 @@ public class User {
 
     private boolean locked = false;
     private Long lockedTime;
-    private int loginAttempts = 0;
     private Long lastLoginTime;
     private Long lastPasswordChangeTime;
     private boolean systemGeneratedPassword = false;
@@ -655,6 +657,32 @@ public class VerificationService {
 
 ## 11. Login service
 
+Wrong-password attempts are throttled by a rate limiter keyed on the account,
+not by a counter column on `User` — the same shape as the OTP throttle in §10,
+just with its own policy and key prefix (`login:<username>`). Two windows,
+checked together: a short one catches a fast brute-force at roughly the same
+attempt count a naive counter would; a daily one catches a slow, spaced-out
+attacker who'd otherwise dodge the short window entirely. A denial locks the
+account the same way a hard-coded attempt cap used to — cleared only by a
+password reset, not by time.
+
+`LoginRateLimiter.java`
+
+```java
+package com.yourapp.service;
+
+/**
+ * Fixed-window rate limiting for login attempts, keyed per account. A minimal
+ * single-instance implementation can back this with an in-memory
+ * Map<String, Deque<Long>> of attempt timestamps; a multi-instance deployment
+ * needs a shared store (Redis) so the limit holds across app instances/restarts.
+ */
+public interface LoginRateLimiter {
+    /** e.g. 5 attempts / 15 min AND 10 attempts / 24h, both enforced together. */
+    boolean allow(String key);
+}
+```
+
 `LoginService.java`
 
 ```java
@@ -671,8 +699,12 @@ import java.util.Optional;
 public class LoginService {
 
     private final UserRepository userRepo;
+    private final LoginRateLimiter rateLimiter;
 
-    public LoginService(UserRepository userRepo) { this.userRepo = userRepo; }
+    public LoginService(UserRepository userRepo, LoginRateLimiter rateLimiter) {
+        this.userRepo = userRepo;
+        this.rateLimiter = rateLimiter;
+    }
 
     public static class LoginResult {
         public final boolean success;
@@ -708,26 +740,29 @@ public class LoginService {
 
         try {
             if (PasswordUtils.matchPassword(password, user.getPassword())) {
-                user.setLoginAttempts(0);
                 user.setLastLoginTime(System.currentTimeMillis());
                 userRepo.save(user);
                 return LoginResult.ok(user);
-            } else {
-                int attempts = user.getLoginAttempts() + 1;
-                user.setLoginAttempts(attempts);
-                if (attempts > 5) {
-                    user.setLocked(true);
-                    user.setLockedTime(System.currentTimeMillis());
-                }
-                userRepo.save(user);
-                return LoginResult.fail("INVALID_PASSWORD", "Invalid username or password!");
             }
+
+            if (!rateLimiter.allow("login:" + username)) {
+                user.setLocked(true);
+                user.setLockedTime(System.currentTimeMillis());
+                userRepo.save(user);
+                return LoginResult.fail("USER_LOCKED",
+                    "Too many failed login attempts. Reset your password to regain access.");
+            }
+            return LoginResult.fail("INVALID_PASSWORD", "Invalid username or password!");
         } catch (Exception e) {
             return LoginResult.fail("INTERNAL_ERROR", e.getMessage());
         }
     }
 }
 ```
+
+For a production-ready `LoginRateLimiter`, see `RedisRateLimitService` in the
+ZenZMoney repo (`svcs/core/.../service/ratelimit/`) — an atomic Lua script over
+Redis, fail-closed, shared with the OTP throttle in §10.
 
 ---
 

@@ -7,6 +7,7 @@ import com.zenzmoney.core.web.dto.ChatMessageResponse;
 import com.zenzmoney.core.web.dto.ChatReplyResponse;
 import com.zenzmoney.core.web.dto.ChatRequest;
 import com.zenzmoney.core.web.dto.TransactionResponse;
+import com.zenzmoney.core.web.dto.UpdateChatDraftRequest;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
@@ -22,7 +23,9 @@ import java.util.Map;
 
 /**
  * Chat-based transaction entry (F-1.11). Two steps on purpose: posting a message
- * only ever returns a draft, and a separate confirm writes it to the ledger.
+ * only ever returns a draft, and a separate confirm writes it to the ledger. A
+ * reply that still needs something comes back with the question and the answers to
+ * offer for it; {@code /draft} takes the answer, whether it was tapped or edited.
  */
 @RestController
 @RequestMapping("/api/v1/chat")
@@ -39,6 +42,16 @@ public class ChatController {
     @PostMapping
     public ResponseEntity<ApiResponse<ChatReplyResponse>> send(@Valid @RequestBody ChatRequest request) {
         return ResponseEntity.ok(ApiResponse.success(chatService.handle(request)));
+    }
+
+    /**
+     * Answers a suggestion, or edits the draft in the preview. Still no ledger write:
+     * it returns the same draft, refined, and the next question if one remains.
+     */
+    @PostMapping("/draft")
+    public ResponseEntity<ApiResponse<ChatReplyResponse>> amendDraft(
+            @Valid @RequestBody UpdateChatDraftRequest request) {
+        return ResponseEntity.ok(ApiResponse.success(chatService.amendDraft(request)));
     }
 
     /** Commits a draft — the only path from chat to the ledger. */

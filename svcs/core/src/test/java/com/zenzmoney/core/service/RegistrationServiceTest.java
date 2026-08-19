@@ -1,5 +1,6 @@
 package com.zenzmoney.core.service;
 
+import com.zenzmoney.common.exception.BadRequestException;
 import com.zenzmoney.core.entity.User;
 import com.zenzmoney.core.repository.UserRepository;
 import com.zenzmoney.core.web.dto.RegisterRequest;
@@ -14,8 +15,10 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -39,7 +42,6 @@ class RegistrationServiceTest {
         RegisterRequest r = new RegisterRequest();
         r.setEmail("someone@example.com");
         r.setPassword("Passw0rd!");
-        r.setDisplayName("Someone");
         r.setLocale(locale);
         r.setTimezone(timezone);
         return r;
@@ -89,5 +91,17 @@ class RegistrationServiceTest {
         assertNull(u.getActiveCurrency());
         assertEquals("UTC", u.getTimezone());
         verify(emailSender).sendVerificationCode("someone@example.com", "123456");
+    }
+
+    /** Disposable-domain signups are refused before any account row is created. */
+    @Test
+    void register_withDisposableEmailDomain_isRejected() {
+        RegisterRequest r = req(null, null);
+        r.setEmail("someone@mailinator.com");
+
+        assertThrows(BadRequestException.class, () -> registrationService.register(r));
+
+        verify(userRepository, never()).save(any());
+        verify(emailSender, never()).sendVerificationCode(anyString(), anyString());
     }
 }

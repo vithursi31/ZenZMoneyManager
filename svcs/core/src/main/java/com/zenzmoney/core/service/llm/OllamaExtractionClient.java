@@ -65,7 +65,7 @@ public class OllamaExtractionClient implements LlmExtractionClient {
     }
 
     @Override
-    public LlmExtraction extract(String message, List<String> categoryNames) {
+    public LlmExtraction extract(String message, List<String> categoryNames, String pendingQuestion) {
         if (message == null || message.isBlank()) {
             return LlmExtraction.failed();
         }
@@ -74,7 +74,7 @@ public class OllamaExtractionClient implements LlmExtractionClient {
                     .uri(CHAT_PATH)
                     .contentType(MediaType.APPLICATION_JSON)
                     .accept(MediaType.APPLICATION_JSON)
-                    .bodyValue(buildRequestBody(message, categoryNames))
+                    .bodyValue(buildRequestBody(message, categoryNames, pendingQuestion))
                     .retrieve()
                     .bodyToMono(JsonNode.class)
                     .block();
@@ -93,7 +93,7 @@ public class OllamaExtractionClient implements LlmExtractionClient {
      * object rather than a sentence wrapped around one. A low temperature is what
      * makes the same message extract the same way twice.
      */
-    Map<String, Object> buildRequestBody(String message, List<String> categoryNames) {
+    Map<String, Object> buildRequestBody(String message, List<String> categoryNames, String pendingQuestion) {
         String bounded = message.length() > MAX_MESSAGE_CHARS
                 ? message.substring(0, MAX_MESSAGE_CHARS)
                 : message;
@@ -108,7 +108,7 @@ public class OllamaExtractionClient implements LlmExtractionClient {
         body.put("format", "json");
         body.put("options", options);
         body.put("messages", List.of(
-                Map.of("role", "system", "content", prompt.system(categoryNames)),
+                Map.of("role", "system", "content", prompt.system(categoryNames, pendingQuestion)),
                 Map.of("role", "user", "content", bounded)));
         return body;
     }

@@ -1,6 +1,7 @@
 package com.zenzmoney.core.service;
 
 import com.zenzmoney.common.domain.Role;
+import com.zenzmoney.common.domain.UserStatus;
 import com.zenzmoney.core.entity.User;
 import com.zenzmoney.core.logging.AppLog;
 import com.zenzmoney.core.repository.UserRepository;
@@ -91,7 +92,6 @@ public class OAuthLoginService {
             User u = existing.get();
             if (u.getFirstName() == null && firstName != null) u.setFirstName(firstName);
             if (u.getLastName()  == null && lastName  != null) u.setLastName(lastName);
-            u.setLoginAttempts(0);
             u.setLastLoginTime(System.currentTimeMillis());
             audit.info("OAuth login succeeded for {} via {} (user {}, existing account)",
                     email, authMode, u.getId());
@@ -106,7 +106,7 @@ public class OAuthLoginService {
         u.setEmail(email);
         u.setPasswordHash(passwordEncoder.encode(randomPassword));
         u.setAuthMode(authMode);
-        u.setStatus("active");
+        u.setStatus(UserStatus.ACTIVE);
         u.setEmailVerified(true);
         u.setSystemGeneratedPassword(true);
         u.setFirstName(firstName);

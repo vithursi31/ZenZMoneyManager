@@ -4,6 +4,8 @@ import com.zenzmoney.common.exception.BadRequestException;
 import com.zenzmoney.core.entity.Account;
 import com.zenzmoney.core.entity.User;
 import com.zenzmoney.core.repository.UserRepository;
+import com.zenzmoney.core.util.SupportedCurrencies;
+import com.zenzmoney.core.web.dto.CurrencyResponse;
 import com.zenzmoney.core.web.dto.OnboardingRequest;
 import com.zenzmoney.core.web.dto.OnboardingResponse;
 import org.slf4j.Logger;
@@ -13,7 +15,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.DateTimeException;
 import java.time.ZoneId;
+import java.util.Comparator;
 import java.util.Currency;
+import java.util.List;
 import java.util.Locale;
 
 /**
@@ -94,14 +98,34 @@ public class OnboardingService {
     }
 
     /**
-     * ISO-4217 or nothing. An unknown code would make every amount on the account
-     * unformattable and its minor-unit scale unknowable, so it fails at the seam
-     * rather than at display time.
+     * Every selectable currency: the JDK's registry (for display name and minor-unit
+     * scale) narrowed to {@link SupportedCurrencies}, the maintained allowlist that
+     * decides what's actually offered — editing that file, not this code, is how a
+     * currency gets added or removed from the picker.
+     */
+    public List<CurrencyResponse> listCurrencies() {
+        return Currency.getAvailableCurrencies().stream()
+                .filter(c -> SupportedCurrencies.contains(c.getCurrencyCode()))
+                .map(c -> new CurrencyResponse(c.getCurrencyCode(),
+                        c.getDisplayName(Locale.ENGLISH), c.getDefaultFractionDigits()))
+                .sorted(Comparator.comparing(CurrencyResponse::getCode))
+                .toList();
+    }
+
+    /**
+     * ISO-4217 and on the {@link SupportedCurrencies} allowlist, or nothing. A code
+     * the JDK still recognizes but the allowlist doesn't carry (e.g. a retired
+     * currency) is rejected the same way an unknown code is — accepting it here
+     * would be a backdoor around the picker in {@link #listCurrencies}.
      */
     private static String requireIsoCurrency(String raw) {
         String code = raw == null ? "" : raw.trim().toUpperCase(Locale.ROOT);
         try {
-            return Currency.getInstance(code).getCurrencyCode();
+            Currency currency = Currency.getInstance(code);
+            if (!SupportedCurrencies.contains(currency.getCurrencyCode())) {
+                throw new BadRequestException("Unknown currency code: " + raw);
+            }
+            return currency.getCurrencyCode();
         } catch (IllegalArgumentException e) {
             throw new BadRequestException("Unknown currency code: " + raw);
         }

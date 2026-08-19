@@ -32,13 +32,18 @@ class ExtractionPrompt {
     /** What the template's "set categoryGuess to null" rule keys off. */
     private static final String NO_CATEGORIES = "(none)";
 
+    /** Where the question the assistant just asked is substituted in. */
+    private static final String FOLLOW_UP_TOKEN = "{{followUp}}";
+
     private final String template;
 
     ExtractionPrompt(@Value("classpath:prompts/extraction-system.md") Resource promptFile) {
         this.template = read(promptFile);
-        if (!this.template.contains(CATEGORIES_TOKEN)) {
-            throw new IllegalStateException(
-                    promptFile.getDescription() + " is missing the " + CATEGORIES_TOKEN + " placeholder");
+        for (String token : List.of(CATEGORIES_TOKEN, FOLLOW_UP_TOKEN)) {
+            if (!this.template.contains(token)) {
+                throw new IllegalStateException(
+                        promptFile.getDescription() + " is missing the " + token + " placeholder");
+            }
         }
     }
 
@@ -47,8 +52,32 @@ class ExtractionPrompt {
      * The list is a closed set: the model copies a name from it or answers null, so
      * the resolver matches against real rows instead of invented labels.
      */
-    String system(List<String> categoryNames) {
-        return template.replace(CATEGORIES_TOKEN, categoryBlock(categoryNames));
+    String system(List<String> categoryNames, String pendingQuestion) {
+        return template
+                .replace(CATEGORIES_TOKEN, categoryBlock(categoryNames))
+                .replace(FOLLOW_UP_TOKEN, followUpBlock(pendingQuestion));
+    }
+
+    /**
+     * Tells the model the message it is about to read is an answer, not an opening.
+     * Without it a reply of "20" reads as nothing at all; the backend still owns the
+     * merge, so the worst a bad reading costs here is one more question.
+     */
+    private static String followUpBlock(String pendingQuestion) {
+        if (pendingQuestion == null || pendingQuestion.isBlank()) {
+            return "";
+        }
+        return """
+
+                ## Follow-up
+
+                You already asked the user: "%s"
+                Their message is most likely the answer to that question: read
+                whatever it gives you and leave every other field null, because the
+                rest is already known. But if it is plainly something else — a
+                question about their money, or a different transaction — classify it
+                for what it is instead."""
+                .formatted(pendingQuestion.trim());
     }
 
     private static String categoryBlock(List<String> categoryNames) {

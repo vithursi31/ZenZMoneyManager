@@ -38,14 +38,21 @@ public class TransactionController {
     }
 
     /**
-     * List the caller's transactions, optionally within a date range (epoch millis).
-     * There is no account filter — the caller has one account (§1.4).
+     * List the caller's transactions, newest first — optionally filtered by
+     * account, type, and/or a date range, in any combination. A user may hold
+     * more than one account (F-1.1); omit {@code accountId} to span all of them.
+     *
+     * @param startDate ISO {@code yyyy-MM-dd}, inclusive, in the caller's timezone
+     * @param endDate   ISO {@code yyyy-MM-dd}, inclusive, in the caller's timezone
      */
     @GetMapping
     public ResponseEntity<ApiResponse<List<TransactionResponse>>> list(
-            @RequestParam(name = "from", required = false) Long from,
-            @RequestParam(name = "to", required = false) Long to) {
-        return ResponseEntity.ok(ApiResponse.success(transactionService.list(from, to)));
+            @RequestParam(name = "accountId", required = false) String accountId,
+            @RequestParam(name = "type", required = false) String type,
+            @RequestParam(name = "startDate", required = false) String startDate,
+            @RequestParam(name = "endDate", required = false) String endDate) {
+        return ResponseEntity.ok(
+                ApiResponse.success(transactionService.list(accountId, type, startDate, endDate)));
     }
 
     @GetMapping("/{id}")

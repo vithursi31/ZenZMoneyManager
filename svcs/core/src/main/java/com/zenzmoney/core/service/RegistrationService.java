@@ -1,11 +1,13 @@
 package com.zenzmoney.core.service;
 
 import com.zenzmoney.common.domain.Role;
+import com.zenzmoney.common.domain.UserStatus;
 import com.zenzmoney.common.exception.BadRequestException;
 import com.zenzmoney.core.entity.User;
 import com.zenzmoney.core.entity.Verification.Purpose;
 import com.zenzmoney.core.logging.AppLog;
 import com.zenzmoney.core.repository.UserRepository;
+import com.zenzmoney.core.util.DisposableDomainValidator;
 import com.zenzmoney.core.util.EmailValidator;
 import com.zenzmoney.core.util.PasswordValidator;
 import com.zenzmoney.core.web.dto.AuthenticationResponse;
@@ -48,6 +50,9 @@ public class RegistrationService {
 
         EmailValidator.validate(email)
                 .ifPresent(m -> { throw new BadRequestException(m); });
+        if (DisposableDomainValidator.isDisposableDomain(email)) {
+            throw new BadRequestException("Disposable email addresses are not permitted");
+        }
         PasswordValidator.validate(req.getPassword())
                 .ifPresent(m -> { throw new BadRequestException(m); });
 
@@ -57,10 +62,9 @@ public class RegistrationService {
 
         User user = new User();
         user.setEmail(email);
-        user.setDisplayName(req.getDisplayName());
         user.setPasswordHash(passwordEncoder.encode(req.getPassword()));
         user.setAuthMode("password");
-        user.setStatus("pending");
+        user.setStatus(UserStatus.PENDING);
         user.setEmailVerified(false);
         user.setSystemGeneratedPassword(false);
         user.setRoles(Set.of(Role.USER));
@@ -104,7 +108,7 @@ public class RegistrationService {
 
         otpService.verify(email, code, Purpose.VERIFY_EMAIL);
 
-        user.setStatus("active");
+        user.setStatus(UserStatus.ACTIVE);
         user.setEmailVerified(true);
         userRepository.save(user);
 

@@ -1,15 +1,21 @@
 package com.zenzmoney.core.service;
 
+import com.zenzmoney.common.domain.UserStatus;
+import com.zenzmoney.common.exception.TooManyRequestsException;
 import com.zenzmoney.common.exception.UnauthorizedException;
 import com.zenzmoney.core.entity.User;
 import com.zenzmoney.core.logging.AppLog;
 import com.zenzmoney.core.repository.UserRepository;
+import com.zenzmoney.core.service.ratelimit.RateLimitPolicy;
+import com.zenzmoney.core.service.ratelimit.RateLimitResult;
+import com.zenzmoney.core.service.ratelimit.RedisRateLimitService;
 import com.zenzmoney.core.web.dto.AuthenticationResponse;
 import org.slf4j.Logger;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.util.Optional;
 
 @Service
@@ -22,18 +28,32 @@ public class LoginService {
      */
     private static final Logger audit = AppLog.AUDIT;
 
-    private static final int MAX_ATTEMPTS = 5;
+    private static final String RATE_LIMIT_CODE = "E1053";
+
+    /**
+     * Per-account throttle on wrong-password attempts — mirrors {@code OtpService.OTP_POLICY}:
+     * fail-closed, both windows checked atomically. A denial also hard-locks the account
+     * (same consequence a rapid brute-force always had), so the short window catches a fast
+     * attacker at roughly the same attempt count as before, and the daily window catches a
+     * slow, spaced-out one that would otherwise dodge it.
+     */
+    private static final RateLimitPolicy LOGIN_POLICY = RateLimitPolicy
+            .of(5, Duration.ofMinutes(15))
+            .and(10, Duration.ofDays(1));
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenService jwtTokenService;
+    private final RedisRateLimitService rateLimitService;
 
     public LoginService(UserRepository userRepository,
                         PasswordEncoder passwordEncoder,
-                        JwtTokenService jwtTokenService) {
+                        JwtTokenService jwtTokenService,
+                        RedisRateLimitService rateLimitService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtTokenService = jwtTokenService;
+        this.rateLimitService = rateLimitService;
     }
 
     @Transactional
@@ -65,14 +85,13 @@ public class LoginService {
                     "This account was created using " + provider + " login. Please use 'Login with " + provider + "'.");
         }
 
-        if (!"active".equals(user.getStatus())) {
+        if (user.getStatus() != UserStatus.ACTIVE) {
             audit.info("Login denied for {} — account status {}", email, user.getStatus());
             throw new UnauthorizedException("USER_NOT_ACTIVE",
                     "Account is not active. Please verify your email.");
         }
 
         if (passwordEncoder.matches(password, user.getPasswordHash())) {
-            user.setLoginAttempts(0);
             user.setLastLoginTime(System.currentTimeMillis());
             userRepository.save(user);
             audit.info("Login succeeded for {} (user {})", email, user.getId());
@@ -81,16 +100,18 @@ public class LoginService {
                     jwtTokenService.generateRefreshToken(user.getEmail()));
         }
 
-        int attempts = user.getLoginAttempts() + 1;
-        user.setLoginAttempts(attempts);
-        if (attempts > MAX_ATTEMPTS) {
+        RateLimitResult rl = rateLimitService.tryConsumeOrDeny("login:" + email, LOGIN_POLICY);
+        if (!rl.allowed()) {
             user.setLocked(true);
-            audit.warn("Account {} locked after {} failed login attempts", email, attempts);
-        } else {
-            audit.info("Login denied for {} — wrong password (attempt {} of {})",
-                    email, attempts, MAX_ATTEMPTS);
+            userRepository.save(user);
+            audit.warn("Account {} locked — wrong-password attempts exceeded the rate limit, retry after {}s",
+                    email, rl.retryAfterSeconds());
+            throw new TooManyRequestsException(RATE_LIMIT_CODE,
+                    "Too many failed login attempts. Your account has been locked; reset your password to regain access.",
+                    rl.retryAfterSeconds());
         }
-        userRepository.save(user);
+
+        audit.info("Login denied for {} — wrong password", email);
         throw new UnauthorizedException("INVALID_PASSWORD", "Invalid email or password");
     }
 }

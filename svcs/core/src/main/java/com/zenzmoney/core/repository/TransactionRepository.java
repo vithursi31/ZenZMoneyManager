@@ -63,4 +63,23 @@ public interface TransactionRepository
     long sumExpenseInWindow(@Param("userId") String userId,
                             @Param("from") long from,
                             @Param("to") long to);
+
+    /**
+     * Σ EXPENSE per category in the window, biggest first — the breakdown behind
+     * "where does my money go?" (F-1.16).
+     *
+     * <p>Aggregated in the database rather than by summing rows in Java: the answer
+     * is a handful of numbers, and a user with a busy month should not have their
+     * whole ledger loaded into memory to produce them.
+     */
+    @Query("SELECT new com.zenzmoney.core.repository.CategoryTotal(t.categoryId, SUM(t.amount)) "
+            + "FROM Transaction t "
+            + "WHERE t.userId = :userId "
+            + "AND t.type = com.zenzmoney.common.domain.TransactionType.EXPENSE "
+            + "AND t.txnDate >= :from AND t.txnDate < :to "
+            + "GROUP BY t.categoryId "
+            + "ORDER BY SUM(t.amount) DESC")
+    List<CategoryTotal> sumExpenseByCategoryInWindowGrouped(@Param("userId") String userId,
+                                                            @Param("from") long from,
+                                                            @Param("to") long to);
 }

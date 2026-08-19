@@ -1,5 +1,6 @@
 package com.zenzmoney.core.service;
 
+import com.zenzmoney.common.domain.UserStatus;
 import com.zenzmoney.common.exception.UnauthorizedException;
 import com.zenzmoney.core.entity.User;
 import com.zenzmoney.core.repository.UserRepository;
@@ -59,8 +60,8 @@ public class JwtTokenService {
     }
 
     /**
-     * Parses + verifies signature/expiry. For access and refresh tokens,
-     * also rejects if the user no longer exists or the account is expired.
+     * Parses + verifies signature/expiry. For access and refresh tokens, also
+     * rejects if the user no longer exists or the account isn't active.
      */
     public Claims extractClaims(String token) {
         Claims claims;
@@ -88,8 +89,8 @@ public class JwtTokenService {
             if (u.isEmpty()) {
                 throw new UnauthorizedException("INVALID_TOKEN", "Account does not exist");
             }
-            if ("expired".equals(u.get().getStatus())) {
-                throw new UnauthorizedException("INVALID_TOKEN", "Account expired");
+            if (u.get().getStatus() != UserStatus.ACTIVE) {
+                throw new UnauthorizedException("INVALID_TOKEN", "Account is not active");
             }
         }
 

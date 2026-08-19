@@ -10,10 +10,6 @@ import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.Setter;
 
-/**
- * A hierarchical label used to classify transactions. Owned by one user.
- * Hierarchy is one level deep and parent/child share a kind (§1.5).
- */
 @Getter
 @Setter
 @Entity
@@ -30,7 +26,6 @@ public class Category extends BaseEntity {
     @Column(nullable = false, length = 50)
     private CategoryKind kind;
 
-    /** Self-reference for a sub-category; null for a top-level category. */
     @Column(name = "parent_id", length = 36)
     private String parentId;
 

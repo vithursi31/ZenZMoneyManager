@@ -16,20 +16,23 @@ feature with an ID, and the domain docs specify *how* each is modeled.
 
 ## Phase 1 — MVP: complete single-user finance tracker
 
-A single user manages their money in **one account**, **one currency**, and one
-language, on a **monthly cycle**: see this month's position (income − expenses),
+A single user manages their money across **one or more accounts**, in **one
+currency**, and one language, on a **monthly cycle**: see this month's position (income − expenses),
 record income and expenses, budget, handle everything recurring including
 subscriptions, capture transactions by typing / speaking / scanning, get insight,
 and keep it behind an app lock.
 
 **Ships:** F-1.1 – F-1.28 (see [features-list.md](features-list.md)).
 
-- **Account & position** — one auto-created account with no balance; the monthly
-  position derived per calendar month.
+- **Account & position** — one auto-created account with no balance, and (since
+  2026-08-18) the ability to add, rename, list, and soft-delete more; the monthly
+  position is derived per calendar month across all of them.
 - **Transactions** — first-class income & expense, edit/delete, notes, categories,
-  payees, search & filter.
-- **Planning** — budgets (weekly/monthly/yearly, optional rollover); recurring
-  income, expenses **and subscriptions** with renewal and trial-end dates.
+  payees, search & filter. Still land in one implicit account server-side —
+  choosing an account per transaction isn't built yet.
+- **Planning** — budgets, linked to a specific account (monthly/yearly, optional
+  rollover); recurring income, expenses **and subscriptions** with renewal and
+  trial-end dates.
 - **Fast entry & AI** — chat/NLP entry, **voice entry**, OCR receipt scanning,
   auto-category suggestions, insights, financial-assistant queries.
 - **Dashboard & reports** — monthly summary, spending analysis (trends, top
@@ -46,8 +49,9 @@ and keep it behind an app lock.
 `V3__chat_ingestion.sql` (chat). Still to write: `app_user` security columns,
 `ai_insight`, and `user_device` (FCM tokens for F-1.20).
 
-**Deferred from the MVP:** multiple accounts & transfers, multi-currency / FX,
-savings goals, debt, monetization, any sharing.
+**Deferred from the MVP:** per-transaction account selection & transfers (account
+CRUD itself shipped 2026-08-18, ahead of schedule), multi-currency / FX, savings
+goals, debt, monetization, any sharing.
 
 **Ordering note.** Everything in the "fast entry & AI" group depends on the ledger
 and on categories/payees being right first — F-1.1 → F-1.9 before F-1.11 → F-1.16.
@@ -84,8 +88,9 @@ F-1.28 is blocked on a product decision (OQ-5/OQ-6), not on code.
 
 This phase breaks the MVP's "one `user_id` owns every row" rule, introducing the
 `space_id` ownership boundary and membership-based access — deliberately additive;
-the personal ledger tables are unchanged. A shared space also needs more than one
-account per person, so it shares groundwork with F-F.1.
+the personal ledger tables are unchanged. A shared space also needs transactions
+assignable to a specific account, which is the remaining, unbuilt slice of F-F.1
+(account CRUD itself is done — see below).
 
 **Schema:** loans, `family`, `family_member`, `shared_group` and friends, plus
 `space_id` columns on owned tables.
@@ -94,16 +99,18 @@ account per person, so it shares groundwork with F-F.1.
 
 ## Future — not scheduled
 
-Tracked in [features-list.md](features-list.md#future-considerations): multiple
-accounts & transfers (F-F.1), multi-currency & FX (F-F.2), receipt line-item
-splitting (F-F.3), bank sync (F-F.4), quick add & widgets (F-F.5), and debt payoff
-strategies (F-F.6).
+Tracked in [features-list.md](features-list.md#future-considerations): the
+remaining slice of multiple accounts & transfers (F-F.1), multi-currency & FX
+(F-F.2), receipt line-item splitting (F-F.3), bank sync (F-F.4), quick add &
+widgets (F-F.5), and debt payoff strategies (F-F.6).
 
-**F-F.1 is the heavy one.** The MVP's single-account, no-balance model is baked
-into the ledger, the position calculation, and every write path. Reintroducing
-multiple accounts means account CRUD, an account on every transaction, transfers
-as a third transaction type, and per-account figures — plan it as a phase, not a
-ticket.
+**F-F.1's account-CRUD slice shipped 2026-08-18**, ahead of schedule — create,
+rename, list-active, and soft-delete now exist, and `Budget` links to a specific
+account. **What's left is still the heavy part**: the ledger write path
+(`Transaction`, `RecurringTransaction`) still resolves one implicit account per
+user, baked in since the BRD v1.0 collapse. Letting a client choose an account
+per transaction, adding transfers as a third transaction type, and per-account
+figures are still a phase, not a ticket.
 
 ---
 

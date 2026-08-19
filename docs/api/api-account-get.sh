@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# GET /api/v1/accounts/{id} — one account, scoped to the caller (404 if not owned).
-# Pass the id as arg 1 or set ACCOUNT_ID.
+# GET /api/v1/account/{id} — one of the caller's own accounts (404 if not
+# owned). Pass the id as arg 1 or set ACCOUNT_ID.
 source define-envars.sh;
 
 ACCOUNT_ID="${1:-${ACCOUNT_ID:-}}"
@@ -10,4 +10,4 @@ if [ -z "$ACCOUNT_ID" ]; then
 fi
 
 curl -kv -H "Authorization:Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" \
-  -X GET "$HOST/api/v1/accounts/$ACCOUNT_ID"
+  -X GET "$HOST/api/v1/account/$ACCOUNT_ID"
