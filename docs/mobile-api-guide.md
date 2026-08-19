@@ -27,7 +27,7 @@ depend on, and the transaction ledger the app is built around. In call order:
 
 Other endpoints (categories, budgets, goals, recurring, chat) exist but are out of scope for this document.
 A transaction needs a `categoryId`, which comes from the category API — see the executable
-[`docs/api/api-category-*.sh`](.) scripts until that section is written here.
+[`docs/api/api-category-*.sh`](api) scripts until that section is written here.
 
 ## Base URL
 
