@@ -49,9 +49,9 @@ class SpendingSnapshotServiceTest {
     void buildsTheMonthInProgressAndTheOneBeforeIt() {
         when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
                 category("c-food", "Food & Drinks"), category("c-fuel", "Fuel")));
-        when(transactionRepository.sumAmountByTypeInWindow(anyString(), eq(TransactionType.INCOME), anyLong(), anyLong()))
+        when(transactionRepository.sumAmountByTypeInWindow(anyString(), eq(TransactionType.INCOME), anyLong(), anyLong(), any()))
                 .thenReturn(300_000L);
-        when(transactionRepository.sumAmountByTypeInWindow(anyString(), eq(TransactionType.EXPENSE), anyLong(), anyLong()))
+        when(transactionRepository.sumAmountByTypeInWindow(anyString(), eq(TransactionType.EXPENSE), anyLong(), anyLong(), any()))
                 .thenReturn(120_000L);
         when(transactionRepository.sumExpenseByCategoryInWindowGrouped(anyString(), anyLong(), anyLong()))
                 .thenReturn(List.of(new CategoryTotal("c-food", 80_000L), new CategoryTotal("c-fuel", 40_000L)));
@@ -143,7 +143,7 @@ class SpendingSnapshotServiceTest {
     @Test
     void isNotEmptyOnceThereIsIncomeEvenWithNoSpendYet() {
         when(categoryRepository.findByUserId("u1")).thenReturn(List.of());
-        when(transactionRepository.sumAmountByTypeInWindow(anyString(), eq(TransactionType.INCOME), anyLong(), anyLong()))
+        when(transactionRepository.sumAmountByTypeInWindow(anyString(), eq(TransactionType.INCOME), anyLong(), anyLong(), any()))
                 .thenReturn(500_000L);
 
         assertFalse(service.snapshotFor(user("USD", "UTC")).isEmpty());

@@ -34,8 +34,12 @@ public class MonthlySummaryResponse {
 
     private final String currency;
 
+    /** The account the figures were narrowed to, or null when they span every account. */
+    private final String accountId;
+
     public MonthlySummaryResponse(String month, String timezone, long from, long to,
-                                  long income, long expenses, long position, String currency) {
+                                  long income, long expenses, long position, String currency,
+                                  String accountId) {
         this.month = month;
         this.timezone = timezone;
         this.from = from;
@@ -44,5 +48,6 @@ public class MonthlySummaryResponse {
         this.expenses = expenses;
         this.position = position;
         this.currency = currency;
+        this.accountId = accountId;
     }
 }

@@ -73,8 +73,9 @@ public class SpendingSnapshotService {
         long from = TimeUtils.startOfMonth(month, zone);
         long to = TimeUtils.startOfMonth(month.plusMonths(1), zone);
 
-        long income = transactionRepository.sumAmountByTypeInWindow(userId, TransactionType.INCOME, from, to);
-        long expenses = transactionRepository.sumAmountByTypeInWindow(userId, TransactionType.EXPENSE, from, to);
+        // null account: an insight snapshot is about the user, not one of their accounts.
+        long income = transactionRepository.sumAmountByTypeInWindow(userId, TransactionType.INCOME, from, to, null);
+        long expenses = transactionRepository.sumAmountByTypeInWindow(userId, TransactionType.EXPENSE, from, to, null);
 
         List<SpendingSnapshot.CategorySpend> categories =
                 transactionRepository.sumExpenseByCategoryInWindowGrouped(userId, from, to).stream()

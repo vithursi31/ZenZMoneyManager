@@ -1,7 +1,7 @@
-# Mobile API Guide — Onboarding & Account
+# Mobile API Guide — Onboarding, Account & Transactions
 
-Scope: the sign-up-to-first-screen flow, plus the account endpoints those screens
-depend on. In call order:
+Scope: the sign-up-to-first-screen flow, the account endpoints those screens
+depend on, and the transaction ledger the app is built around. In call order:
 
 1. [Register](#1-register)
 2. [Verify email](#2-verify-email)
@@ -17,8 +17,16 @@ depend on. In call order:
 12. [Create account](#12-create-account)
 13. [Rename account](#13-rename-account)
 14. [Delete account](#14-delete-account)
+15. [Create transaction](#15-create-transaction)
+16. [List transactions](#16-list-transactions)
+17. [Get one transaction](#17-get-one-transaction)
+18. [Update transaction](#18-update-transaction)
+19. [Delete transaction](#19-delete-transaction)
+20. [Monthly summary](#20-monthly-summary)
 
-Other endpoints (categories, transactions, budgets, goals, recurring, chat) exist but are out of scope for this document.
+Other endpoints (categories, budgets, goals, recurring, chat) exist but are out of scope for this document.
+A transaction needs a `categoryId`, which comes from the category API — see the executable
+[`docs/api/api-category-*.sh`](.) scripts until that section is written here.
 
 ## Base URL
 
@@ -583,6 +591,309 @@ account, so this is refused on the last one.
 
 ---
 
+## Transactions — what the app must know first
+
+Three rules shape every call below. Getting one wrong produces numbers that look
+plausible and are silently wrong, so they are worth reading once.
+
+**1. Money is minor units, always.** `amount` is a whole number of the currency's
+smallest unit — `1050` with `USD` is $10.50. Never send a decimal. Convert with the
+`fractionDigits` from [Get Available Currencies](#7-get-available-currencies):
+
+```
+amount        = round(displayValue * 10^fractionDigits)     // 10.50 USD → 1050
+displayValue  = amount / 10^fractionDigits                  // 1050     → 10.50
+```
+
+`fractionDigits` is **not** always 2 — JPY is 0, BHD is 3. Hard-coding `* 100` breaks
+those currencies.
+
+**2. `amount` is always positive.** Direction comes from `type`, never from the sign.
+An expense of $10.50 is `{"type": "EXPENSE", "amount": 1050}` — not `-1050`. A negative
+or zero amount is rejected.
+
+**3. The app does not choose the account or the currency.** Neither is accepted in a
+request body. The server stamps the transaction with the caller's active currency and
+resolves it to their primary account ([§9](#9-get-primary-account)) — so there is
+currently **no way to post a transaction to a specific account**, even though a user
+may hold several. Both come back on the response.
+
+There is no stored balance anywhere. The figure for a month is summed from these rows
+on read — see [Monthly summary](#20-monthly-summary).
+
+### The transaction object
+
+Every endpoint in this section returns this shape:
+
+```json
+{
+  "id": "7c4a1b90-...-uuid",
+  "accountId": "9b1e2c44-...-uuid",
+  "type": "EXPENSE",
+  "categoryId": "c31d0a77-...-uuid",
+  "amount": 1050,
+  "currency": "USD",
+  "txnDate": 1755500000000,
+  "payeeId": "p88f2e10-...-uuid",
+  "note": "burger",
+  "tags": ["lunch"],
+  "recurringId": null
+}
+```
+
+| Field | Notes |
+|---|---|
+| `type` | `INCOME` or `EXPENSE`. |
+| `amount` | Minor units, always positive. |
+| `currency` | ISO-4217, stamped server-side from the user's active currency. |
+| `txnDate` | Epoch milliseconds. |
+| `payeeId` | `null` unless a `payeeName` was sent; the server resolves the name to a payee, creating it on first use. |
+| `recurringId` | Non-null means this row was generated automatically from a recurring template, not entered by hand — useful for badging it in the list. |
+
+---
+
+## 15. Create Transaction
+
+```
+POST /api/v1/transactions
+```
+**Auth:** required (`Bearer <accessToken>`)
+
+### Request body
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `type` | string | yes | `INCOME` or `EXPENSE`. |
+| `categoryId` | string | yes | Must be one of the caller's own categories, and its kind must match `type` — an `INCOME` transaction needs an income category. |
+| `amount` | number | yes | Minor units, **positive**. |
+| `txnDate` | number | no | Epoch millis. Defaults to now when omitted, null, or `0`. |
+| `payeeName` | string | no | Max 300 chars. Free text — the merchant or payer. Resolved to a payee server-side; you get a `payeeId` back. |
+| `note` | string | no | Max 500 chars. |
+| `tags` | string[] | no | Defaults to `[]`. |
+
+```json
+{
+  "type": "EXPENSE",
+  "categoryId": "c31d0a77-...-uuid",
+  "amount": 1050,
+  "txnDate": 1755500000000,
+  "payeeName": "Corner Cafe",
+  "note": "burger",
+  "tags": ["lunch"]
+}
+```
+
+### Response `data`
+
+The created [transaction object](#the-transaction-object).
+
+### Errors
+
+- `400 E1015` — `type` missing, `categoryId` blank, `amount` not positive, or `note`/`payeeName` over length.
+- `400 E1013` — the category's kind doesn't match `type` (e.g. an expense category on an `INCOME` transaction).
+- `404 E1010` — no category with that id owned by the caller.
+- `401` — missing/invalid access token.
+
+---
+
+## 16. List Transactions
+
+```
+GET /api/v1/transactions
+```
+**Auth:** required (`Bearer <accessToken>`)
+
+Returns the caller's transactions, **newest first**. All four filters are optional and
+combine freely; sending none returns everything.
+
+### Query parameters
+
+| Param | Type | Notes |
+|---|---|---|
+| `accountId` | string | Restrict to one account. Omit to span all of the caller's accounts. |
+| `type` | string | `INCOME` or `EXPENSE`. Case-insensitive. |
+| `startDate` | string | `yyyy-MM-dd`, **inclusive**. |
+| `endDate` | string | `yyyy-MM-dd`, **inclusive**. |
+
+```
+GET /api/v1/transactions?startDate=2026-08-01&endDate=2026-08-31&type=EXPENSE
+```
+
+> **Send plain calendar dates — do not convert to epoch millis.** The server resolves
+> them in the user's own timezone ([§8](#8-complete-onboarding)) and does the boundary
+> arithmetic itself. Both ends are inclusive, so `endDate=2026-08-31` covers that whole
+> day through 23:59:59.999 local. This is deliberate: it is the same boundary rule the
+> monthly summary uses, so a transaction at midnight can never be counted by the list
+> and the summary differently. A client computing its own instants would reintroduce
+> exactly that mismatch.
+
+For a calendar-month view, send that month's first and last day. There is no `month`
+shorthand — the date range covers it.
+
+### Response `data`
+
+A JSON array of [transaction objects](#the-transaction-object), newest first.
+
+```json
+[
+  { "id": "7c4a1b90-...", "type": "EXPENSE", "amount": 1050, "txnDate": 1755500000000, "...": "..." },
+  { "id": "2f9d3e11-...", "type": "INCOME",  "amount": 500000, "txnDate": 1755400000000, "...": "..." }
+]
+```
+
+> **No pagination yet.** The whole filtered result comes back in one array — there is no
+> `page`/`size` and no total count. Filter by date range rather than fetching everything
+> and paging client-side; a user with a long history will otherwise transfer the lot on
+> every call. Pagination will change this response into a page envelope when it lands.
+
+### Errors
+
+- `400 E1013` — unknown `type`, a date not in `yyyy-MM-dd` form, or `startDate` after `endDate`.
+- `401` — missing/invalid access token.
+
+An `accountId` that belongs to someone else is not an error — it simply matches nothing,
+because the query is scoped to the caller first.
+
+---
+
+## 17. Get One Transaction
+
+```
+GET /api/v1/transactions/{id}
+```
+**Auth:** required (`Bearer <accessToken>`)
+
+### Response `data`
+
+One [transaction object](#the-transaction-object).
+
+### Errors
+
+- `404 E1010` — no transaction with that id owned by the caller.
+- `401` — missing/invalid access token.
+
+---
+
+## 18. Update Transaction
+
+```
+PUT /api/v1/transactions/{id}
+```
+**Auth:** required (`Bearer <accessToken>`)
+
+### Request body
+
+Identical to [Create Transaction](#15-create-transaction).
+
+> **This is a full replacement, not a patch.** Every field is re-specified on every
+> edit: omitting `note`, `payeeName`, or `tags` **clears** them rather than leaving
+> them alone. Send the whole object back, populated from what you fetched.
+
+Moving `txnDate` across a month boundary is allowed and simply re-slices which month
+the row counts in — nothing needs recomputing, but two months' totals change, so
+refresh the summary after an edit that moves a date.
+
+### Response `data`
+
+The updated [transaction object](#the-transaction-object).
+
+### Errors
+
+Same as [Create Transaction](#15-create-transaction), plus:
+
+- `404 E1010` — no transaction with that id owned by the caller.
+
+---
+
+## 19. Delete Transaction
+
+```
+DELETE /api/v1/transactions/{id}
+```
+**Auth:** required (`Bearer <accessToken>`)
+
+> **A hard delete** — unlike accounts ([§14](#14-delete-account)), the row is removed
+> outright. There is no undo and no `DELETED` status to restore from, so confirm in
+> the UI before calling.
+
+### Response `data`
+
+```json
+{ "message": "Transaction deleted" }
+```
+
+### Errors
+
+- `404 E1010` — no transaction with that id owned by the caller.
+- `401` — missing/invalid access token.
+
+---
+
+## 20. Monthly Summary
+
+```
+GET /api/v1/summary/monthly
+```
+**Auth:** required (`Bearer <accessToken>`)
+
+The home screen's figures: total income, total expenses, and the position for one
+calendar month. Nothing is stored or cached — both totals are summed from the
+transaction rows on every call, which is why they can never disagree with the list
+below them.
+
+### Query parameters
+
+| Param | Type | Notes |
+|---|---|---|
+| `month` | string | ISO `yyyy-MM`. Omit for the caller's **current** month, resolved in their timezone. |
+| `accountId` | string | Restrict to one account. Omit to span every account the caller holds. |
+
+```
+GET /api/v1/summary/monthly?month=2026-08&accountId=9b1e2c44-...
+```
+
+### Response `data`
+
+```json
+{
+  "month": "2026-08",
+  "timezone": "Asia/Colombo",
+  "from": 1754006400000,
+  "to": 1756684800000,
+  "income": 500000,
+  "expenses": 132050,
+  "position": 367950,
+  "currency": "LKR",
+  "accountId": null
+}
+```
+
+| Field | Notes |
+|---|---|
+| `income` / `expenses` | Minor units. Both are positive totals. |
+| `position` | `income − expenses`. **Legitimately negative** in a month that ran at a deficit — render a deficit state rather than clamping at zero. It is this month alone: nothing is carried in from last month or forward into next. |
+| `from` / `to` | The exact window summed, epoch millis, `from` inclusive and `to` exclusive. |
+| `timezone` | The zone the month boundaries were resolved in — the user's, falling back to `UTC`. |
+| `accountId` | Echoes the filter; `null` means the figures span every account. |
+
+> **Keep this and the transaction list in step.** If the home screen has an account
+> picker, pass the same `accountId` to both — otherwise a filtered feed sits under an
+> unfiltered total. To list the rows behind these figures, call
+> [List transactions](#16-list-transactions) with that month's first and last day as
+> `startDate`/`endDate`; both endpoints resolve month boundaries the same way, so the
+> rows always add up to the totals.
+
+An empty month returns zeros, not `null` and not an error — a user with no transactions
+yet gets `0` across the board, which is the correct figure to render.
+
+### Errors
+
+- `400 E1013` — `month` isn't in `yyyy-MM` form.
+- `404 E1010` — no account with that `accountId` owned by the caller. *(Deliberately not a zeroed summary: `0.00` would be a wrong answer rendered as a fact.)*
+- `401` — missing/invalid access token.
+
+---
+
 ## Suggested client flow
 
 ```
@@ -610,3 +921,8 @@ register → (email OTP) → verify-email → [store tokens]
 called any time after login — not part of the first-run sequence above.
 Adding, renaming, or deleting further accounts (§§10–14) is also a
 settings-time action, not part of first run.
+
+Once the home screen is up, the ledger (§§15–19) is the app's steady state: list the
+current month's transactions for the feed, and `GET /api/v1/summary/monthly` for the
+figure at the top of it. Both read the same rows, so they agree by construction —
+refresh them together after any write.

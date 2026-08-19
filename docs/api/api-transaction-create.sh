@@ -1,35 +1,43 @@
 #!/usr/bin/env bash
-# POST /api/v1/transactions — record a transaction (USER/ADMIN). Balances re-derive.
-#   type   : INCOME | EXPENSE | TRANSFER
-#   amount : integer MINOR units (2000 = $20.00), always positive
-#   INCOME/EXPENSE  -> categoryId required (kind must match type), no transferAccountId
-#   TRANSFER        -> transferAccountId required (≠ accountId), no categoryId
-#   payeeName       -> optional; resolved to a Payee row (deduped)
-#   txnDate         -> optional epoch millis; defaults to now
-# currency is taken from the account (single active currency) — not sent here.
+# POST /api/v1/transactions — record a transaction (USER/ADMIN).
+#   type       : INCOME | EXPENSE   (no TRANSFER — see the note below)
+#   categoryId : required; its kind must match type (INCOME→INCOME, EXPENSE→EXPENSE)
+#   amount     : integer MINOR units (2000 = $20.00), always POSITIVE —
+#                direction comes from type, never from the sign
+#   txnDate    : optional epoch millis; defaults to now
+#   payeeName  : optional, max 300; resolved to a Payee row (deduped, created on first use)
+#   note       : optional, max 500
+#   tags       : optional array of strings
+#
+# Neither accountId nor currency is sent. The server stamps the caller's active
+# currency and resolves the row to their primary account (the oldest ACTIVE one);
+# an accountId in the body is ignored. There is no TRANSFER type and no stored
+# balance — the monthly figure is summed from these rows by
+# GET /api/v1/summary/monthly.
 source define-envars.sh;
 
-# --- EXPENSE example ---
+# --- INCOME example ---
 curl -kv -H "Authorization:Bearer $ACCESS_TOKEN" \
   -X POST "$HOST/api/v1/transactions" \
   -H "Content-Type: application/json" \
   -d '{
     "type": "INCOME",
-    "accountId": "2089780641691471872",
-    "categoryId": "2089780641733414912",
-    "amount": 5000,
-    "payeeName": "",
+    "categoryId": "<income-category-id>",
+    "amount": 500000,
+    "payeeName": "Acme Ltd",
     "note": "Salary",
     "tags": ["salary"]
   }'
 
-# --- TRANSFER example (uncomment) ---
+# --- EXPENSE example (uncomment) ---
 # curl -kv -H "Authorization:Bearer $ACCESS_TOKEN" \
 #   -X POST "$HOST/api/v1/transactions" \
 #   -H "Content-Type: application/json" \
 #   -d '{
-#     "type": "TRANSFER",
-#     "accountId": "<bank-account-id>",
-#     "transferAccountId": "<cash-account-id>",
-#     "amount": 50000
+#     "type": "EXPENSE",
+#     "categoryId": "<expense-category-id>",
+#     "amount": 1050,
+#     "payeeName": "Corner Cafe",
+#     "note": "burger",
+#     "tags": ["lunch"]
 #   }'

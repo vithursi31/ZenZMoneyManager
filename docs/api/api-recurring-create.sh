@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # POST /api/v1/recurring — create a recurring template (USER/ADMIN). A scheduler
 # generates real transactions from it on each due date (with catch-up for downtime).
-#   type        : INCOME | EXPENSE | TRANSFER  (same field rules as a transaction)
+#   type        : INCOME | EXPENSE  (same field rules as a transaction; no TRANSFER)
 #   amount      : integer MINOR units, positive
 #   cadence     : DAILY | WEEKLY | MONTHLY | YEARLY
 #   nextRunDate : epoch millis of the FIRST run; its day-of-month anchors MONTHLY/

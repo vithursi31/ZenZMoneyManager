@@ -145,6 +145,20 @@
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables>
+                        <!--
+                          Testcontainers' docker-java defaults to Docker API 1.32, which daemons
+                          from Docker 25 on refuse (they require 1.40+). Pinning 1.41 satisfies
+                          them and is still supported back to Docker 20.10.
+                        -->
+                        <api.version>1.41</api.version>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <configuration>
                     <annotationProcessorPaths>

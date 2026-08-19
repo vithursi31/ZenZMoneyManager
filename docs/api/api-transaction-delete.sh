@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# DELETE /api/v1/transactions/{id} — delete a transaction (USER/ADMIN). Affected
-# account balance(s) re-derive from the remaining ledger. Pass the id as arg 1 or
+# DELETE /api/v1/transactions/{id} — delete a transaction (USER/ADMIN). A HARD
+# delete: the row is removed outright, with no soft-delete status to restore from
+# (unlike an account). The month's position simply no longer includes it, since
+# the figure is summed from the remaining rows on read. Pass the id as arg 1 or
 # set TXN_ID.
 source define-envars.sh;
 

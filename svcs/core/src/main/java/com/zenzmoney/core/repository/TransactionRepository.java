@@ -36,14 +36,20 @@ public interface TransactionRepository
      * Σ amount for one type in the half-open window {@code [from, to)} — the two
      * queries behind the monthly position (F-1.2) and the dashboard (F-1.17).
      * Served by {@code idx_transaction_user_date}.
+     *
+     * <p>A null {@code accountId} spans every account the user holds, which is the
+     * monthly position as §1.10 defines it; a non-null one narrows to that account
+     * for the home screen's account picker.
      */
     @Query("SELECT COALESCE(SUM(t.amount), 0) FROM Transaction t "
             + "WHERE t.userId = :userId AND t.type = :type "
-            + "AND t.txnDate >= :from AND t.txnDate < :to")
+            + "AND t.txnDate >= :from AND t.txnDate < :to "
+            + "AND (:accountId IS NULL OR t.accountId = :accountId)")
     long sumAmountByTypeInWindow(@Param("userId") String userId,
                                  @Param("type") TransactionType type,
                                  @Param("from") long from,
-                                 @Param("to") long to);
+                                 @Param("to") long to,
+                                 @Param("accountId") String accountId);
 
     /** Σ EXPENSE for one category in the window (a category budget). */
     @Query("SELECT COALESCE(SUM(t.amount), 0) FROM Transaction t "

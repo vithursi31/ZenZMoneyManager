@@ -3,7 +3,9 @@ package com.zenzmoney.core.service;
 import com.zenzmoney.common.domain.TimeUtils;
 import com.zenzmoney.common.domain.TransactionType;
 import com.zenzmoney.common.exception.BadRequestException;
+import com.zenzmoney.common.exception.NotFoundException;
 import com.zenzmoney.core.entity.User;
+import com.zenzmoney.core.repository.AccountRepository;
 import com.zenzmoney.core.repository.TransactionRepository;
 import com.zenzmoney.core.web.dto.MonthlySummaryResponse;
 import org.springframework.stereotype.Service;
@@ -25,11 +27,14 @@ import java.time.format.DateTimeParseException;
 public class MonthlySummaryService {
 
     private final TransactionRepository transactionRepository;
+    private final AccountRepository accountRepository;
     private final CurrentUserService currentUser;
 
     public MonthlySummaryService(TransactionRepository transactionRepository,
+                                 AccountRepository accountRepository,
                                  CurrentUserService currentUser) {
         this.transactionRepository = transactionRepository;
+        this.accountRepository = accountRepository;
         this.currentUser = currentUser;
     }
 
@@ -37,12 +42,18 @@ public class MonthlySummaryService {
      * The caller's position for {@code month} (ISO {@code yyyy-MM}), or the current
      * month when omitted. Any past or future month is equally computable — there is
      * no "closed" month, because no month was ever rolled up.
+     *
+     * <p>{@code accountId} is optional: omitted, the figure spans every account the
+     * user holds, which is the position as §1.10 defines it. Supplied, it narrows to
+     * that one account so the home screen's account picker and the transaction list
+     * below it are answering the same question.
      */
     @Transactional(readOnly = true)
-    public MonthlySummaryResponse summary(String month) {
+    public MonthlySummaryResponse summary(String month, String accountId) {
         User user = currentUser.requireUser();
         ZoneId zone = zoneOf(user);
         YearMonth target = parseMonth(month, zone);
+        String account = requireOwnedAccount(accountId, user.getId());
 
         // Half-open [from, to): a transaction stamped exactly at midnight on the 1st
         // belongs to the month starting there, and to only that month.
@@ -50,12 +61,28 @@ public class MonthlySummaryService {
         long to = TimeUtils.startOfMonth(target.plusMonths(1), zone);
 
         long income = transactionRepository.sumAmountByTypeInWindow(
-                user.getId(), TransactionType.INCOME, from, to);
+                user.getId(), TransactionType.INCOME, from, to, account);
         long expenses = transactionRepository.sumAmountByTypeInWindow(
-                user.getId(), TransactionType.EXPENSE, from, to);
+                user.getId(), TransactionType.EXPENSE, from, to, account);
 
         return new MonthlySummaryResponse(target.toString(), zone.getId(), from, to,
-                income, expenses, income - expenses, user.getActiveCurrency());
+                income, expenses, income - expenses, user.getActiveCurrency(), account);
+    }
+
+    /**
+     * An unknown account is a 404 rather than a zeroed summary: the caller asked what
+     * one account did, and "0.00" is a wrong answer presented as a fact, where a
+     * not-found tells them the id was bad.
+     */
+    private String requireOwnedAccount(String accountId, String userId) {
+        if (accountId == null || accountId.isBlank()) {
+            return null;
+        }
+        String trimmed = accountId.trim();
+        if (!accountRepository.findByIdAndUserId(trimmed, userId).isPresent()) {
+            throw new NotFoundException("Account not found");
+        }
+        return trimmed;
     }
 
     /**

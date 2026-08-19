@@ -28,11 +28,13 @@ public class SummaryController {
     /**
      * Income, expenses, and position for one calendar month.
      *
-     * @param month ISO {@code yyyy-MM}; defaults to the caller's current month.
+     * @param month     ISO {@code yyyy-MM}; defaults to the caller's current month.
+     * @param accountId optional; omit to span every account the caller holds.
      */
     @GetMapping("/monthly")
     public ResponseEntity<ApiResponse<MonthlySummaryResponse>> monthly(
-            @RequestParam(name = "month", required = false) String month) {
-        return ResponseEntity.ok(ApiResponse.success(monthlySummaryService.summary(month)));
+            @RequestParam(name = "month", required = false) String month,
+            @RequestParam(name = "accountId", required = false) String accountId) {
+        return ResponseEntity.ok(ApiResponse.success(monthlySummaryService.summary(month, accountId)));
     }
 }

@@ -5,7 +5,7 @@
 # data.messageId).
 #
 # Returns the created transaction, written through the normal transaction path —
-# same validation and balance re-derivation as a manually entered row.
+# same validation as a manually entered row (there is no balance to re-derive).
 # 400 if the draft is incomplete, already confirmed, or the turn has no draft.
 source define-envars.sh;
 
