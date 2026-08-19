@@ -98,6 +98,23 @@ public class AccountService {
         return provision(user).getId();
     }
 
+    /**
+     * Validates an optional account filter for a read: null or blank passes through as
+     * "every account", anything else must belong to the caller. An unknown id is a 404
+     * rather than a silently empty result — a summary of 0.00 is a wrong answer
+     * presented as a fact.
+     */
+    @Transactional(readOnly = true)
+    public String requireOwnedFilter(String accountId, String userId) {
+        if (accountId == null || accountId.isBlank()) {
+            return null;
+        }
+        String trimmed = accountId.trim();
+        accountRepository.findByIdAndUserId(trimmed, userId)
+                .orElseThrow(() -> new NotFoundException("Account not found"));
+        return trimmed;
+    }
+
     @Transactional
     public Account provision(User user) {
         return accountRepository.findFirstByUserIdAndStatusOrderByCreatedTimeAsc(user.getId(), AccountStatus.ACTIVE)

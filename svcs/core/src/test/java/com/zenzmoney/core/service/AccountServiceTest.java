@@ -371,4 +371,31 @@ class AccountServiceTest {
         verify(accountRepository, never()).save(any());
         verify(transactionRepository, never()).existsByUserId(any());
     }
+
+    // --- requireOwnedFilter: the optional account filter shared by the summary reads ---
+
+    @Test
+    void requireOwnedFilter_nullOrBlank_meansEveryAccount() {
+        assertNull(accountService.requireOwnedFilter(null, "u1"));
+        assertNull(accountService.requireOwnedFilter("", "u1"));
+        assertNull(accountService.requireOwnedFilter("   ", "u1"));
+    }
+
+    @Test
+    void requireOwnedFilter_ownedAccount_returnsTrimmedId() {
+        Account a = new Account();
+        a.setId("a1");
+        a.setUserId("u1");
+        when(accountRepository.findByIdAndUserId("a1", "u1")).thenReturn(Optional.of(a));
+
+        assertEquals("a1", accountService.requireOwnedFilter("  a1  ", "u1"));
+    }
+
+    /** Someone else's account is a 404, not a silently empty result. */
+    @Test
+    void requireOwnedFilter_unknownAccount_throwsNotFound() {
+        when(accountRepository.findByIdAndUserId("nope", "u1")).thenReturn(Optional.empty());
+
+        assertThrows(NotFoundException.class, () -> accountService.requireOwnedFilter("nope", "u1"));
+    }
 }

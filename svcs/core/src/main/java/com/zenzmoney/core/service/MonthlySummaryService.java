@@ -3,9 +3,7 @@ package com.zenzmoney.core.service;
 import com.zenzmoney.common.domain.TimeUtils;
 import com.zenzmoney.common.domain.TransactionType;
 import com.zenzmoney.common.exception.BadRequestException;
-import com.zenzmoney.common.exception.NotFoundException;
 import com.zenzmoney.core.entity.User;
-import com.zenzmoney.core.repository.AccountRepository;
 import com.zenzmoney.core.repository.TransactionRepository;
 import com.zenzmoney.core.web.dto.MonthlySummaryResponse;
 import org.springframework.stereotype.Service;
@@ -27,14 +25,14 @@ import java.time.format.DateTimeParseException;
 public class MonthlySummaryService {
 
     private final TransactionRepository transactionRepository;
-    private final AccountRepository accountRepository;
+    private final AccountService accountService;
     private final CurrentUserService currentUser;
 
     public MonthlySummaryService(TransactionRepository transactionRepository,
-                                 AccountRepository accountRepository,
+                                 AccountService accountService,
                                  CurrentUserService currentUser) {
         this.transactionRepository = transactionRepository;
-        this.accountRepository = accountRepository;
+        this.accountService = accountService;
         this.currentUser = currentUser;
     }
 
@@ -53,7 +51,7 @@ public class MonthlySummaryService {
         User user = currentUser.requireUser();
         ZoneId zone = zoneOf(user);
         YearMonth target = parseMonth(month, zone);
-        String account = requireOwnedAccount(accountId, user.getId());
+        String account = accountService.requireOwnedFilter(accountId, user.getId());
 
         // Half-open [from, to): a transaction stamped exactly at midnight on the 1st
         // belongs to the month starting there, and to only that month.
@@ -67,22 +65,6 @@ public class MonthlySummaryService {
 
         return new MonthlySummaryResponse(target.toString(), zone.getId(), from, to,
                 income, expenses, income - expenses, user.getActiveCurrency(), account);
-    }
-
-    /**
-     * An unknown account is a 404 rather than a zeroed summary: the caller asked what
-     * one account did, and "0.00" is a wrong answer presented as a fact, where a
-     * not-found tells them the id was bad.
-     */
-    private String requireOwnedAccount(String accountId, String userId) {
-        if (accountId == null || accountId.isBlank()) {
-            return null;
-        }
-        String trimmed = accountId.trim();
-        if (!accountRepository.findByIdAndUserId(trimmed, userId).isPresent()) {
-            throw new NotFoundException("Account not found");
-        }
-        return trimmed;
     }
 
     /**

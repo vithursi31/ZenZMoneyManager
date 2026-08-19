@@ -23,6 +23,7 @@ depend on, and the transaction ledger the app is built around. In call order:
 18. [Update transaction](#18-update-transaction)
 19. [Delete transaction](#19-delete-transaction)
 20. [Monthly summary](#20-monthly-summary)
+21. [Category breakdown](#21-category-breakdown)
 
 Other endpoints (categories, budgets, goals, recurring, chat) exist but are out of scope for this document.
 A transaction needs a `categoryId`, which comes from the category API — see the executable
@@ -894,6 +895,88 @@ yet gets `0` across the board, which is the correct figure to render.
 
 ---
 
+## 21. Category Breakdown
+
+```
+GET /api/v1/summary/breakdown?startDate=2026-08-01&endDate=2026-08-31
+```
+**Auth:** required (`Bearer <accessToken>`)
+
+The detail behind [§20](#20-monthly-summary): the same income and expense totals for a
+period, plus the categories that make each one up. Use it for the reports screen —
+a pie or bar chart of where the money went, and the same figures broken out by
+income category and expense category.
+
+### Query parameters
+
+| Param | Type | Required | Notes |
+|---|---|---|---|
+| `startDate` | string | **yes** | `yyyy-MM-dd`, inclusive, in the caller's timezone. |
+| `endDate` | string | **yes** | `yyyy-MM-dd`, inclusive, in the caller's timezone. |
+| `accountId` | string | no | Restrict to one account. Omit to span every account the caller holds. |
+
+Both dates are required — a report is always over a period. A calendar month is
+simply its first and last day; there is no `month` shorthand, and the same range works
+for a week, a quarter, or a year.
+
+### Response `data`
+
+```json
+{
+  "startDate": "2026-08-01",
+  "endDate": "2026-08-31",
+  "timezone": "Asia/Colombo",
+  "from": 1754006400000,
+  "to": 1756684800000,
+  "currency": "LKR",
+  "accountId": null,
+  "income": {
+    "total": 575000,
+    "categories": [
+      { "categoryId": "c-salary", "name": "Salary", "parentId": null,
+        "color": "#22C55E", "icon": "wallet", "amount": 500000, "transactionCount": 1 },
+      { "categoryId": "c-side", "name": "Freelance", "parentId": null,
+        "color": "#10B981", "icon": "laptop", "amount": 75000, "transactionCount": 2 }
+    ]
+  },
+  "expenses": {
+    "total": 165005,
+    "categories": [
+      { "categoryId": "c-rent", "name": "Rent", "parentId": null,
+        "color": "#EF4444", "icon": "home", "amount": 120000, "transactionCount": 1 },
+      { "categoryId": "c-food", "name": "Food", "parentId": null,
+        "color": "#F59E0B", "icon": "utensils", "amount": 45005, "transactionCount": 9 }
+    ]
+  },
+  "position": 409995
+}
+```
+
+| Field | Notes |
+|---|---|
+| `income.total` / `expenses.total` | Minor units. Each equals the sum of its own `categories[].amount`. |
+| `position` | `income.total − expenses.total`. Matches [§20](#20-monthly-summary)'s `position` when the period is exactly one calendar month. |
+| `categories[]` | **Sorted biggest amount first** — render in the order given. Empty array when nothing was recorded in that direction. |
+| `name` / `color` / `icon` | The category's own display fields, joined server-side so a chart doesn't need a second call to label and colour itself. |
+| `parentId` | Non-null for a subcategory. **Categories are listed flat**, so a subcategory appears as its own row, not folded into its parent — group on `parentId` if you want a top-level view with drill-down. |
+| `transactionCount` | How many transactions make up that bucket, for a "9 transactions" subtitle. |
+
+> **Percentages are the client's job.** The server returns absolute minor units only. A
+> category's share is `amount / section.total` — a proportion isn't money, so it needs no
+> minor-unit rounding and the server does not guess how you want it displayed.
+
+Like the monthly summary, nothing here is stored or cached — the buckets are one grouped
+aggregate over the same rows [List transactions](#16-list-transactions) returns for the
+same dates, so a report can never disagree with the ledger it describes.
+
+### Errors
+
+- `400 E1013` — `startDate` or `endDate` missing, not in `yyyy-MM-dd` form, or `startDate` after `endDate`.
+- `404 E1010` — no account with that `accountId` owned by the caller.
+- `401` — missing/invalid access token.
+
+---
+
 ## Suggested client flow
 
 ```
@@ -923,6 +1006,9 @@ Adding, renaming, or deleting further accounts (§§10–14) is also a
 settings-time action, not part of first run.
 
 Once the home screen is up, the ledger (§§15–19) is the app's steady state: list the
-current month's transactions for the feed, and `GET /api/v1/summary/monthly` for the
-figure at the top of it. Both read the same rows, so they agree by construction —
-refresh them together after any write.
+current month's transactions for the feed, and [Monthly summary](#20-monthly-summary)
+for the figure at the top of it. The reports screen adds
+[Category breakdown](#21-category-breakdown) over whatever period the user picks. All
+three read the same rows, so they agree by construction — refresh them together after
+any write, and pass the same `accountId` to all of them when an account picker is on
+screen.

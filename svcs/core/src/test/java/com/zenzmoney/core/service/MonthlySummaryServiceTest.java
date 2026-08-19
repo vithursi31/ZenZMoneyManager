@@ -3,11 +3,10 @@ package com.zenzmoney.core.service;
 import com.zenzmoney.common.domain.TransactionType;
 import com.zenzmoney.common.exception.BadRequestException;
 import com.zenzmoney.common.exception.NotFoundException;
-import com.zenzmoney.core.entity.Account;
 import com.zenzmoney.core.entity.User;
-import com.zenzmoney.core.repository.AccountRepository;
 import com.zenzmoney.core.repository.TransactionRepository;
 import com.zenzmoney.core.web.dto.MonthlySummaryResponse;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -16,7 +15,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.YearMonth;
 import java.time.ZoneId;
-import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -25,6 +23,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -37,9 +36,21 @@ import static org.mockito.Mockito.when;
 class MonthlySummaryServiceTest {
 
     @Mock TransactionRepository transactionRepository;
-    @Mock AccountRepository accountRepository;
+    @Mock AccountService accountService;
     @Mock CurrentUserService currentUser;
     @InjectMocks MonthlySummaryService monthlySummaryService;
+
+    /**
+     * Default: the filter passes through unchanged, which is what AccountService does for a
+     * null or owned id. Lenient because the malformed-month path throws before reaching it.
+     */
+    @BeforeEach
+    void passThroughAccountFilter() {
+        lenient().when(accountService.requireOwnedFilter(any(), any())).thenAnswer(inv -> {
+            String id = inv.getArgument(0);
+            return id == null || id.isBlank() ? null : id;
+        });
+    }
 
     private User user(String timezone) {
         User u = new User();
@@ -56,12 +67,7 @@ class MonthlySummaryServiceTest {
                 eq("u1"), eq(TransactionType.EXPENSE), anyLong(), anyLong(), any())).thenReturn(expenses);
     }
 
-    private void stubOwnedAccount(String accountId) {
-        Account a = new Account();
-        a.setId(accountId);
-        a.setUserId("u1");
-        when(accountRepository.findByIdAndUserId(accountId, "u1")).thenReturn(Optional.of(a));
-    }
+
 
     @Test
     void position_isIncomeMinusExpenses() {
@@ -173,7 +179,6 @@ class MonthlySummaryServiceTest {
     @Test
     void accountId_narrowsTheSumsToThatAccount() {
         when(currentUser.requireUser()).thenReturn(user("UTC"));
-        stubOwnedAccount("a1");
         stubSums(300_000, 125_000);
 
         MonthlySummaryResponse resp = monthlySummaryService.summary("2026-08", "a1");
@@ -185,15 +190,6 @@ class MonthlySummaryServiceTest {
                 eq("u1"), eq(TransactionType.EXPENSE), anyLong(), anyLong(), eq("a1"));
     }
 
-    /** Blank is the same as absent — an empty picker value must not become an id lookup. */
-    @Test
-    void blankAccount_treatedAsOmitted() {
-        when(currentUser.requireUser()).thenReturn(user("UTC"));
-        stubSums(0, 0);
-
-        assertNull(monthlySummaryService.summary("2026-08", "   ").getAccountId());
-    }
-
     /**
      * An account the caller doesn't own is a 404, not a zeroed summary: "0.00" would be
      * a wrong answer rendered as a fact on the home screen.
@@ -201,7 +197,8 @@ class MonthlySummaryServiceTest {
     @Test
     void unknownAccount_rejected() {
         when(currentUser.requireUser()).thenReturn(user("UTC"));
-        when(accountRepository.findByIdAndUserId("nope", "u1")).thenReturn(Optional.empty());
+        when(accountService.requireOwnedFilter("nope", "u1"))
+                .thenThrow(new NotFoundException("Account not found"));
 
         assertThrows(NotFoundException.class, () -> monthlySummaryService.summary("2026-08", "nope"));
     }

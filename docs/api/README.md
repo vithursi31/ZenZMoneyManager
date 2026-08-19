@@ -68,6 +68,7 @@ come in the `ApiResponse` envelope: `{status, data, message, errorCode}`.
 | Transactions | `api-transaction-update.sh` | `PUT /api/v1/transactions/{id}` |
 | Transactions | `api-transaction-delete.sh` | `DELETE /api/v1/transactions/{id}` |
 | Summary | `api-summary-monthly.sh` | `GET /api/v1/summary/monthly` (income/expenses/position for one month; optional accountId) |
+| Summary | `api-summary-breakdown.sh` | `GET /api/v1/summary/breakdown` (income/expenses split by category over a period; optional accountId) |
 | Budgets | `api-budget-create.sh` | `POST /api/v1/budgets` |
 | Budgets | `api-budget-list.sh` | `GET /api/v1/budgets` |
 | Budgets | `api-budget-get.sh` | `GET /api/v1/budgets/{id}` |
