@@ -11,7 +11,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.ErrorResponse;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -74,6 +76,44 @@ public class GlobalExceptionHandler {
             builder.header(HttpHeaders.RETRY_AFTER, Long.toString(ex.getRetryAfterSeconds()));
         }
         return builder.body(ApiResponse.error(ex.getErrorCode(), ex.getMessage()));
+    }
+
+    /**
+     * The catch-all, for anything no typed handler above claimed.
+     *
+     * <p>Spring's own MVC failures are separated out first. An unknown path, a wrong verb, a
+     * malformed JSON body, or a mistyped query param is a <em>client</em> mistake that already
+     * carries the right 4xx status via {@link ErrorResponse} — reporting those as 500 hides a typo
+     * as a server outage and wakes someone at 2am for it.
+     *
+     * <p>Everything else is a defect: logged at ERROR with the stack trace, and answered with a
+     * generic message rather than {@code ex.getMessage()}, which can name classes, SQL, or config.
+     * The correlation id already on the response is what the client quotes in a report.
+     */
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<ApiResponse<Void>> handleUnexpected(Exception ex) {
+        if (ex instanceof ErrorResponse framework) {
+            HttpStatusCode status = framework.getStatusCode();
+            if (status.is4xxClientError()) {
+                log.debug("{} {}: {}", status.value(), codeFor(status), ex.getMessage());
+                return ResponseEntity.status(status)
+                        .body(ApiResponse.error(codeFor(status), ex.getMessage()));
+            }
+        }
+        log.error("500 E1000 unexpected: {}", ex.getMessage(), ex);
+        return ResponseEntity.status(500)
+                .body(ApiResponse.error("E1000", "An unexpected error occurred."));
+    }
+
+    /** Reuses the existing codes so a client's error handling doesn't grow a second vocabulary. */
+    private static String codeFor(HttpStatusCode status) {
+        if (status.value() == HttpStatus.NOT_FOUND.value()) {
+            return "E1010";
+        }
+        if (status.value() == HttpStatus.FORBIDDEN.value()) {
+            return "E1014";
+        }
+        return "E1013";
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

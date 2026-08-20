@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# DELETE /api/v1/budgets/{id} — permanently delete a budget (USER/ADMIN). Nothing
-# references a budget, so this is a hard delete (transactions are untouched). To
-# keep it for history instead, archive it. Pass the id as arg 1 or set BUDGET_ID.
+# DELETE /api/v1/budgets/{id} — soft-delete a budget (USER/ADMIN): status -> DELETED,
+# the row is kept. It drops out of every listing and summary (even with
+# includeArchived=true) and can no longer be edited or archived, but stays readable by
+# id, and its (account, category, period, periodKey) slot is freed. Transactions are
+# untouched. Use archive instead when the user may want to see it again.
+# Pass the id as arg 1 or set BUDGET_ID.
 source define-envars.sh;
 
 BUDGET_ID="${1:-${BUDGET_ID:-}}"

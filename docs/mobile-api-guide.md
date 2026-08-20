@@ -1,7 +1,8 @@
-# Mobile API Guide — Onboarding, Account & Transactions
+# Mobile API Guide — Onboarding, Account, Transactions & Budgets
 
 Scope: the sign-up-to-first-screen flow, the account endpoints those screens
-depend on, and the transaction ledger the app is built around. In call order:
+depend on, the transaction ledger the app is built around, and the budgets
+planned against it. In call order:
 
 1. [Register](#1-register)
 2. [Verify email](#2-verify-email)
@@ -24,8 +25,15 @@ depend on, and the transaction ledger the app is built around. In call order:
 19. [Delete transaction](#19-delete-transaction)
 20. [Monthly summary](#20-monthly-summary)
 21. [Category breakdown](#21-category-breakdown)
+22. [Create budget](#22-create-budget)
+23. [List budgets](#23-list-budgets)
+24. [Monthly budget summary](#24-monthly-budget-summary)
+25. [Get one budget](#25-get-one-budget)
+26. [Update budget](#26-update-budget)
+27. [Archive budget](#27-archive-budget)
+28. [Delete budget](#28-delete-budget)
 
-Other endpoints (categories, budgets, goals, recurring, chat) exist but are out of scope for this document.
+Other endpoints (categories, goals, recurring, chat) exist but are out of scope for this document.
 A transaction needs a `categoryId`, which comes from the category API — see the executable
 [`docs/api/api-category-*.sh`](api) scripts until that section is written here.
 
@@ -977,6 +985,347 @@ same dates, so a report can never disagree with the ledger it describes.
 
 ---
 
+## Budgets — what the app must know first
+
+The money rules from [§Transactions](#transactions--what-the-app-must-know-first)
+carry over unchanged: minor units, always positive. Four more decide whether a
+budget screen shows the truth.
+
+**1. A budget names one period, and only that period.** Every budget carries a
+`periodKey` — `2026-08` for a `MONTHLY` budget, `2026` for a `YEARLY` one. Food at
+$200 in July and $300 in August is **two budgets**, not one budget edited. There is
+deliberately no "every month" budget: a month the user never set one for has none,
+and a cap created in May never reaches back to January. A "same as last month"
+button is a second `POST` with the next `periodKey`, not a flag.
+
+**2. A budget belongs to one account, and counts only that account's spending.**
+`accountId` is required, and `spent` sums EXPENSE rows on that account alone — so the
+same category budgeted on two accounts reports two different figures.
+
+> **Watch this against the ledger's asymmetry.** A client still cannot choose which
+> account a transaction posts to ([§Transactions rule 3](#transactions--what-the-app-must-know-first)) —
+> every write lands on the primary account. So a budget on any *other* account will
+> sit at `spent: 0` no matter what the user records. Until per-transaction account
+> selection exists, budget the primary account.
+
+**3. `spent` and `remaining` are derived on every read**, never stored — same as the
+monthly position. They cannot drift from the ledger, and they change the moment a
+transaction is added, edited, or deleted, so refresh after any ledger write.
+
+**4. Two kinds of budget, and they must not be added together.** `categoryId` set is
+a cap on one EXPENSE category; `categoryId: null` is an **overall** cap on everything
+in that account. The overall budget's `spent` already contains every category's spend,
+so summing both double-counts the same money. [§24](#24-monthly-budget-summary) does
+this split for you.
+
+### The budget object
+
+Every endpoint in this section returns this shape:
+
+```json
+{
+  "id": "b41c7d02-...-uuid",
+  "accountId": "9b1e2c44-...-uuid",
+  "categoryId": "c31d0a77-...-uuid",
+  "period": "MONTHLY",
+  "periodKey": "2026-08",
+  "amountLimit": 50000,
+  "currency": "USD",
+  "rollover": false,
+  "status": "ACTIVE",
+  "periodStart": 1785522600000,
+  "periodEnd": 1788201000000,
+  "spent": 27700,
+  "remaining": 22300
+}
+```
+
+| Field | Notes |
+|---|---|
+| `accountId` | The account this cap applies to. Required on create; never changes. |
+| `categoryId` | An EXPENSE category, or `null` for an overall cap. |
+| `period` | `MONTHLY` or `YEARLY`. |
+| `periodKey` | The single period the cap applies to — `yyyy-MM` for `MONTHLY`, `yyyy` for `YEARLY`. |
+| `amountLimit` | Minor units, positive — the cap the user set. |
+| `currency` | ISO-4217, **derived from the linked account** on every read; a budget stores no currency of its own. |
+| `rollover` | Stored and echoed but **not yet applied** — `remaining` ignores it today. Don't ship UI that promises carry-over. |
+| `status` | `ACTIVE`, `ARCHIVED`, or `DELETED`. Delete is soft ([§28](#28-delete-budget)): a deleted budget never appears in a listing, but is still readable by id. |
+| `periodStart` / `periodEnd` | The exact window `spent` was summed over, epoch millis, `periodStart` inclusive and `periodEnd` exclusive, resolved in the user's timezone. |
+| `spent` | Σ EXPENSE in that window, on that account, in that category (all categories when `categoryId` is null). Positive. |
+| `remaining` | `amountLimit − spent`. **Legitimately negative** once the user is over budget — render an over-budget state rather than clamping at zero. |
+
+---
+
+## 22. Create Budget
+
+```
+POST /api/v1/budgets
+```
+**Auth:** required (`Bearer <accessToken>`)
+
+Sets one cap, for one period, on one account. At most one **active** budget per
+(`accountId`, `categoryId`, `period`, `periodKey`) — a second one for the same slot
+is rejected rather than silently replacing the first.
+
+### Request body
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `accountId` | string | yes | One of the caller's own accounts ([§10](#10-list-active-accounts)). |
+| `categoryId` | string | no | An EXPENSE category. Omit or send `null` for an overall cap. |
+| `period` | string | yes | `MONTHLY` or `YEARLY`. |
+| `periodKey` | string | yes | `yyyy-MM` when `period` is `MONTHLY`, `yyyy` when `YEARLY`. Must match the period type. |
+| `amountLimit` | number | yes | Minor units, **positive**. |
+| `rollover` | boolean | no | Defaults `false`. Stored, not yet applied. |
+
+`currency` is not accepted — it comes from the account.
+
+```json
+{
+  "accountId": "9b1e2c44-...-uuid",
+  "categoryId": "c31d0a77-...-uuid",
+  "period": "MONTHLY",
+  "periodKey": "2026-08",
+  "amountLimit": 50000,
+  "rollover": false
+}
+```
+
+An overall cap for the same month, and a yearly cap:
+
+```json
+{ "accountId": "9b1e2c44-...", "period": "MONTHLY", "periodKey": "2026-08", "amountLimit": 300000 }
+{ "accountId": "9b1e2c44-...", "period": "YEARLY",  "periodKey": "2026",    "amountLimit": 3600000 }
+```
+
+### Response `data`
+
+The created [budget object](#the-budget-object) — already carrying `spent` for that
+period, so a budget created mid-month shows the spending that already happened.
+
+### Errors
+
+- `400 E1015` — `accountId` blank, `period` missing, `periodKey` blank, or `amountLimit` not positive.
+- `400 E1013` — `periodKey` doesn't match the period type (`"periodKey must be yyyy-MM for a MONTHLY budget, e.g. 2026-08."`), the category isn't an EXPENSE category, the account is deleted, or an active budget already exists for that account + category + period.
+- `404 E1010` — no account, or no category, with that id owned by the caller.
+- `401` — missing/invalid access token.
+
+---
+
+## 23. List Budgets
+
+```
+GET /api/v1/budgets
+```
+**Auth:** required (`Bearer <accessToken>`)
+
+Every budget the caller has, across all periods and accounts.
+
+### Query parameters
+
+| Param | Type | Notes |
+|---|---|---|
+| `includeArchived` | boolean | Defaults `false` — archived budgets are hidden. **Deleted budgets are never returned**, whatever this is set to. |
+
+### Response `data`
+
+A JSON array of [budget objects](#the-budget-object).
+
+> **This is not a month view.** Because each month is its own row, this list grows by
+> one entry per budget per month and mixes `MONTHLY` with `YEARLY` rows. For a budget
+> screen showing "this month", call [§24](#24-monthly-budget-summary) instead — it
+> filters to the month and does the totalling. There is no `period` filter here yet.
+
+### Errors
+
+- `401` — missing/invalid access token.
+
+---
+
+## 24. Monthly Budget Summary
+
+```
+GET /api/v1/budgets/summary
+```
+**Auth:** required (`Bearer <accessToken>`)
+
+The budget screen in one call: the caps the user set for a month, what has been
+spent against each, and how the month's actual spending compares.
+
+### Query parameters
+
+| Param | Type | Notes |
+|---|---|---|
+| `month` | string | ISO `yyyy-MM`. Omit for the caller's **current** month, resolved in their timezone. |
+
+```
+GET /api/v1/budgets/summary?month=2026-08
+```
+
+### Response `data`
+
+```json
+{
+  "month": "2026-08",
+  "timezone": "Asia/Colombo",
+  "from": 1785522600000,
+  "to": 1788201000000,
+  "currency": "LKR",
+  "totalLimit": 80000,
+  "totalSpent": 27700,
+  "totalRemaining": 52300,
+  "monthExpenses": 264190,
+  "budgets": [ { "...": "budget objects" } ]
+}
+```
+
+| Field | Notes |
+|---|---|
+| `totalLimit` / `totalSpent` | **Category budgets only** — the overall cap is listed in `budgets` but excluded from the totals, because its spend already contains every category's (rule 4 above). |
+| `totalRemaining` | `totalLimit − totalSpent`. Negative once the month's category budgets are collectively overspent. |
+| `monthExpenses` | Every EXPENSE recorded that month, **across all accounts, budgeted or not** — the honest denominator for "how much of my spending is actually planned". Compare it with `totalSpent`; the gap is unbudgeted spending. |
+| `budgets` | The month's `ACTIVE` budgets as [budget objects](#the-budget-object), each with its own limit, spend and window. |
+| `from` / `to` | The month window, epoch millis, `from` inclusive and `to` exclusive. |
+| `currency` | The caller's active currency. |
+
+> **`MONTHLY` budgets only.** A `YEARLY` cap covers a different window, and folding a
+> 3,600,000 annual limit into a month's total would misstate both. Read yearly budgets
+> through [§23](#23-list-budgets) / [§25](#25-get-one-budget) and show them separately.
+>
+> Archived and deleted budgets are excluded — a summary is what the user is planning against now.
+
+A month with no budgets returns zeros and an empty `budgets` array, not an error —
+`monthExpenses` is still populated, which is the right thing to show on an empty
+budget screen ("you spent X this month, set a budget?").
+
+### Errors
+
+- `400 E1013` — `month` isn't in `yyyy-MM` form.
+- `401` — missing/invalid access token.
+
+---
+
+## 25. Get One Budget
+
+```
+GET /api/v1/budgets/{id}
+```
+**Auth:** required (`Bearer <accessToken>`)
+
+### Response `data`
+
+One [budget object](#the-budget-object), with `spent` recomputed for its own period.
+
+### Errors
+
+- `404 E1010` — no budget with that id owned by the caller.
+- `401` — missing/invalid access token.
+
+---
+
+## 26. Update Budget
+
+```
+PUT /api/v1/budgets/{id}
+```
+**Auth:** required (`Bearer <accessToken>`)
+
+### Request body
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `amountLimit` | number | no | Minor units, positive. |
+| `rollover` | boolean | no | Stored, not yet applied. |
+
+```json
+{ "amountLimit": 80000, "rollover": false }
+```
+
+> **A partial update, not a replacement** — the opposite of
+> [Update transaction](#18-update-transaction). A field left out or sent as `null` is
+> left unchanged, so sending only `amountLimit` is the normal case.
+>
+> **`accountId`, `categoryId`, `period` and `periodKey` are the budget's identity and
+> cannot be edited.** Raising August's food cap edits August's budget and leaves July's
+> alone; giving September a different cap is a `POST` with `periodKey: "2026-09"`, not
+> an edit.
+
+### Response `data`
+
+The updated [budget object](#the-budget-object).
+
+### Errors
+
+- `400 E1015` — `amountLimit` not positive (`"amountLimit: must be greater than 0"`).
+- `404 E1010` — no budget with that id owned by the caller.
+- `401` — missing/invalid access token.
+
+---
+
+## 27. Archive Budget
+
+```
+POST /api/v1/budgets/{id}/archive
+```
+**Auth:** required (`Bearer <accessToken>`)
+
+Retires a budget without losing it: `status` → `ARCHIVED`. It disappears from
+[§23](#23-list-budgets) unless `includeArchived=true`, drops out of
+[§24](#24-monthly-budget-summary), and **frees its slot** so a new active budget can be
+created for the same account + category + period.
+
+Use it when the user is retiring a plan they may still want to see; use
+[§28](#28-delete-budget) when they want it off the screen for good. Both keep the row
+and both free the slot — the difference is visibility: an archived budget still comes
+back with `includeArchived=true`, a deleted one never does. There is **no un-archive
+endpoint yet** — an archived budget can only be replaced by a new one.
+
+### Response `data`
+
+The archived [budget object](#the-budget-object), `status: "ARCHIVED"`.
+
+### Errors
+
+- `404 E1010` — no budget with that id owned by the caller.
+- `401` — missing/invalid access token.
+
+---
+
+## 28. Delete Budget
+
+```
+DELETE /api/v1/budgets/{id}
+```
+**Auth:** required (`Bearer <accessToken>`)
+
+> **A soft delete** — unlike [Delete transaction](#19-delete-transaction), the row is
+> kept and its `status` becomes `DELETED`. It leaves every listing
+> ([§23](#23-list-budgets), `includeArchived=true` included) and every summary, and can
+> no longer be edited or archived, but it stays readable by id. Nothing references a
+> budget, so **no transaction is affected**: deleting a budget removes a plan, never any
+> recorded money.
+>
+> The row surviving is for history, not for undo — there is **no restore endpoint**, so
+> treat this as final in the UI and confirm before calling. Prefer
+> [§27](#27-archive-budget) when the user may want to see the budget again.
+
+Deleting frees the (`accountId`, `categoryId`, `period`, `periodKey`) slot, so a new
+budget can immediately be created for the same month and category.
+
+### Response `data`
+
+```json
+{ "message": "Budget deleted" }
+```
+
+### Errors
+
+- `400 E1013` — the budget is already deleted.
+- `404 E1010` — no budget with that id owned by the caller.
+- `401` — missing/invalid access token.
+
+---
+
 ## Suggested client flow
 
 ```
@@ -1012,3 +1361,10 @@ for the figure at the top of it. The reports screen adds
 three read the same rows, so they agree by construction — refresh them together after
 any write, and pass the same `accountId` to all of them when an account picker is on
 screen.
+
+The budget screen (§§22–28) sits beside the reports one: read it with
+[Monthly budget summary](#24-monthly-budget-summary) for whichever month the user is
+viewing, and refresh it after **any** ledger write — `spent` is derived from the same
+transaction rows, so adding an expense moves a budget immediately. Setting a cap for a
+new month is always a create, never an edit: one `POST` per month, with that month's
+`periodKey`.

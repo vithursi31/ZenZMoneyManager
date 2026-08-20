@@ -99,17 +99,23 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     new UsernamePasswordAuthenticationToken(details, null, details.getAuthorities());
             SecurityContextHolder.getContext().setAuthentication(auth);
             log.debug("Authenticated {} for {}", email, path);
-
-            chain.doFilter(request, response);
         } catch (UnauthorizedException e) {
             audit.warn("Token rejected on {}: {} — {}", path, e.getErrorCode(), e.getMessage());
             writeError(response, e.getErrorCode(), e.getMessage());
+            return;
         } catch (Exception e) {
             // Malformed, expired, or wrong-signature token: e.getMessage() describes the failure and
             // carries no secret, so it is safe to record. A burst of these is worth noticing.
             audit.warn("Token rejected on {}: {}", path, e.getMessage());
             writeError(response, "INVALID_TOKEN", e.getMessage());
+            return;
         }
+
+        // Deliberately outside the try: only token validation is being guarded above. With the
+        // chain inside it, any failure from the controller or service downstream was caught here
+        // and reported as INVALID_TOKEN — sending clients to refresh a token that was never the
+        // problem, and filing a server bug under "Token rejected" in audit.log.
+        chain.doFilter(request, response);
     }
 
     private void setAnonymous() {

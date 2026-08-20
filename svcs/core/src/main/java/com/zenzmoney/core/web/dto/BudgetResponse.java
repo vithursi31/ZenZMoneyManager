@@ -12,6 +12,7 @@ public class BudgetResponse {
     private final String accountId;
     private final String categoryId;
     private final BudgetPeriod period;
+    private final String periodKey;
     private final long amountLimit;
     private final String currency;
     private final boolean rollover;
@@ -27,6 +28,7 @@ public class BudgetResponse {
         this.accountId = b.getAccountId();
         this.categoryId = b.getCategoryId();
         this.period = b.getPeriod();
+        this.periodKey = b.getPeriodKey();
         this.amountLimit = b.getAmountLimit();
         this.currency = currency;
         this.rollover = b.isRollover();

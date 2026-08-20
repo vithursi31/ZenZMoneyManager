@@ -155,8 +155,14 @@ Schema is managed by **Flyway**: [svcs/core/src/main/resources/db/migration/](sv
 - `V2__finance_schema.sql` — `account`, `category`, `payee`, `transaction`, `budget`, `recurring_transaction`, `savings_goal`, `goal_contribution` (each with a `user_id` index)
 - `V3__chat_ingestion.sql` — `chat_message`
 - `V4__onboarding_state.sql` — `app_user.onboarded`
-- `V5__multiple_accounts.sql` — drops the unique index on `account.user_id` (a user may hold more than one account now), adds `account.name` and `account.status`
-- `V6__budget_account_link.sql` — adds `budget.account_id` (backfilled, then `NOT NULL`), drops `budget.currency` and `budget.start_date`
+- `V5__budget_period_key.sql` — `budget.period_key` + `uq_budget_active_slot`
+- `V6__budget_soft_delete.sql` — widens `budget_status_check` for `DELETED`
+
+> **The multi-account schema has no migration yet.** `account.name`, `account.status`, and
+> `budget.account_id` exist in the entities but in **no `V<n>__` file** — locally they are there
+> only because `ddl-auto=update` created them (see the gotcha below), and Flyway's history stops
+> at V4. A fresh database provisioned by Flyway alone would not have them. They need a migration
+> before anything is deployed.
 
 **New schema goes in a new `V<n>__<name>.sql`.** Never edit an applied migration — Flyway fails on a checksum mismatch, and the only fix on a shared DB is a corrective migration. A migration must be **idempotent-safe to review**: state what it does to existing rows, not just to the shape.
 
@@ -189,10 +195,19 @@ mvn clean install -P dev -Dmaven.test.skip=true
 
 ```bash
 docker compose up -d                      # Postgres + Redis first
+mvn install -pl svcs/common -DskipTests   # only after editing svcs/common — see below
 mvn -pl svcs/core spring-boot:run         # → http://localhost:8080
 ```
 
 Or run `com.zenzmoney.core.CoreApplication` from the IDE. Restarting locally is always fine; **deploying is not** — see *Deployment*.
+
+> **`spring-boot:run` resolves `zenzmoney-common` from `~/.m2`, not from your working tree.** `-am`
+> cannot be used here (the goal would run on `common` too), so unlike `mvn package -pl svcs/core -am`
+> this command does **not** rebuild `common` — it silently runs against whatever jar was last
+> installed. A method you just added to `TimeUtils` or `ApiResponse` then throws
+> `NoSuchMethodError` **at request time**, not at startup, so the app looks healthy and only the
+> endpoint touching the new code fails. After any edit under `svcs/common/`, run the
+> `mvn install -pl svcs/common` line above before restarting.
 
 ## Running Tests
 

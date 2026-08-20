@@ -1,5 +1,6 @@
 package com.zenzmoney.core.service;
 
+import com.zenzmoney.common.domain.BudgetStatus;
 import com.zenzmoney.common.domain.CategoryKind;
 import com.zenzmoney.common.exception.BadRequestException;
 import com.zenzmoney.common.exception.NotFoundException;
@@ -127,7 +128,7 @@ class CategoryServiceTest {
                 .thenReturn(Optional.of(cat("c1", "u1", CategoryKind.EXPENSE, null)));
         when(categoryRepository.existsByUserIdAndParentId("u1", "c1")).thenReturn(false);
         when(transactionRepository.existsByCategoryId("c1")).thenReturn(false);
-        when(budgetRepository.existsByCategoryId("c1")).thenReturn(true);
+        when(budgetRepository.existsByCategoryIdAndStatusNot("c1", BudgetStatus.DELETED)).thenReturn(true);
 
         assertThrows(BadRequestException.class, () -> categoryService.delete("c1"));
         verify(categoryRepository, never()).delete(any());
@@ -140,7 +141,7 @@ class CategoryServiceTest {
         when(categoryRepository.findByIdAndUserId("c1", "u1")).thenReturn(Optional.of(c));
         when(categoryRepository.existsByUserIdAndParentId("u1", "c1")).thenReturn(false);
         when(transactionRepository.existsByCategoryId("c1")).thenReturn(false);
-        when(budgetRepository.existsByCategoryId("c1")).thenReturn(false);
+        when(budgetRepository.existsByCategoryIdAndStatusNot("c1", BudgetStatus.DELETED)).thenReturn(false);
 
         categoryService.delete("c1");
 

@@ -51,15 +51,22 @@ public interface TransactionRepository
                                  @Param("to") long to,
                                  @Param("accountId") String accountId);
 
-    /** Σ EXPENSE for one category in the window (a category budget). */
+    /**
+     * Σ EXPENSE for one category in the window (a category budget). A budget targets
+     * one account (§1.7), so {@code accountId} narrows the sum to it — otherwise two
+     * budgets for the same category on different accounts would report the same
+     * spend. Null spans every account.
+     */
     @Query("SELECT COALESCE(SUM(t.amount), 0) FROM Transaction t "
             + "WHERE t.userId = :userId AND t.categoryId = :categoryId "
             + "AND t.type = com.zenzmoney.common.domain.TransactionType.EXPENSE "
-            + "AND t.txnDate >= :from AND t.txnDate < :to")
+            + "AND t.txnDate >= :from AND t.txnDate < :to "
+            + "AND (:accountId IS NULL OR t.accountId = :accountId)")
     long sumExpenseByCategoryInWindow(@Param("userId") String userId,
                                       @Param("categoryId") String categoryId,
                                       @Param("from") long from,
-                                      @Param("to") long to);
+                                      @Param("to") long to,
+                                      @Param("accountId") String accountId);
 
     /**
      * Every (category, direction) bucket in the window, biggest first — the category
@@ -83,14 +90,16 @@ public interface TransactionRepository
                                                @Param("to") long to,
                                                @Param("accountId") String accountId);
 
-    /** Σ EXPENSE across all categories in the window (an overall budget). */
+    /** Σ EXPENSE across all categories in the window (an overall budget), optionally one account. */
     @Query("SELECT COALESCE(SUM(t.amount), 0) FROM Transaction t "
             + "WHERE t.userId = :userId "
             + "AND t.type = com.zenzmoney.common.domain.TransactionType.EXPENSE "
-            + "AND t.txnDate >= :from AND t.txnDate < :to")
+            + "AND t.txnDate >= :from AND t.txnDate < :to "
+            + "AND (:accountId IS NULL OR t.accountId = :accountId)")
     long sumExpenseInWindow(@Param("userId") String userId,
                             @Param("from") long from,
-                            @Param("to") long to);
+                            @Param("to") long to,
+                            @Param("accountId") String accountId);
 
     /**
      * Σ EXPENSE per category in the window, biggest first — the breakdown behind

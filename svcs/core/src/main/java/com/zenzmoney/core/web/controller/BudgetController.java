@@ -3,6 +3,7 @@ package com.zenzmoney.core.web.controller;
 import com.zenzmoney.common.dto.ApiResponse;
 import com.zenzmoney.core.service.BudgetService;
 import com.zenzmoney.core.web.dto.BudgetResponse;
+import com.zenzmoney.core.web.dto.BudgetSummaryResponse;
 import com.zenzmoney.core.web.dto.CreateBudgetRequest;
 import com.zenzmoney.core.web.dto.UpdateBudgetRequest;
 import jakarta.annotation.security.RolesAllowed;
@@ -41,6 +42,17 @@ public class BudgetController {
     public ResponseEntity<ApiResponse<List<BudgetResponse>>> list(
             @RequestParam(name = "includeArchived", defaultValue = "false") boolean includeArchived) {
         return ResponseEntity.ok(ApiResponse.success(budgetService.list(includeArchived)));
+    }
+
+    /**
+     * One month's plan against its outcome: the caps set for {@code month} (ISO
+     * {@code yyyy-MM}, defaulting to the caller's current month) and the spend
+     * against them so far.
+     */
+    @GetMapping("/summary")
+    public ResponseEntity<ApiResponse<BudgetSummaryResponse>> summary(
+            @RequestParam(name = "month", required = false) String month) {
+        return ResponseEntity.ok(ApiResponse.success(budgetService.summary(month)));
     }
 
     @GetMapping("/{id}")

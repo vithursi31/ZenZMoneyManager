@@ -30,6 +30,9 @@ public class Budget extends BaseEntity {
     @Column(nullable = false, length = 50)
     private BudgetPeriod period;
 
+    @Column(name = "period_key", nullable = false, length = 7)
+    private String periodKey;
+
     @Column(name = "amount_limit", nullable = false)
     private long amountLimit;
 

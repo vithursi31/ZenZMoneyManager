@@ -249,7 +249,7 @@ public enum AccountStatus    { ACTIVE, INACTIVE, DELETED }
 public enum CategoryKind     { INCOME, EXPENSE }
 public enum TransactionType  { INCOME, EXPENSE }
 public enum BudgetPeriod     { MONTHLY, YEARLY }
-public enum BudgetStatus     { ACTIVE, ARCHIVED }
+public enum BudgetStatus     { ACTIVE, ARCHIVED, DELETED }
 public enum RecurringCadence { DAILY, WEEKLY, MONTHLY, YEARLY }
 public enum GoalStatus       { ACTIVE, ACHIEVED, ARCHIVED }
 ```
@@ -378,10 +378,11 @@ The core ledger record. Every movement of money is one transaction row.
 
 ## 1.7 Budget
 
-A spending cap for a category (or overall) on a specific account, across a
-recurring calendar period. **Linked to an account since 2026-08-18** — a budget
-no longer stores its own currency or an anchor date; both changed because a
-budget now belongs to one of the user's (possibly several) accounts.
+A spending cap for a category (or overall) on a specific account, for one named
+calendar period. **Linked to an account since 2026-08-18** — a budget no longer
+stores its own currency or an anchor date; both changed because a budget now
+belongs to one of the user's (possibly several) accounts. **Per-period since
+2026-08-20** — each row names the month or year it applies to (`periodKey`).
 
 | Field | Type | Notes |
 |---|---|---|
@@ -390,17 +391,21 @@ budget now belongs to one of the user's (possibly several) accounts.
 | `accountId` | `String` | FK → `account`. Not null — every budget targets one specific account. |
 | `categoryId` | `String` | FK → `category`. Nullable ⇒ overall budget. |
 | `period` | `BudgetPeriod` | `MONTHLY` / `YEARLY`. Not null. |
+| `periodKey` | `String(7)` | The one period this cap applies to — `yyyy-MM` for MONTHLY, `yyyy` for YEARLY. Not null. |
 | `amountLimit` | `long` | Minor units cap for the period. Not null. |
 | `rollover` | `boolean` | Carry unused amount into the next period. Default `false`. |
-| `status` | `BudgetStatus` | `ACTIVE` / `ARCHIVED`. |
+| `status` | `BudgetStatus` | `ACTIVE` / `ARCHIVED` / `DELETED`. Delete is soft. |
 
 **Rules**
 - A budget's `categoryId` (if set) must be an `EXPENSE` category; its `accountId` must be one of the caller's own, and not `DELETED` ([§1.4](#14-account)).
-- At most one active budget per (`accountId`, `categoryId`, `period`) — a user may run the same category/period combination on two different accounts.
+- At most one active budget per (`accountId`, `categoryId`, `period`, `periodKey`) — a user may run the same category on two different accounts, and the same category in two different months. Backed by the partial unique index `uq_budget_active_slot` (`V5`), which folds a null `categoryId` to `''` because Postgres 14 treats nulls as distinct in a unique index.
 - **Currency is derived, not stored** — a budget's currency is its linked account's `currency`, read at request time. (In the MVP, every account still shares the user's one active currency ([§0.3](#03-one-active-currency-per-user)), so this is only observably different once accounts can diverge, future work under F-F.2.)
-- **Periods are calendar-aligned, computed in the owner's timezone** (`app_user.timezone`, same rule as [§1.10](#110-monthly-position-invariant)) — a `MONTHLY` budget's window is the current calendar month, a `YEARLY` budget's is the current calendar year, both resolved fresh on every read. There is no anchor date: `startDate` was dropped along with the arbitrary-cycle model it supported (a monthly budget started mid-month used to run mid-month to mid-month; it no longer can).
-- "Spent" is computed from EXPENSE transactions in the current period window; budgets store the cap, not the running total.
-- **Rollover is a budget-only concept.** A budget may carry unused headroom into the next period; the monthly position never does. The two are not inconsistent — a budget is a plan the user sets, the position is a fact about what happened (OQ-3).
+- **A budget names its own period; nothing is ongoing.** `periodKey` is the month or year the cap belongs to, so Food may be 200000 for `2026-07` and 300000 for `2026-08` as two rows. Changed on 2026-08-20, replacing a single row that applied to "whatever period is current": that model could not express a one-month change, and a cap created in May was silently claiming January. There is deliberately no "every month" row — a budget the user never set for a month does not exist for that month.
+- **Spend is scoped to the budget's own account.** A budget targets one account, so its `spent` counts only that account's EXPENSE rows; the same category budgeted on two accounts reports two different figures.
+- **Periods are calendar-aligned, computed in the owner's timezone** (`app_user.timezone`, same rule as [§1.10](#110-monthly-position-invariant)) — a `MONTHLY` budget's window is the calendar month its `periodKey` names, a `YEARLY` budget's is that calendar year, boundaries resolved fresh on every read so a user who moves timezone gets their own midnight. There is no anchor date: `startDate` was dropped along with the arbitrary-cycle model it supported (a monthly budget started mid-month used to run mid-month to mid-month; it no longer can).
+- "Spent" is computed from EXPENSE transactions in the budget's own period window; budgets store the cap, not the running total.
+- **Rollover is a budget-only concept**, and is stored but **not yet applied** — `remaining` is `amountLimit − spent` today. A budget may carry unused headroom into the next period; the monthly position never does. The two are not inconsistent — a budget is a plan the user sets, the position is a fact about what happened (OQ-3).
+- **Delete is soft** (`status` → `DELETED`, added 2026-08-20) — the row survives so "what did I plan last March" stays answerable, and because a budget references nothing, keeping it costs nothing. A `DELETED` budget appears in no listing and cannot be edited or archived; it is still readable by id. `ARCHIVED` and `DELETED` differ in intent, not mechanism: archived is a plan deliberately retired and still worth seeing, deleted is a mistake taken off the screen. Both free the (`accountId`, `categoryId`, `period`, `periodKey`) slot, because only `ACTIVE` rows compete for it.
 - Budget usage feeds alerts (F-1.20), e.g. *"You've used 90% of your Food budget."*
 
 ## 1.8 RecurringTransaction
@@ -506,7 +511,7 @@ position(m) = income(m) − expenses(m)
 - **Any month is computable** — past months are the same query with a different window.
 - **A write only affects its own month.** Creating / editing / deleting a transaction changes the position of the month its `txnDate` falls in, and no other. Moving a date across a boundary affects exactly the two months involved.
 - Spending analysis (F-1.18), reports (F-1.19), and the dashboard (F-1.17) all use **this** window rule, so every month-labelled figure on screen agrees with every other.
-- **Budgets follow the same calendar-alignment rule** ([§1.7](#17-budget)) — a `MONTHLY` budget's window is the current calendar month, `YEARLY` the current calendar year, both resolved in the *account owner's* timezone exactly like the position above. This changed on 2026-08-18: budgets previously anchored to an arbitrary `startDate` and rolled every period from there, so a monthly budget started mid-month wasn't a calendar month; that flexibility was traded away for a simpler, always-calendar-aligned model, and `startDate` was dropped.
+- **Budgets follow the same calendar-alignment rule** ([§1.7](#17-budget)) — a `MONTHLY` budget's window is the calendar month its `periodKey` names, `YEARLY` that calendar year, both resolved in the *account owner's* timezone exactly like the position above. This changed on 2026-08-18: budgets previously anchored to an arbitrary `startDate` and rolled every period from there, so a monthly budget started mid-month wasn't a calendar month; that flexibility was traded away for a simpler, always-calendar-aligned model, and `startDate` was dropped.
 
 > **Why derived rather than stored.** A stored balance has to be maintained on
 > every write, which means it can be wrong — the classic reconciliation bug this

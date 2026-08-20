@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # PUT /api/v1/budgets/{id} — partial update (USER/ADMIN). Only amountLimit and
 # rollover are editable; a null field is left unchanged. Account, category, and
-# period are the budget's identity — recreate the budget to change them.
+# period and periodKey are the budget's identity — to change the month, create the
+# budget for that month instead (each month is its own row).
 # Pass the id as arg 1 or set BUDGET_ID.
 source define-envars.sh;
 

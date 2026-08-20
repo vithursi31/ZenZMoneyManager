@@ -1,5 +1,6 @@
 package com.zenzmoney.core.service;
 
+import com.zenzmoney.common.domain.BudgetStatus;
 import com.zenzmoney.common.domain.CategoryKind;
 import com.zenzmoney.common.exception.BadRequestException;
 import com.zenzmoney.common.exception.NotFoundException;
@@ -128,7 +129,7 @@ public class CategoryService {
         if (transactionRepository.existsByCategoryId(id)) {
             throw new BadRequestException("Category is used by transactions and cannot be deleted.");
         }
-        if (budgetRepository.existsByCategoryId(id)) {
+        if (budgetRepository.existsByCategoryIdAndStatusNot(id, BudgetStatus.DELETED)) {
             throw new BadRequestException("Category is used by a budget and cannot be deleted.");
         }
         categoryRepository.delete(category);

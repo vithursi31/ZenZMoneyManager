@@ -19,6 +19,10 @@ public class CreateBudgetRequest {
     @NotNull
     private BudgetPeriod period;
 
+    /** The one period this budget applies to: {@code yyyy-MM} for MONTHLY, {@code yyyy} for YEARLY. */
+    @NotBlank
+    private String periodKey;
+
     @Positive
     private long amountLimit;
 
