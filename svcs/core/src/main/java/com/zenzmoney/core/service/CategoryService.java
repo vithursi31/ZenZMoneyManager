@@ -2,12 +2,12 @@ package com.zenzmoney.core.service;
 
 import com.zenzmoney.common.domain.BudgetStatus;
 import com.zenzmoney.common.domain.CategoryKind;
+import com.zenzmoney.common.domain.CategoryStatus;
 import com.zenzmoney.common.exception.BadRequestException;
 import com.zenzmoney.common.exception.NotFoundException;
 import com.zenzmoney.core.entity.Category;
 import com.zenzmoney.core.repository.BudgetRepository;
 import com.zenzmoney.core.repository.CategoryRepository;
-import com.zenzmoney.core.repository.TransactionRepository;
 import com.zenzmoney.core.web.dto.CategoryResponse;
 import com.zenzmoney.core.web.dto.CreateCategoryRequest;
 import com.zenzmoney.core.web.dto.UpdateCategoryRequest;
@@ -38,16 +38,13 @@ public class CategoryService {
             "Entertainment", "Health", "Shopping", "Education", "Subscriptions", "Other");
 
     private final CategoryRepository categoryRepository;
-    private final TransactionRepository transactionRepository;
     private final BudgetRepository budgetRepository;
     private final CurrentUserService currentUser;
 
     public CategoryService(CategoryRepository categoryRepository,
-                           TransactionRepository transactionRepository,
                            BudgetRepository budgetRepository,
                            CurrentUserService currentUser) {
         this.categoryRepository = categoryRepository;
-        this.transactionRepository = transactionRepository;
         this.budgetRepository = budgetRepository;
         this.currentUser = currentUser;
     }
@@ -58,7 +55,7 @@ public class CategoryService {
 
         String parentId = null;
         if (req.getParentId() != null && !req.getParentId().isBlank()) {
-            Category parent = requireOwned(req.getParentId(), userId);
+            Category parent = requireLive(req.getParentId(), userId);
             if (parent.getParentId() != null) {
                 throw new BadRequestException("Sub-categories are only one level deep.");
             }
@@ -68,9 +65,12 @@ public class CategoryService {
             parentId = parent.getId();
         }
 
+        String name = req.getName().trim();
+        requireNameFree(userId, req.getKind(), name, null);
+
         Category category = new Category();
         category.setUserId(userId);
-        category.setName(req.getName().trim());
+        category.setName(name);
         category.setKind(req.getKind());
         category.setParentId(parentId);
         category.setColor(req.getColor());
@@ -87,7 +87,7 @@ public class CategoryService {
     @Transactional(readOnly = true)
     public List<CategoryResponse> list() {
         String userId = currentUser.requireUserId();
-        return categoryRepository.findByUserId(userId).stream()
+        return categoryRepository.findByUserIdAndStatus(userId, CategoryStatus.ACTIVE).stream()
                 .sorted(Comparator.comparing(Category::getKind)
                         .thenComparingInt(Category::getSortOrder)
                         .thenComparing(Category::getName))
@@ -102,9 +102,11 @@ public class CategoryService {
 
     @Transactional
     public CategoryResponse update(String id, UpdateCategoryRequest req) {
-        Category category = requireOwned(id, currentUser.requireUserId());
+        Category category = requireLive(id, currentUser.requireUserId());
         if (req.getName() != null && !req.getName().isBlank()) {
-            category.setName(req.getName().trim());
+            String name = req.getName().trim();
+            requireNameFree(category.getUserId(), category.getKind(), name, category.getId());
+            category.setName(name);
         }
         if (req.getColor() != null) category.setColor(req.getColor());
         if (req.getIcon() != null) category.setIcon(req.getIcon());
@@ -115,26 +117,31 @@ public class CategoryService {
     }
 
     /**
-     * Deletes a category only when nothing references it — no sub-categories, no
-     * transactions, no budgets (§1.5). A referenced category should be left unused
-     * or (Phase 2) merged.
+     * Soft delete: the row stays, its status changes. Transactions already filed under
+     * the category keep pointing at it — that is the whole reason this is not a row
+     * removal, since a past month's breakdown still has to name where the money went.
+     * The category leaves every picker and its name frees up for reuse.
+     *
+     * <p>Still refused while something would be left dangling: a live sub-category
+     * (which would be orphaned) or a live budget (which would go on measuring spend
+     * against a category the user can no longer file anything under).
      */
     @Transactional
     public void delete(String id) {
         String userId = currentUser.requireUserId();
         Category category = requireOwned(id, userId);
-        if (categoryRepository.existsByUserIdAndParentId(userId, id)) {
-            throw new BadRequestException("Category has sub-categories; delete or move them first.");
+        if (category.getStatus() == CategoryStatus.DELETED) {
+            throw new BadRequestException("Category already deleted.");
         }
-        if (transactionRepository.existsByCategoryId(id)) {
-            throw new BadRequestException("Category is used by transactions and cannot be deleted.");
+        if (categoryRepository.existsByUserIdAndParentIdAndStatus(userId, id, CategoryStatus.ACTIVE)) {
+            throw new BadRequestException("Category has sub-categories; delete or move them first.");
         }
         if (budgetRepository.existsByCategoryIdAndStatusNot(id, BudgetStatus.DELETED)) {
             throw new BadRequestException("Category is used by a budget and cannot be deleted.");
         }
-        categoryRepository.delete(category);
-        // Hard delete, allowed only because nothing referenced it — this line is the last record.
-        log.info("Category deleted: {} kind={} (category {}, user {})",
+        category.setStatus(CategoryStatus.DELETED);
+        categoryRepository.save(category);
+        log.info("Category deleted (soft): {} kind={} (category {}, user {})",
                 category.getName(), category.getKind(), id, userId);
     }
 
@@ -146,8 +153,8 @@ public class CategoryService {
     @Transactional
     public List<CategoryResponse> seedDefaults() {
         String userId = currentUser.requireUserId();
-        if (categoryRepository.existsByUserId(userId)) {
-            log.debug("Default categories not seeded for user {} — it already has categories", userId);
+        if (categoryRepository.existsByUserIdAndStatus(userId, CategoryStatus.ACTIVE)) {
+            log.debug("Default categories not seeded for user {} — it already has live categories", userId);
             return list();
         }
         int order = 0;
@@ -175,5 +182,31 @@ public class CategoryService {
     private Category requireOwned(String id, String userId) {
         return categoryRepository.findByIdAndUserId(id, userId)
                 .orElseThrow(() -> new NotFoundException("Category not found"));
+    }
+
+    /** Owned and not deleted — a deleted category is history, not something to build on. */
+    private Category requireLive(String id, String userId) {
+        Category category = requireOwned(id, userId);
+        if (category.getStatus() == CategoryStatus.DELETED) {
+            throw new BadRequestException("Category is deleted.");
+        }
+        return category;
+    }
+
+    /**
+     * One live category per (user, kind, name), compared case-insensitively — Food,
+     * food and FOOD are the same category. Scoped to the kind so "Gifts" can exist as
+     * both income and expense, which is a real distinction and never ambiguous: a
+     * transaction's category has to match its type, so a picker only ever shows one
+     * kind. {@code excludeId} lets a rename keep its own name (a change of case).
+     */
+    private void requireNameFree(String userId, CategoryKind kind, String name, String excludeId) {
+        boolean taken = categoryRepository
+                .findByUserIdAndKindAndNameIgnoreCaseAndStatus(userId, kind, name, CategoryStatus.ACTIVE)
+                .stream()
+                .anyMatch(c -> !c.getId().equals(excludeId));
+        if (taken) {
+            throw new BadRequestException("A category named '" + name + "' already exists.");
+        }
     }
 }

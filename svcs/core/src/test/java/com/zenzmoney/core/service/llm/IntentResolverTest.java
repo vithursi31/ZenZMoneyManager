@@ -1,5 +1,6 @@
 package com.zenzmoney.core.service.llm;
 
+import com.zenzmoney.common.domain.CategoryStatus;
 import com.zenzmoney.common.domain.CategoryKind;
 import com.zenzmoney.common.domain.IntentType;
 import com.zenzmoney.common.domain.TransactionType;
@@ -144,7 +145,7 @@ class IntentResolverTest {
     void category_prefersACategoryTheUserNamedOverTheModelsGuess() {
         // The regression this exists for: qwen2.5:1.5b answered "Other Income" for
         // "got salary 3000" at confidence 1.0, with a Salary category available.
-        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE)).thenReturn(List.of(
                 category("c-salary", "Salary", CategoryKind.INCOME),
                 category("c-other", "Other Income", CategoryKind.INCOME)));
 
@@ -156,7 +157,7 @@ class IntentResolverTest {
 
     @Test
     void category_takesTheModelsGuessWhenTheMessageNamesNothing() {
-        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE)).thenReturn(List.of(
                 category("c-food", "Food & Drinks", CategoryKind.EXPENSE),
                 category("c-groc", "Groceries", CategoryKind.EXPENSE)));
 
@@ -166,7 +167,7 @@ class IntentResolverTest {
 
     @Test
     void category_matchesASingularGuessAgainstAPluralCategory() {
-        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE)).thenReturn(List.of(
                 category("c-groc", "Groceries", CategoryKind.EXPENSE)));
 
         assertEquals("c-groc", resolver.resolveCategory("u1", TransactionType.EXPENSE,
@@ -175,7 +176,7 @@ class IntentResolverTest {
 
     @Test
     void category_fallsBackToSynonyms() {
-        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE)).thenReturn(List.of(
                 category("c-food", "Food & Drinks", CategoryKind.EXPENSE),
                 category("c-transport", "Transport", CategoryKind.EXPENSE)));
 
@@ -187,7 +188,7 @@ class IntentResolverTest {
 
     @Test
     void category_neverCrossesKinds() {
-        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE)).thenReturn(List.of(
                 category("c-salary", "Salary", CategoryKind.INCOME)));
 
         // "salary" is named outright, but this is an expense — an income category
@@ -197,7 +198,7 @@ class IntentResolverTest {
 
     @Test
     void category_returnsNullWhenNothingFits() {
-        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE)).thenReturn(List.of(
                 category("c-food", "Food & Drinks", CategoryKind.EXPENSE)));
 
         assertNull(resolver.resolveCategory("u1", TransactionType.EXPENSE,
@@ -323,7 +324,7 @@ class IntentResolverTest {
     @Test
     void resolve_buildsACompleteDraftFromAFrenchMessage() {
         User user = user("u1", "EUR", "UTC");
-        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE)).thenReturn(List.of(
                 category("c-transport", "Transport", CategoryKind.EXPENSE)));
 
         ParsedIntent draft = resolver.resolve(user, "j'ai payé 250 pour uber hier",
@@ -339,7 +340,7 @@ class IntentResolverTest {
     @Test
     void resolve_buildsACompleteDraftFromASpanishMessage() {
         User user = user("u1", "EUR", "UTC");
-        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE)).thenReturn(List.of(
                 category("c-health", "Health", CategoryKind.EXPENSE)));
 
         ParsedIntent draft = resolver.resolve(user, "compré medicina por 800 en la farmacia",
@@ -361,7 +362,7 @@ class IntentResolverTest {
      */
     @Test
     void category_cannotUseTheUsersOwnWordsWhenTheyAreNotInTheCategoryLanguage() {
-        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE)).thenReturn(List.of(
                 category("c-food", "Food & Drinks", CategoryKind.EXPENSE),
                 category("c-groc", "Groceries", CategoryKind.EXPENSE)));
 
@@ -406,7 +407,7 @@ class IntentResolverTest {
     @Test
     void resolve_buildsACompleteDraftFromAGoodExtraction() {
         User user = user("u1", "USD", "Asia/Colombo");
-        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE)).thenReturn(List.of(
                 category("c-groc", "Groceries", CategoryKind.EXPENSE)));
 
         ParsedIntent draft = resolver.resolve(user,
@@ -427,7 +428,7 @@ class IntentResolverTest {
     @Test
     void resolve_takesCurrencyFromTheUserNotTheMessage() {
         User user = user("u1", "LKR", "Asia/Colombo");
-        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE)).thenReturn(List.of(
                 category("c-food", "Food & Drinks", CategoryKind.EXPENSE)));
 
         ParsedIntent draft = resolver.resolve(user, "spent $5 on lunch",
@@ -446,7 +447,7 @@ class IntentResolverTest {
     @Test
     void resolve_reportsMissingCurrencyBeforeOnboarding() {
         User user = user("u1", null, "UTC");
-        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE)).thenReturn(List.of(
                 category("c-food", "Food & Drinks", CategoryKind.EXPENSE)));
 
         ParsedIntent draft = resolver.resolve(user, "spent 5 on lunch",
@@ -460,7 +461,7 @@ class IntentResolverTest {
     @Test
     void resolve_reportsMissingAmountWhenTheModelWroteJunk() {
         User user = user("u1", "USD", "UTC");
-        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE)).thenReturn(List.of(
                 category("c-food", "Food & Drinks", CategoryKind.EXPENSE)));
 
         ParsedIntent draft = resolver.resolve(user, "spent some money on lunch",
@@ -475,7 +476,7 @@ class IntentResolverTest {
     @Test
     void resolve_appliesTheUsersVerbToTheDraftNotJustTheModelsType() {
         User user = user("u1", "USD", "UTC");
-        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE)).thenReturn(List.of(
                 category("c-transport", "Transport", CategoryKind.EXPENSE)));
 
         ParsedIntent draft = resolver.resolve(user, "paid 250 for uber yesterday",
@@ -495,7 +496,7 @@ class IntentResolverTest {
     @Test
     void resolve_asksAboutDirectionWhenTheGuessKindContradictsTheType() {
         User user = user("u1", "USD", "UTC");
-        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE)).thenReturn(List.of(
                 category("c-food", "Food & Drinks", CategoryKind.EXPENSE),
                 category("c-salary", "Salary", CategoryKind.INCOME)));
 
@@ -512,7 +513,7 @@ class IntentResolverTest {
     @Test
     void resolve_leavesAnUnmatchedGuessAloneRatherThanCallingItAContradiction() {
         User user = user("u1", "USD", "UTC");
-        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE)).thenReturn(List.of(
                 category("c-salary", "Salary", CategoryKind.INCOME)));
 
         ParsedIntent draft = resolver.resolve(user, "received 3000 consulting fee",
@@ -540,7 +541,7 @@ class IntentResolverTest {
     @Test
     void resolve_buildsACompleteIncomeDraft() {
         User user = user("u1", "USD", "UTC");
-        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE)).thenReturn(List.of(
                 category("c-free", "Freelance", CategoryKind.INCOME),
                 category("c-food", "Food & Drinks", CategoryKind.EXPENSE)));
 
@@ -558,7 +559,7 @@ class IntentResolverTest {
     @Test
     void resolve_asksOnlyForTheAmountWhenTheIncomeCategoryIsAlreadyClear() {
         User user = user("u1", "USD", "UTC");
-        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE)).thenReturn(List.of(
                 category("c-salary", "Salary", CategoryKind.INCOME)));
 
         ParsedIntent draft = resolver.resolve(user, "my salary was deposited",
@@ -575,7 +576,7 @@ class IntentResolverTest {
     @Test
     void resolve_treatsAnUnreadMessageAsACaptureWhenItPlainlyTalksAboutMoney() {
         User user = user("u1", "USD", "UTC");
-        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE)).thenReturn(List.of(
                 category("c-food", "Food & Drinks", CategoryKind.EXPENSE)));
 
         ParsedIntent draft = resolver.resolve(user, "20",
@@ -624,7 +625,7 @@ class IntentResolverTest {
     @Test
     void resolve_keepsTheAmountFromTheEarlierTurnWhenTheAnswerNamesTheCategory() {
         User user = user("u1", "USD", "UTC");
-        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE)).thenReturn(List.of(
                 category("c-food", "Food & Drinks", CategoryKind.EXPENSE)));
 
         // "I spent $20" left the category open; the user answers with one word.
@@ -641,7 +642,7 @@ class IntentResolverTest {
     @Test
     void resolve_keepsTheCategoryFromTheEarlierTurnWhenTheAnswerIsAnAmount() {
         User user = user("u1", "USD", "UTC");
-        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE)).thenReturn(List.of(
                 category("c-food", "Food & Drinks", CategoryKind.EXPENSE)));
 
         // "I paid for food" left the amount open.
@@ -657,7 +658,7 @@ class IntentResolverTest {
     @Test
     void resolve_doesNotLetAOneWordAnswerDragAGoodDraftBelowTheThreshold() {
         User user = user("u1", "USD", "UTC");
-        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE)).thenReturn(List.of(
                 category("c-food", "Food & Drinks", CategoryKind.EXPENSE)));
 
         ParsedIntent draft = resolver.resolve(user, "Food",
@@ -671,7 +672,7 @@ class IntentResolverTest {
     @Test
     void resolve_keepsTheDayTheFirstMessageNamedWhenTheAnswerSaysNothingAboutTime() {
         User user = user("u1", "USD", "Asia/Colombo");
-        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE)).thenReturn(List.of(
                 category("c-fuel", "Fuel", CategoryKind.EXPENSE)));
         ParsedIntent pending = pending(TransactionType.EXPENSE, 3000L, null, 0.9);
         pending.setTxnDate(instant("2026-07-27T00:00:00Z"));
@@ -686,7 +687,7 @@ class IntentResolverTest {
     @Test
     void resolve_letsAFreshValueWinOverTheCarriedOne() {
         User user = user("u1", "USD", "UTC");
-        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE)).thenReturn(List.of(
                 category("c-fuel", "Fuel", CategoryKind.EXPENSE)));
 
         ParsedIntent draft = resolver.resolve(user, "actually it was 30 on fuel",
@@ -700,7 +701,7 @@ class IntentResolverTest {
     @Test
     void resolve_dropsACarriedCategoryTheNewDirectionInvalidates() {
         User user = user("u1", "USD", "UTC");
-        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE)).thenReturn(List.of(
                 category("c-food", "Food & Drinks", CategoryKind.EXPENSE),
                 category("c-salary", "Salary", CategoryKind.INCOME)));
 

@@ -2,7 +2,10 @@
 # POST /api/v1/categories — create a category (USER/ADMIN).
 #   kind     : INCOME | EXPENSE
 #   parentId : optional; makes this a sub-category. One level deep, and the
-#              sub-category's kind must match its parent's.
+#              sub-category's kind must match its parent's. Must not be deleted.
+#   name     : must be free within this kind, compared case-insensitively — Food,
+#              food and FOOD are one category, so a second one returns 400. The same
+#              name in the other kind is fine ("Gifts" received vs given).
 source define-envars.sh;
 
 curl -kv -H "Authorization:Bearer $ACCESS_TOKEN" \

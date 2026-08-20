@@ -1,5 +1,6 @@
 package com.zenzmoney.core.service;
 
+import com.zenzmoney.common.domain.CategoryStatus;
 import com.zenzmoney.common.domain.CategoryKind;
 import com.zenzmoney.common.domain.TransactionType;
 import com.zenzmoney.common.exception.BadRequestException;
@@ -79,7 +80,7 @@ class TransactionServiceTest {
         User u = user();
         when(currentUser.requireUser()).thenReturn(u);
         when(accountService.requireAccountId(u)).thenReturn("a1");
-        when(categoryRepository.findByIdAndUserId("c1", "u1")).thenReturn(Optional.of(category("c1", kind)));
+        when(categoryRepository.findByIdAndUserIdAndStatus("c1", "u1", CategoryStatus.ACTIVE)).thenReturn(Optional.of(category("c1", kind)));
         when(transactionRepository.save(any())).thenAnswer(inv -> {
             Transaction t = inv.getArgument(0);
             t.setId("t1");
@@ -157,7 +158,7 @@ class TransactionServiceTest {
     void create_income_withExpenseCategory_rejected() {
         User u = user();
         when(currentUser.requireUser()).thenReturn(u);
-        when(categoryRepository.findByIdAndUserId("c1", "u1"))
+        when(categoryRepository.findByIdAndUserIdAndStatus("c1", "u1", CategoryStatus.ACTIVE))
                 .thenReturn(Optional.of(category("c1", CategoryKind.EXPENSE)));
 
         assertThrows(BadRequestException.class,
@@ -168,7 +169,7 @@ class TransactionServiceTest {
     @Test
     void create_categoryOfAnotherUser_throwsNotFound() {
         when(currentUser.requireUser()).thenReturn(user());
-        when(categoryRepository.findByIdAndUserId("c1", "u1")).thenReturn(Optional.empty());
+        when(categoryRepository.findByIdAndUserIdAndStatus("c1", "u1", CategoryStatus.ACTIVE)).thenReturn(Optional.empty());
 
         assertThrows(NotFoundException.class,
                 () -> transactionService.create(req(TransactionType.EXPENSE, "c1", 1_000)));
@@ -202,7 +203,7 @@ class TransactionServiceTest {
         when(currentUser.requireUser()).thenReturn(u);
         when(accountService.requireAccountId(u)).thenReturn("a1");
         when(transactionRepository.findByIdAndUserId("t1", "u1")).thenReturn(Optional.of(txn));
-        when(categoryRepository.findByIdAndUserId("c1", "u1"))
+        when(categoryRepository.findByIdAndUserIdAndStatus("c1", "u1", CategoryStatus.ACTIVE))
                 .thenReturn(Optional.of(category("c1", CategoryKind.EXPENSE)));
         when(transactionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 

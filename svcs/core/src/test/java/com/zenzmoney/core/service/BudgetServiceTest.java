@@ -4,6 +4,7 @@ import com.zenzmoney.common.domain.AccountStatus;
 import com.zenzmoney.common.domain.BudgetStatus;
 import com.zenzmoney.common.domain.BudgetPeriod;
 import com.zenzmoney.common.domain.CategoryKind;
+import com.zenzmoney.common.domain.CategoryStatus;
 import com.zenzmoney.common.domain.TimeUtils;
 import com.zenzmoney.common.domain.TransactionType;
 import com.zenzmoney.common.exception.BadRequestException;
@@ -117,7 +118,7 @@ class BudgetServiceTest {
     void create_categoryBudget_derivesCurrencyFromAccount_andComputesSpentForCategory() {
         when(currentUser.requireUser()).thenReturn(user("u1"));
         when(accountRepository.findByIdAndUserId("acc1", "u1")).thenReturn(Optional.of(account("acc1", "u1", "USD")));
-        when(categoryRepository.findByIdAndUserId("c1", "u1"))
+        when(categoryRepository.findByIdAndUserIdAndStatus("c1", "u1", CategoryStatus.ACTIVE))
                 .thenReturn(Optional.of(category("c1", "u1", CategoryKind.EXPENSE)));
         noActiveDuplicate("acc1", BudgetPeriod.MONTHLY, AUGUST);
         when(budgetRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -147,7 +148,7 @@ class BudgetServiceTest {
     void create_scopesSpentToTheBudgetsOwnAccount() {
         when(currentUser.requireUser()).thenReturn(user("u1"));
         when(accountRepository.findByIdAndUserId("acc2", "u1")).thenReturn(Optional.of(account("acc2", "u1", "USD")));
-        when(categoryRepository.findByIdAndUserId("c1", "u1"))
+        when(categoryRepository.findByIdAndUserIdAndStatus("c1", "u1", CategoryStatus.ACTIVE))
                 .thenReturn(Optional.of(category("c1", "u1", CategoryKind.EXPENSE)));
         noActiveDuplicate("acc2", BudgetPeriod.MONTHLY, AUGUST);
         when(budgetRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -173,7 +174,7 @@ class BudgetServiceTest {
 
         assertNull(resp.getCategoryId());
         assertEquals(9_000L, resp.getSpent());
-        verify(categoryRepository, never()).findByIdAndUserId(any(), any());
+        verify(categoryRepository, never()).findByIdAndUserIdAndStatus(any(), any(), any());
     }
 
     @Test
@@ -202,7 +203,7 @@ class BudgetServiceTest {
     void create_rejects_whenCategoryIsIncome() {
         when(currentUser.requireUser()).thenReturn(user("u1"));
         when(accountRepository.findByIdAndUserId("acc1", "u1")).thenReturn(Optional.of(account("acc1", "u1", "USD")));
-        when(categoryRepository.findByIdAndUserId("c1", "u1"))
+        when(categoryRepository.findByIdAndUserIdAndStatus("c1", "u1", CategoryStatus.ACTIVE))
                 .thenReturn(Optional.of(category("c1", "u1", CategoryKind.INCOME)));
 
         assertThrows(BadRequestException.class, () -> budgetService.create(
@@ -214,7 +215,7 @@ class BudgetServiceTest {
     void create_rejects_whenCategoryNotFound() {
         when(currentUser.requireUser()).thenReturn(user("u1"));
         when(accountRepository.findByIdAndUserId("acc1", "u1")).thenReturn(Optional.of(account("acc1", "u1", "USD")));
-        when(categoryRepository.findByIdAndUserId("c1", "u1")).thenReturn(Optional.empty());
+        when(categoryRepository.findByIdAndUserIdAndStatus("c1", "u1", CategoryStatus.ACTIVE)).thenReturn(Optional.empty());
 
         assertThrows(NotFoundException.class, () -> budgetService.create(
                 createReq("acc1", "c1", BudgetPeriod.MONTHLY, AUGUST, 50_000)));
@@ -256,7 +257,7 @@ class BudgetServiceTest {
     void create_rejects_duplicateActiveForSameAccountCategoryPeriodAndPeriodKey() {
         when(currentUser.requireUser()).thenReturn(user("u1"));
         when(accountRepository.findByIdAndUserId("acc1", "u1")).thenReturn(Optional.of(account("acc1", "u1", "USD")));
-        when(categoryRepository.findByIdAndUserId("c1", "u1"))
+        when(categoryRepository.findByIdAndUserIdAndStatus("c1", "u1", CategoryStatus.ACTIVE))
                 .thenReturn(Optional.of(category("c1", "u1", CategoryKind.EXPENSE)));
         when(budgetRepository.findByUserIdAndAccountIdAndPeriodAndPeriodKeyAndStatus(
                 "u1", "acc1", BudgetPeriod.MONTHLY, AUGUST, BudgetStatus.ACTIVE))
@@ -272,7 +273,7 @@ class BudgetServiceTest {
     void create_allowsSameCategory_inADifferentMonth() {
         when(currentUser.requireUser()).thenReturn(user("u1"));
         when(accountRepository.findByIdAndUserId("acc1", "u1")).thenReturn(Optional.of(account("acc1", "u1", "USD")));
-        when(categoryRepository.findByIdAndUserId("c1", "u1"))
+        when(categoryRepository.findByIdAndUserIdAndStatus("c1", "u1", CategoryStatus.ACTIVE))
                 .thenReturn(Optional.of(category("c1", "u1", CategoryKind.EXPENSE)));
         noActiveDuplicate("acc1", BudgetPeriod.MONTHLY, AUGUST);   // July's row is in a different slot
         when(budgetRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));

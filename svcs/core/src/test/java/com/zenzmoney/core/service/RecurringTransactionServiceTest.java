@@ -1,5 +1,6 @@
 package com.zenzmoney.core.service;
 
+import com.zenzmoney.common.domain.CategoryStatus;
 import com.zenzmoney.common.domain.CategoryKind;
 import com.zenzmoney.common.domain.RecurringCadence;
 import com.zenzmoney.common.domain.TransactionType;
@@ -102,7 +103,7 @@ class RecurringTransactionServiceTest {
         User u = user();
         when(currentUser.requireUser()).thenReturn(u);
         when(accountService.requireAccountId(u)).thenReturn("a1");
-        when(categoryRepository.findByIdAndUserId("c1", "u1"))
+        when(categoryRepository.findByIdAndUserIdAndStatus("c1", "u1", CategoryStatus.ACTIVE))
                 .thenReturn(Optional.of(category("c1", CategoryKind.EXPENSE)));
         when(payeeService.resolveOrCreate("u1", "Landlord")).thenReturn("p1");
         when(recurringRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -127,7 +128,7 @@ class RecurringTransactionServiceTest {
         User u = user();
         when(currentUser.requireUser()).thenReturn(u);
         when(accountService.requireAccountId(u)).thenReturn("a1");
-        when(categoryRepository.findByIdAndUserId("c1", "u1"))
+        when(categoryRepository.findByIdAndUserIdAndStatus("c1", "u1", CategoryStatus.ACTIVE))
                 .thenReturn(Optional.of(category("c1", CategoryKind.EXPENSE)));
         when(recurringRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
@@ -142,7 +143,7 @@ class RecurringTransactionServiceTest {
     void create_rejects_whenIncomeCategoryKindMismatch() {
         User u = user();
         when(currentUser.requireUser()).thenReturn(u);
-        when(categoryRepository.findByIdAndUserId("c1", "u1"))
+        when(categoryRepository.findByIdAndUserIdAndStatus("c1", "u1", CategoryStatus.ACTIVE))
                 .thenReturn(Optional.of(category("c1", CategoryKind.INCOME)));   // wrong kind for EXPENSE
 
         assertThrows(BadRequestException.class, () -> service.create(expenseReq(JAN_31_2023)));
@@ -153,7 +154,7 @@ class RecurringTransactionServiceTest {
     void create_rejects_whenCategoryBelongsToAnotherUser() {
         User u = user();
         when(currentUser.requireUser()).thenReturn(u);
-        when(categoryRepository.findByIdAndUserId("c1", "u1")).thenReturn(Optional.empty());
+        when(categoryRepository.findByIdAndUserIdAndStatus("c1", "u1", CategoryStatus.ACTIVE)).thenReturn(Optional.empty());
 
         assertThrows(NotFoundException.class, () -> service.create(expenseReq(JAN_31_2023)));
         verify(recurringRepository, never()).save(any());

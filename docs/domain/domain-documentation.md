@@ -247,6 +247,7 @@ Defined in `com.<pkg>.common.domain` (replacing `HabitStatus`), stored as
 ```java
 public enum AccountStatus    { ACTIVE, INACTIVE, DELETED }
 public enum CategoryKind     { INCOME, EXPENSE }
+public enum CategoryStatus   { ACTIVE, DELETED }
 public enum TransactionType  { INCOME, EXPENSE }
 public enum BudgetPeriod     { MONTHLY, YEARLY }
 public enum BudgetStatus     { ACTIVE, ARCHIVED, DELETED }
@@ -307,11 +308,14 @@ A hierarchical label used to classify transactions. Owned by one user.
 | `color` | `String(20)` | Optional. |
 | `icon` | `String(50)` | Optional. |
 | `sortOrder` | `int` | Default `0`. |
+| `status` | `CategoryStatus` | `ACTIVE` / `DELETED`. Delete is soft. |
 
 **Rules**
 - Hierarchy is **one level deep**: a category with a `parentId` may not itself be a parent. Enforced in the service layer.
 - A parent and its children must share the same `kind`.
-- A category referenced by any transaction or budget cannot be deleted; it may be left unused.
+- **One live category per (`userId`, `kind`, `name`), compared case-insensitively** (added 2026-08-20) — Food, food and FOOD are one category. Scoped to the kind so "Gifts" can be both an income and an expense category, which is a real distinction and never ambiguous: a transaction's category must match its type, so a picker only ever shows one kind. Enforced in the service and backed by the partial unique index `uq_category_name_per_kind` on `(user_id, kind, lower(name)) WHERE status = 'ACTIVE'` (`V7`).
+- **Delete is soft** (`status` → `DELETED`, added 2026-08-20) — a category with months of transactions behind it must still be removable from the picker, and those transactions keep pointing at it so a past month's breakdown can still name where the money went. A `DELETED` category is withdrawn from every list the user picks from and cannot be chosen for a new transaction, recurring template or budget; it stays readable by id, and its name is freed for reuse. Still refused while it would leave something dangling: a live sub-category (orphaned) or a live budget (measuring spend against a category nothing can be filed under).
+- **Reads split by purpose.** Offering categories to choose from uses live rows only; labelling history (`SpendingSnapshotService`, the category breakdown's join) reads them all, deleted included — otherwise last March's report loses its labels.
 - **Every** transaction carries a category — with `TRANSFER` gone, there is no category-less transaction type.
 - **Seed categories.** At onboarding each new user is provisioned a default set so the app is not empty (F-1.27). Suggested defaults:
   - **Income** (`kind = INCOME`): Salary, Business, Freelance, Investments, Gifts.

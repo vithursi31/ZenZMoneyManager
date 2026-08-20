@@ -2,6 +2,7 @@ package com.zenzmoney.core.entity;
 
 import com.zenzmoney.common.domain.BaseEntity;
 import com.zenzmoney.common.domain.CategoryKind;
+import com.zenzmoney.common.domain.CategoryStatus;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -37,4 +38,8 @@ public class Category extends BaseEntity {
 
     @Column(name = "sort_order", nullable = false)
     private int sortOrder;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 50)
+    private CategoryStatus status = CategoryStatus.ACTIVE;
 }

@@ -164,6 +164,7 @@ Schema is managed by **Flyway**: [svcs/core/src/main/resources/db/migration/](sv
 - `V4__onboarding_state.sql` — `app_user.onboarded`
 - `V5__budget_period_key.sql` — `budget.period_key` + `uq_budget_active_slot`
 - `V6__budget_soft_delete.sql` — widens `budget_status_check` for `DELETED`
+- `V7__category_soft_delete.sql` — `category.status` + `uq_category_name_per_kind` (case-insensitive)
 
 > **The multi-account schema has no migration yet.** `account.name`, `account.status`, and
 > `budget.account_id` exist in the entities but in **no `V<n>__` file** — locally they are there

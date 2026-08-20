@@ -1,6 +1,7 @@
 package com.zenzmoney.core.service;
 
 import com.zenzmoney.common.domain.CategoryKind;
+import com.zenzmoney.common.domain.CategoryStatus;
 import com.zenzmoney.common.domain.ChatMessageStatus;
 import com.zenzmoney.common.domain.ChatRole;
 import com.zenzmoney.common.domain.IntentType;
@@ -167,7 +168,8 @@ public class ChatService {
 
         // Only the user's own category names leave the app, and only to a model we
         // host (§9 privacy). Sorted so the same message always builds the same prompt.
-        List<String> categoryNames = categoryRepository.findByUserId(user.getId()).stream()
+        List<String> categoryNames = categoryRepository
+                .findByUserIdAndStatus(user.getId(), CategoryStatus.ACTIVE).stream()
                 .map(Category::getName)
                 .sorted(String.CASE_INSENSITIVE_ORDER)
                 .toList();
@@ -469,7 +471,8 @@ public class ChatService {
      */
     private void applyCategory(String userId, ParsedIntent draft, String categoryId) {
         if (categoryId != null) {
-            Category category = categoryRepository.findByIdAndUserId(categoryId, userId)
+            Category category = categoryRepository
+                    .findByIdAndUserIdAndStatus(categoryId, userId, CategoryStatus.ACTIVE)
                     .orElseThrow(() -> new NotFoundException("Category not found"));
             if (draft.getTxnType() == null) {
                 draft.setTxnType(category.getKind() == CategoryKind.INCOME
@@ -488,7 +491,8 @@ public class ChatService {
         }
         // Flipping expense to income leaves the old category the wrong kind; clearing it
         // turns a write the ledger would refuse into the next question instead.
-        boolean stillValid = categoryRepository.findByIdAndUserId(draft.getCategoryId(), userId)
+        boolean stillValid = categoryRepository
+                .findByIdAndUserIdAndStatus(draft.getCategoryId(), userId, CategoryStatus.ACTIVE)
                 .filter(c -> c.getKind() == kindFor(draft.getTxnType()))
                 .isPresent();
         if (!stillValid) {

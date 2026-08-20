@@ -1,5 +1,6 @@
 package com.zenzmoney.core.service;
 
+import com.zenzmoney.common.domain.CategoryStatus;
 import com.zenzmoney.common.domain.CategoryKind;
 import com.zenzmoney.common.domain.IntentType;
 import com.zenzmoney.common.domain.TransactionType;
@@ -149,7 +150,7 @@ class ChatSuggestionsTest {
 
     @Test
     void offersOnlyTheUsersOwnExpenseCategoriesForAnExpense() {
-        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE)).thenReturn(List.of(
                 category("c-salary", "Salary", CategoryKind.INCOME, 1),
                 category("c-fuel", "Fuel", CategoryKind.EXPENSE, 2),
                 category("c-food", "Food & Drinks", CategoryKind.EXPENSE, 1)));
@@ -168,7 +169,7 @@ class ChatSuggestionsTest {
 
     @Test
     void offersOnlyIncomeCategoriesForIncomeAndWordsTheQuestionForIt() {
-        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE)).thenReturn(List.of(
                 category("c-salary", "Salary", CategoryKind.INCOME, 1),
                 category("c-food", "Food & Drinks", CategoryKind.EXPENSE, 1)));
         ParsedIntent draft = draft(TransactionType.INCOME, 50000L, null);
@@ -183,7 +184,7 @@ class ChatSuggestionsTest {
 
     @Test
     void capsTheCategoryListSoTheChipsStayScannable() {
-        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE)).thenReturn(List.of(
                 category("c1", "Food & Drinks", CategoryKind.EXPENSE, 1),
                 category("c2", "Groceries", CategoryKind.EXPENSE, 2),
                 category("c3", "Transport", CategoryKind.EXPENSE, 3),
@@ -203,7 +204,7 @@ class ChatSuggestionsTest {
 
     @Test
     void stillAsksWhenTheUserHasNoCategoryOfThatKind() {
-        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(
+        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE)).thenReturn(List.of(
                 category("c-food", "Food & Drinks", CategoryKind.EXPENSE, 1)));
         ParsedIntent draft = draft(TransactionType.INCOME, 50000L, null);
         draft.getMissingFields().add("category");

@@ -1,6 +1,7 @@
 package com.zenzmoney.core.service;
 
 import com.zenzmoney.common.domain.CategoryKind;
+import com.zenzmoney.common.domain.CategoryStatus;
 import com.zenzmoney.common.domain.TimeUtils;
 import com.zenzmoney.common.domain.TransactionType;
 import com.zenzmoney.common.exception.BadRequestException;
@@ -174,7 +175,7 @@ public class TransactionService {
             throw new BadRequestException("Amount must be positive.");
         }
         String userId = user.getId();
-        Category category = categoryRepository.findByIdAndUserId(categoryId, userId)
+        Category category = categoryRepository.findByIdAndUserIdAndStatus(categoryId, userId, CategoryStatus.ACTIVE)
                 .orElseThrow(() -> new NotFoundException("Category not found"));
         CategoryKind expected = type == TransactionType.INCOME ? CategoryKind.INCOME : CategoryKind.EXPENSE;
         if (category.getKind() != expected) {

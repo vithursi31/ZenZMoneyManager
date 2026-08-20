@@ -4,6 +4,7 @@ import com.zenzmoney.common.domain.AccountStatus;
 import com.zenzmoney.common.domain.BudgetStatus;
 import com.zenzmoney.common.domain.BudgetPeriod;
 import com.zenzmoney.common.domain.CategoryKind;
+import com.zenzmoney.common.domain.CategoryStatus;
 import com.zenzmoney.common.domain.TimeUtils;
 import com.zenzmoney.common.domain.TransactionType;
 import com.zenzmoney.common.exception.BadRequestException;
@@ -71,7 +72,7 @@ public class BudgetService {
 
         String categoryId = normalizeId(req.getCategoryId());
         if (categoryId != null) {
-            Category category = categoryRepository.findByIdAndUserId(categoryId, userId)
+            Category category = categoryRepository.findByIdAndUserIdAndStatus(categoryId, userId, CategoryStatus.ACTIVE)
                     .orElseThrow(() -> new NotFoundException("Category not found"));
             if (category.getKind() != CategoryKind.EXPENSE) {
                 throw new BadRequestException("A budget category must be an EXPENSE category.");

@@ -1,8 +1,8 @@
-# Mobile API Guide — Onboarding, Account, Transactions & Budgets
+# Mobile API Guide — Onboarding, Account, Transactions, Budgets & Categories
 
 Scope: the sign-up-to-first-screen flow, the account endpoints those screens
-depend on, the transaction ledger the app is built around, and the budgets
-planned against it. In call order:
+depend on, the transaction ledger the app is built around, the budgets planned
+against it, and the categories everything is filed under. Roughly in call order:
 
 1. [Register](#1-register)
 2. [Verify email](#2-verify-email)
@@ -32,10 +32,21 @@ planned against it. In call order:
 26. [Update budget](#26-update-budget)
 27. [Archive budget](#27-archive-budget)
 28. [Delete budget](#28-delete-budget)
+29. [List categories](#29-list-categories)
+30. [Create category](#30-create-category)
+31. [Get one category](#31-get-one-category)
+32. [Update category](#32-update-category)
+33. [Delete category](#33-delete-category)
+34. [Seed default categories](#34-seed-default-categories)
 
-Other endpoints (categories, goals, recurring, chat) exist but are out of scope for this document.
-A transaction needs a `categoryId`, which comes from the category API — see the executable
-[`docs/api/api-category-*.sh`](api) scripts until that section is written here.
+Other endpoints (goals, recurring, chat) exist but are out of scope for this document.
+
+> **Categories are last but needed first.** Every transaction carries a `categoryId`
+> ([§15](#15-create-transaction)), so a client cannot record anything without one — but
+> it never has to *create* one to get started: [onboarding](#8-complete-onboarding) seeds
+> a full set. §§29–34 are the category-management screen, which is settings-time work
+> like accounts, not part of first run. Read [Categories — what the app must know
+> first](#categories--what-the-app-must-know-first) before building against them.
 
 ## Base URL
 
@@ -80,6 +91,15 @@ listed below — there are no others, and one code always means one thing.
 | 403 | `E1014` | Forbidden — authenticated but not allowed |
 | 404 | `E1010` | Not found (or not owned by the caller) |
 | 500 | `E1000` | Server defect. `message` is always generic; quote the `X-Correlation-Id` in a bug report |
+
+> **A body the server cannot parse currently answers `500 E1000`, not `400`.** That
+> covers malformed JSON and — the case a client hits by accident — **any enum field
+> sent with a value outside its set**: `kind` on a category, `type` on a transaction,
+> `period` on a budget. The request never reaches the validation layer, so no `E1015`
+> field message comes back either. Treat a `500` on a write as "check the payload"
+> before reporting it, and send enum values exactly as this document spells them.
+> Unknown paths (`404 E1010`) and unsupported methods (`405 E1013`) are reported
+> correctly.
 
 ### Rate limits — always with a `Retry-After` header
 
@@ -463,14 +483,14 @@ duplicate categories.
   "currency": "USD",
   "language": "en",
   "timezone": "America/New_York",
-  "categoryCount": 12
+  "categoryCount": 16
 }
 ```
 
 | Field | Notes |
 |---|---|
 | `accountId` | The primary account — created here if it didn't already exist (see [§9](#9-get-primary-account)). |
-| `categoryCount` | Total categories the user now has: the seeded default set, or their existing ones if they'd already been seeded. |
+| `categoryCount` | Total categories the user now has: the seeded default set (16 — see [§34](#34-seed-default-categories)), or their existing ones if they'd already been seeded. |
 
 ### Errors
 
@@ -1383,6 +1403,286 @@ budget can immediately be created for the same month and category.
 
 ---
 
+## Categories — what the app must know first
+
+**1. Every transaction needs one, and the kinds must match.** A category is either
+`INCOME` or `EXPENSE`, and an `INCOME` transaction requires an income category —
+mismatching them is a `400`, not a silent coercion. So a category picker must filter
+by the direction the user is entering.
+
+**2. The user already has 16.** [Onboarding](#8-complete-onboarding) seeds a full set,
+so the ledger works before this API is ever called. Nothing here is needed to get a
+first transaction recorded.
+
+**3. Names are unique per kind, compared case-insensitively.** `Food`, `food` and
+`FOOD` are one category, and a second one is refused. The same name in the *other*
+kind is allowed and often correct — "Gifts" received is an income category, "Gifts"
+given is an expense one, and they can never be confused because a picker only ever
+shows one kind.
+
+**4. One level of hierarchy, fixed at creation.** A category may have a `parentId`,
+but a child cannot itself be a parent, and it must share its parent's `kind`. Neither
+`kind` nor `parentId` can be changed afterwards — to re-file a category, create the
+one you want.
+
+**5. Delete is soft, and that is what makes it usable.** A category with months of
+transactions behind it can still be deleted: the row is kept, so
+[past reports keep naming it](#21-category-breakdown), while the category leaves every
+picker and can no longer be chosen for anything new. Its name is freed for reuse.
+
+### The category object
+
+Every endpoint in this section returns this shape:
+
+```json
+{
+  "id": "c31d0a77-...-uuid",
+  "name": "Food & Drinks",
+  "kind": "EXPENSE",
+  "parentId": null,
+  "color": "#F59E0B",
+  "icon": "utensils",
+  "sortOrder": 0,
+  "status": "ACTIVE"
+}
+```
+
+| Field | Notes |
+|---|---|
+| `name` | Trimmed server-side. Max 200 chars. Unique per (user, `kind`), case-insensitively. |
+| `kind` | `INCOME` or `EXPENSE`. Fixed at creation. |
+| `parentId` | `null` for a top-level category; otherwise its parent, which is always top-level and the same `kind`. Fixed at creation. |
+| `color` / `icon` | Optional display hints the client chooses the meaning of — the server stores and returns them untouched (max 20 / 50 chars). Both are `null` on every seeded category, so the app needs its own fallbacks. |
+| `sortOrder` | Client-chosen ordering within a kind. Defaults `0`; the seeded set numbers each kind from `0`. |
+| `status` | `ACTIVE` or `DELETED`. Delete is soft ([§33](#33-delete-category)): a deleted category never appears in a listing and cannot be chosen, but stays readable by id so old records can still be labelled. |
+
+> **`color` and `icon` cannot be cleared once set.** [Update](#32-update-category)
+> treats `null` as "leave unchanged", so there is no way to unset one — sending
+> `"color": null` keeps the old value. Send a new value to change it, and expect to
+> keep whatever was set last.
+
+---
+
+## 29. List Categories
+
+```
+GET /api/v1/categories
+```
+**Auth:** required (`Bearer <accessToken>`)
+
+Every live category the caller holds — the picker's data source.
+
+### Response `data`
+
+A JSON array of [category objects](#the-category-object), sorted **`kind`, then
+`sortOrder`, then `name`** — render in the order given.
+
+```json
+[
+  { "id": "c-salary", "name": "Salary", "kind": "INCOME", "parentId": null,
+    "color": null, "icon": null, "sortOrder": 0, "status": "ACTIVE" },
+  { "id": "c-food", "name": "Food & Drinks", "kind": "EXPENSE", "parentId": null,
+    "color": null, "icon": null, "sortOrder": 0, "status": "ACTIVE" }
+]
+```
+
+> **Flat, not nested, and live only.** Sub-categories come back as their own rows —
+> group on `parentId` if the UI wants a tree. Deleted categories are never returned,
+> and there is no `includeDeleted` flag; to resolve one that an old transaction still
+> points at, fetch it by id ([§31](#31-get-one-category)).
+
+There is no filter for `kind` — the list is small (16 by default), so filter client-side
+and the picker gets both directions from one call.
+
+### Errors
+
+- `401 E1060` / `E1061` / `E1062` — no token, an invalid one, or an expired one.
+
+---
+
+## 30. Create Category
+
+```
+POST /api/v1/categories
+```
+**Auth:** required (`Bearer <accessToken>`)
+
+### Request body
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `name` | string | yes | Non-blank, max 200 chars. Trimmed, then checked for a case-insensitive clash within the same `kind`. |
+| `kind` | string | yes | `INCOME` or `EXPENSE`. |
+| `parentId` | string | no | Makes this a sub-category. Must be one of the caller's own **live, top-level** categories of the **same kind**. |
+| `color` | string | no | Max 20 chars. |
+| `icon` | string | no | Max 50 chars. |
+| `sortOrder` | number | no | Defaults `0`. |
+
+```json
+{
+  "name": "Coffee",
+  "kind": "EXPENSE",
+  "parentId": "c-food",
+  "color": "#F59E0B",
+  "icon": "coffee",
+  "sortOrder": 3
+}
+```
+
+### Response `data`
+
+The created [category object](#the-category-object).
+
+### Errors
+
+- `400 E1015` — `name` blank or over 200 chars, `kind` missing, or `color`/`icon` over length.
+- `400 E1013` — a live category of this kind already holds that name (`"A category named 'FOOD' already exists."`), the parent already has a parent (`"Sub-categories are only one level deep."`), the parent's kind differs, or the parent is deleted.
+- `404 E1010` — no category with that `parentId` owned by the caller.
+- `500 E1000` — `kind` present but not `INCOME`/`EXPENSE`. See the [unreadable-body note](#generic-outcomes); send a valid value.
+- `401` — missing/invalid access token.
+
+---
+
+## 31. Get One Category
+
+```
+GET /api/v1/categories/{id}
+```
+**Auth:** required (`Bearer <accessToken>`)
+
+### Response `data`
+
+One [category object](#the-category-object).
+
+> **This is the one endpoint that returns deleted categories** — check `status` before
+> offering it as a choice. It exists so a client holding an old `categoryId` (from a
+> cached transaction, say) can still resolve a name to display.
+
+### Errors
+
+- `404 E1010` — no category with that id owned by the caller.
+- `401` — missing/invalid access token.
+
+---
+
+## 32. Update Category
+
+```
+PUT /api/v1/categories/{id}
+```
+**Auth:** required (`Bearer <accessToken>`)
+
+### Request body
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `name` | string | no | Max 200 chars. Must not clash, case-insensitively, with another live category of the same kind. |
+| `color` | string | no | Max 20 chars. |
+| `icon` | string | no | Max 50 chars. |
+| `sortOrder` | number | no | |
+
+```json
+{ "name": "Food & Drink", "color": "#EF4444", "sortOrder": 1 }
+```
+
+> **A partial update** — like [Update budget](#26-update-budget) and unlike
+> [Update transaction](#18-update-transaction). A field left out or sent as `null` is
+> left unchanged; a blank `name` is ignored rather than rejected.
+>
+> **`kind` and `parentId` are not editable**, and a deleted category cannot be edited
+> at all. Recasing a category's own name (`food` → `Food`) is fine — it only clashes
+> with *other* categories.
+
+### Response `data`
+
+The updated [category object](#the-category-object).
+
+### Errors
+
+- `400 E1015` — a field is over length.
+- `400 E1013` — another live category of this kind already holds that name, or this category is deleted (`"Category is deleted."`).
+- `404 E1010` — no category with that id owned by the caller.
+- `401` — missing/invalid access token.
+
+---
+
+## 33. Delete Category
+
+```
+DELETE /api/v1/categories/{id}
+```
+**Auth:** required (`Bearer <accessToken>`)
+
+> **A soft delete** — `status` becomes `DELETED` and the row is kept, like
+> [Delete budget](#28-delete-budget) and unlike
+> [Delete transaction](#19-delete-transaction). **Transactions already filed under it
+> are untouched and keep pointing at it**, which is the whole point: a category with
+> months of history behind it stays deletable, and
+> [Category breakdown](#21-category-breakdown) still names it in those months.
+>
+> What changes is availability: it leaves [§29](#29-list-categories), cannot be chosen
+> for a new transaction, recurring template or budget (those answer
+> `404 E1010`), cannot be edited, and frees its name for reuse. There is **no restore
+> endpoint**, so treat it as final in the UI.
+
+Refused while it would leave something dangling:
+
+| Refused when | Why |
+|---|---|
+| it has a live sub-category | the child would be orphaned — delete or re-file the children first |
+| a live budget targets it | the budget would go on measuring spend against a category nothing can be filed under. Delete or archive the budget first ([§28](#28-delete-budget) / [§27](#27-archive-budget)) |
+
+Existing **transactions never block it** — that is the difference from the old
+behaviour, where a category used even once could not be removed.
+
+### Response `data`
+
+```json
+{ "message": "Category deleted" }
+```
+
+### Errors
+
+- `400 E1013` — already deleted (`"Category already deleted."`), has live sub-categories, or a live budget targets it.
+- `404 E1010` — no category with that id owned by the caller.
+- `401` — missing/invalid access token.
+
+---
+
+## 34. Seed Default Categories
+
+```
+POST /api/v1/categories/seed-defaults
+```
+**Auth:** required (`Bearer <accessToken>`)
+
+Provisions the default set. [Onboarding](#8-complete-onboarding) already calls this, so
+a normal client never needs to — it exists for a user who has ended up with no
+categories at all.
+
+**Idempotent, and specifically: it does nothing if the caller has any live category**,
+returning the existing list untouched rather than duplicating it. It *will* seed again
+for a user who has deleted every category, since the check is on live rows.
+
+### Response `data`
+
+The caller's full category list, same shape and ordering as [§29](#29-list-categories) —
+either the 16 just created or the ones they already had.
+
+| Kind | Names |
+|---|---|
+| `INCOME` | Salary, Business, Freelance, Investments, Gifts |
+| `EXPENSE` | Food & Drinks, Groceries, Transport, Housing, Utilities, Entertainment, Health, Shopping, Education, Subscriptions, Other |
+
+`sortOrder` runs from `0` within each kind, in the order listed. These are ordinary
+user-owned rows — fully renameable and deletable, not a system table.
+
+### Errors
+
+- `401` — missing/invalid access token.
+
+---
+
 ## Suggested client flow
 
 ```
@@ -1418,6 +1718,11 @@ for the figure at the top of it. The reports screen adds
 three read the same rows, so they agree by construction — refresh them together after
 any write, and pass the same `accountId` to all of them when an account picker is on
 screen.
+
+Managing categories (§§29–34) is settings-time work like accounts: the seeded set
+covers first run, and [List categories](#29-list-categories) is what every category
+picker reads. Refresh that list after a create, rename or delete, since all three
+change what the picker may offer.
 
 The budget screen (§§22–28) sits beside the reports one: read it with
 [Monthly budget summary](#24-monthly-budget-summary) for whichever month the user is

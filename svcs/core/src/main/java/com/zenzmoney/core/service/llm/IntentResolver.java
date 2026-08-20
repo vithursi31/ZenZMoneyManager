@@ -1,6 +1,7 @@
 package com.zenzmoney.core.service.llm;
 
 import com.zenzmoney.common.domain.CategoryKind;
+import com.zenzmoney.common.domain.CategoryStatus;
 import com.zenzmoney.common.domain.IntentType;
 import com.zenzmoney.common.domain.TimeUtils;
 import com.zenzmoney.common.domain.TransactionType;
@@ -203,7 +204,8 @@ public class IntentResolver {
         draft.setAmountMinor(resolveAmount(extraction.getAmountRaw(), message, currency, carried));
         draft.setTxnDate(resolveTxnDate(extraction.getDateExpr(), user, carried));
 
-        List<Category> categories = categoryRepository.findByUserId(user.getId());
+        List<Category> categories = categoryRepository
+                .findByUserIdAndStatus(user.getId(), CategoryStatus.ACTIVE);
         TransactionType type = firstNonNull(resolveType(extraction.getTxnType(), message),
                 carried == null ? null : carried.getTxnType());
 
@@ -547,7 +549,8 @@ public class IntentResolver {
      * category name appears verbatim in the message, that beats the model's guess.
      */
     String resolveCategory(String userId, TransactionType type, String guess, String message) {
-        return resolveCategory(categoryRepository.findByUserId(userId), type, guess, message);
+        return resolveCategory(
+                categoryRepository.findByUserIdAndStatus(userId, CategoryStatus.ACTIVE), type, guess, message);
     }
 
     /** The same resolution against categories already loaded, so one draft is one query. */

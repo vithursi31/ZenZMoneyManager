@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# DELETE /api/v1/categories/{id} — delete a category (USER/ADMIN). Allowed only
-# when nothing references it: no sub-categories, no transactions, no budgets;
-# otherwise it returns 400 (leave it unused, or merge in a later phase). Pass the
-# id as arg 1 or set CATEGORY_ID.
+# DELETE /api/v1/categories/{id} — soft-delete a category (USER/ADMIN): status ->
+# DELETED, the row is kept. Transactions already filed under it keep pointing at it,
+# so past months still report under its name; it just leaves every picker, cannot be
+# chosen for a new transaction/recurring/budget, cannot be edited, and frees its name
+# for reuse. Still refused (400) while a live sub-category or a live budget would be
+# left dangling. Pass the id as arg 1 or set CATEGORY_ID.
 source define-envars.sh;
 
 CATEGORY_ID="${1:-${CATEGORY_ID:-}}"

@@ -1,6 +1,7 @@
 package com.zenzmoney.core.service;
 
 import com.zenzmoney.common.domain.CategoryKind;
+import com.zenzmoney.common.domain.CategoryStatus;
 import com.zenzmoney.common.domain.IntentType;
 import com.zenzmoney.common.domain.TransactionType;
 import com.zenzmoney.core.entity.Category;
@@ -112,7 +113,7 @@ public class ChatSuggestions {
         boolean income = type == TransactionType.INCOME;
         CategoryKind kind = income ? CategoryKind.INCOME : CategoryKind.EXPENSE;
 
-        List<ChatOptionView> options = new ArrayList<>(categoryRepository.findByUserId(userId).stream()
+        List<ChatOptionView> options = new ArrayList<>(categoryRepository.findByUserIdAndStatus(userId, CategoryStatus.ACTIVE).stream()
                 .filter(c -> c.getKind() == kind)
                 .sorted(Comparator.comparingInt(Category::getSortOrder).thenComparing(Category::getName))
                 .limit(MAX_CATEGORY_OPTIONS)

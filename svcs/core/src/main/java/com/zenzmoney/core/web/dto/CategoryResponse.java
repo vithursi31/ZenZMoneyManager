@@ -1,6 +1,7 @@
 package com.zenzmoney.core.web.dto;
 
 import com.zenzmoney.common.domain.CategoryKind;
+import com.zenzmoney.common.domain.CategoryStatus;
 import com.zenzmoney.core.entity.Category;
 import lombok.Getter;
 
@@ -14,6 +15,7 @@ public class CategoryResponse {
     private final String color;
     private final String icon;
     private final int sortOrder;
+    private final CategoryStatus status;
 
     private CategoryResponse(Category c) {
         this.id = c.getId();
@@ -23,6 +25,7 @@ public class CategoryResponse {
         this.color = c.getColor();
         this.icon = c.getIcon();
         this.sortOrder = c.getSortOrder();
+        this.status = c.getStatus();
     }
 
     public static CategoryResponse of(Category c) {

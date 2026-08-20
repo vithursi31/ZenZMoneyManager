@@ -1,5 +1,6 @@
 package com.zenzmoney.core.service;
 
+import com.zenzmoney.common.domain.CategoryStatus;
 import com.zenzmoney.common.domain.CategoryKind;
 import com.zenzmoney.common.domain.ChatMessageStatus;
 import com.zenzmoney.common.domain.ChatRole;
@@ -108,11 +109,12 @@ class ChatServiceTest {
         when(currentUser.requireUserId()).thenReturn("u1");
         when(rateLimitService.tryConsumeOrDeny(anyString(), any(RateLimitPolicy.class)))
                 .thenReturn(RateLimitResult.allow());
-        when(categoryRepository.findByUserId("u1")).thenReturn(List.of(food(), fuel(), salary()));
-        when(categoryRepository.findByIdAndUserId("c-food", "u1")).thenReturn(Optional.of(food()));
-        when(categoryRepository.findByIdAndUserId("c-fuel", "u1")).thenReturn(Optional.of(fuel()));
-        when(categoryRepository.findByIdAndUserId("c-salary", "u1")).thenReturn(Optional.of(salary()));
-        when(categoryRepository.findByIdAndUserId(eq("c-other-user"), anyString())).thenReturn(Optional.empty());
+        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE)).thenReturn(List.of(food(), fuel(), salary()));
+        when(categoryRepository.findByIdAndUserIdAndStatus("c-food", "u1", CategoryStatus.ACTIVE)).thenReturn(Optional.of(food()));
+        when(categoryRepository.findByIdAndUserIdAndStatus("c-fuel", "u1", CategoryStatus.ACTIVE)).thenReturn(Optional.of(fuel()));
+        when(categoryRepository.findByIdAndUserIdAndStatus("c-salary", "u1", CategoryStatus.ACTIVE)).thenReturn(Optional.of(salary()));
+        when(categoryRepository.findByIdAndUserIdAndStatus(
+                eq("c-other-user"), anyString(), eq(CategoryStatus.ACTIVE))).thenReturn(Optional.empty());
         when(snapshotService.snapshotFor(any())).thenReturn(snapshot(20_000L));
         when(adviceClient.answer(anyString(), any())).thenReturn("Food & Drinks is your biggest expense.");
         noPendingDraft();
