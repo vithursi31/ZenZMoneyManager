@@ -1,6 +1,7 @@
 package com.zenzmoney.core.web.filter;
 
 import com.zenzmoney.common.exception.UnauthorizedException;
+import com.zenzmoney.common.status.ServiceCodes;
 import com.zenzmoney.core.service.JwtTokenService;
 import io.jsonwebtoken.Claims;
 import jakarta.servlet.FilterChain;
@@ -106,11 +107,11 @@ class JwtAuthenticationFilterTest {
         filter().doFilter(authenticated(), response, (req, res) -> reached[0] = true);
 
         assertEquals(401, response.getStatus());
-        assertTrue(response.getContentAsString().contains("INVALID_TOKEN"));
+        assertTrue(response.getContentAsString().contains(ServiceCodes.SC_TOKEN_TYPE_MISMATCH.code()));
         assertTrue(!reached[0], "the chain must not run once the token is refused");
     }
 
-    /** A malformed token is still the filter's own business, and still answers INVALID_TOKEN. */
+    /** A malformed token is still the filter's own business, and still answers an invalid-token code. */
     @Test
     void malformedToken_stillAnswersInvalidToken() throws Exception {
         when(jwtTokenService.extractClaims("good-token"))
@@ -121,20 +122,20 @@ class JwtAuthenticationFilterTest {
         filter().doFilter(authenticated(), response, (req, res) -> reached[0] = true);
 
         assertEquals(401, response.getStatus());
-        assertTrue(response.getContentAsString().contains("INVALID_TOKEN"));
+        assertTrue(response.getContentAsString().contains(ServiceCodes.SC_TOKEN_INVALID.code()));
         assertTrue(!reached[0]);
     }
 
     @Test
     void unauthorizedException_keepsItsOwnErrorCode() throws Exception {
         when(jwtTokenService.extractClaims("good-token"))
-                .thenThrow(new UnauthorizedException("TOKEN_EXPIRED", "Token expired"));
+                .thenThrow(new UnauthorizedException(ServiceCodes.SC_TOKEN_EXPIRED));
         MockHttpServletResponse response = new MockHttpServletResponse();
 
         filter().doFilter(authenticated(), response, (req, res) -> { });
 
         assertEquals(401, response.getStatus());
-        assertTrue(response.getContentAsString().contains("TOKEN_EXPIRED"));
+        assertTrue(response.getContentAsString().contains(ServiceCodes.SC_TOKEN_EXPIRED.code()));
     }
 
     /** No token is anonymous, not an error — the 401/403 comes later from method security. */

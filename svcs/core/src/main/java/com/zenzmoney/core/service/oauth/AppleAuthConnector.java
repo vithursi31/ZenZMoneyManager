@@ -1,7 +1,9 @@
 package com.zenzmoney.core.service.oauth;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.zenzmoney.common.exception.ServiceException;
 import com.zenzmoney.common.exception.UnauthorizedException;
+import com.zenzmoney.common.status.ServiceCodes;
 import com.zenzmoney.core.web.dto.AppleAuthRequest;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
@@ -84,11 +86,16 @@ public class AppleAuthConnector {
 
     public AppleAuthResp verifyAuth(AppleAuthRequest req) {
         if (privateKey == null) {
-            throw new UnauthorizedException("CONFIG_MISSING", "Apple OAuth is not configured");
+            log.error("Apple sign-in is not configured — EC private key is missing");
+            throw new ServiceException(ServiceCodes.SC_PROVIDER_NOT_CONFIGURED
+                    .with("Apple sign-in is not available right now."));
         }
         String clientId = req.isMobileApp() ? clientIdMobile : clientIdWeb;
         if (clientId == null || clientId.isBlank()) {
-            throw new UnauthorizedException("CONFIG_MISSING", "Apple client id is not configured");
+            log.error("Apple sign-in is not configured — client id is missing (mobile={})",
+                    req.isMobileApp());
+            throw new ServiceException(ServiceCodes.SC_PROVIDER_NOT_CONFIGURED
+                    .with("Apple sign-in is not available right now."));
         }
         long startedAt = System.currentTimeMillis();
         try {
@@ -107,15 +114,16 @@ public class AppleAuthConnector {
     private void validateIdToken(String idToken, String clientId) {
         Claims claims = decodeIdToken(idToken);
         if (!APPLE_ISSUER.equals(claims.getIssuer())) {
-            throw new UnauthorizedException("VALIDATION_FAILED", "Invalid issuer");
+            throw new UnauthorizedException(ServiceCodes.SC_OAUTH_TOKEN_INVALID.with("Invalid Apple token issuer"));
         }
         Set<String> aud = claims.getAudience();
         if (aud == null || !aud.contains(clientId)) {
-            throw new UnauthorizedException("VALIDATION_FAILED", "Invalid audience");
+            throw new UnauthorizedException(ServiceCodes.SC_OAUTH_TOKEN_INVALID
+                    .with("Apple token issued for a different app"));
         }
         Date exp = claims.getExpiration();
         if (exp == null || exp.before(new Date())) {
-            throw new UnauthorizedException("VALIDATION_FAILED", "Apple id token expired");
+            throw new UnauthorizedException(ServiceCodes.SC_OAUTH_TOKEN_INVALID.with("Apple id token expired"));
         }
     }
 
@@ -124,17 +132,24 @@ public class AppleAuthConnector {
         try {
             String[] parts = idToken.split("\\.");
             if (parts.length < 2) {
-                throw new UnauthorizedException("VALIDATION_FAILED", "Malformed Apple id token");
+                throw new UnauthorizedException(
+                        ServiceCodes.SC_OAUTH_TOKEN_INVALID.with("Malformed Apple id token"));
             }
             String headerJson = new String(Base64.getUrlDecoder().decode(parts[0]));
             Map<String, Object> header = mapper.readValue(headerJson, Map.class);
             String kid = (String) header.get("kid");
             RSAPublicKey pub = getApplePublicKey(kid);
             return Jwts.parser().verifyWith(pub).build().parseSignedClaims(idToken).getPayload();
+        } catch (ServiceException e) {
+            // Fetching Apple's key set can fail with a 502 code of its own. Without this, the catch
+            // below would relabel a provider outage as a bad token and blame the caller for it.
+            throw e;
         } catch (JwtException | IllegalArgumentException e) {
-            throw new UnauthorizedException("VALIDATION_FAILED", "Apple id token verification failed: " + e.getMessage());
+            throw new UnauthorizedException(ServiceCodes.SC_OAUTH_TOKEN_INVALID
+                    .with("Apple id token verification failed: " + e.getMessage()));
         } catch (Exception e) {
-            throw new UnauthorizedException("VALIDATION_FAILED", "Apple id token parse failed: " + e.getMessage());
+            throw new UnauthorizedException(ServiceCodes.SC_OAUTH_TOKEN_INVALID
+                    .with("Apple id token parse failed: " + e.getMessage()));
         }
     }
 
@@ -158,11 +173,12 @@ public class AppleAuthConnector {
                 .bodyToMono(MAP_TYPE)
                 .block();
         if (json == null) {
-            throw new UnauthorizedException("VALIDATION_FAILED", "Apple keys endpoint returned empty");
+            throw new ServiceException(
+                    ServiceCodes.SC_APPLE_CONNECTOR_ERROR.with("Apple keys endpoint returned empty"));
         }
         List<Map<String, String>> keys = (List<Map<String, String>>) json.get("keys");
         if (keys == null) {
-            throw new UnauthorizedException("VALIDATION_FAILED", "Apple keys missing");
+            throw new ServiceException(ServiceCodes.SC_APPLE_CONNECTOR_ERROR.with("Apple keys missing"));
         }
         for (Map<String, String> k : keys) {
             if (kid.equals(k.get("kid"))) {
@@ -172,11 +188,12 @@ public class AppleAuthConnector {
                     return (RSAPublicKey) KeyFactory.getInstance("RSA")
                             .generatePublic(new RSAPublicKeySpec(new BigInteger(1, n), new BigInteger(1, e)));
                 } catch (Exception ex) {
-                    throw new UnauthorizedException("VALIDATION_FAILED", "Apple key parse failed");
+                    throw new ServiceException(ServiceCodes.SC_APPLE_CONNECTOR_ERROR.with("Apple key parse failed"));
                 }
             }
         }
-        throw new UnauthorizedException("VALIDATION_FAILED", "Apple key not found for kid: " + kid);
+        throw new UnauthorizedException(ServiceCodes.SC_OAUTH_TOKEN_INVALID
+                .with("Apple key not found for kid: " + kid));
     }
 
     @SuppressWarnings("unchecked")
@@ -198,13 +215,14 @@ public class AppleAuthConnector {
                 .block();
 
         if (body == null || body.containsKey("error")) {
-            throw new UnauthorizedException("VALIDATION_FAILED",
-                    "Apple token exchange failed: " + (body == null ? "no response" : body.get("error")));
+            throw new ServiceException(ServiceCodes.SC_APPLE_CONNECTOR_ERROR.with(
+                    "Apple token exchange failed: " + (body == null ? "no response" : body.get("error"))));
         }
 
         String idToken = (String) body.get("id_token");
         if (idToken == null) {
-            throw new UnauthorizedException("VALIDATION_FAILED", "Apple did not return id_token");
+            throw new ServiceException(
+                    ServiceCodes.SC_APPLE_CONNECTOR_ERROR.with("Apple did not return id_token"));
         }
         try {
             String[] parts = idToken.split("\\.");
@@ -214,7 +232,8 @@ public class AppleAuthConnector {
             r.setEmail((String) payload.get("email"));
             return r;
         } catch (Exception e) {
-            throw new UnauthorizedException("VALIDATION_FAILED", "Failed to parse Apple id_token: " + e.getMessage());
+            throw new UnauthorizedException(ServiceCodes.SC_OAUTH_TOKEN_INVALID
+                    .with("Failed to parse Apple id_token: " + e.getMessage()));
         }
     }
 

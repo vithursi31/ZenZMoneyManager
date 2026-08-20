@@ -1,14 +1,14 @@
 package com.zenzmoney.common.exception;
 
-import lombok.Getter;
+import com.zenzmoney.common.status.StatusCode;
 
-@Getter
-public class UnauthorizedException extends RuntimeException {
+/**
+ * A 401. The code is always explicit — there is no default, because "why the caller is not
+ * authenticated" is exactly what the client has to branch on.
+ */
+public class UnauthorizedException extends ServiceException {
 
-    private final String errorCode;
-
-    public UnauthorizedException(String errorCode, String message) {
-        super(message);
-        this.errorCode = errorCode;
+    public UnauthorizedException(StatusCode statusCode) {
+        super(statusCode);
     }
 }

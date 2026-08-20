@@ -72,18 +72,25 @@ Controller (@RestController / @Controller)
 
 - **[BaseEntity](svcs/common/src/main/java/com/zenzmoney/common/domain/BaseEntity.java)** — `@MappedSuperclass` every entity extends. Carries `String id` (UUID assigned in `@PrePersist` if unset), `createdTime`/`modifiedTime` (epoch-millis `Long`, JPA auditing), `createdBy`/`modifiedBy`, and `@Version version` for optimistic locking. Auditing is enabled by [JpaAuditingConfig](svcs/core/src/main/java/com/zenzmoney/core/config/JpaAuditingConfig.java) — never set audit fields by hand.
 
-- **[ApiResponse&lt;T&gt;](svcs/common/src/main/java/com/zenzmoney/common/dto/ApiResponse.java)** — the envelope for **every** JSON response: `{status, data, message, errorCode}`. Build with `ApiResponse.success(data)` / `ApiResponse.error(code, message)`. Controllers return `ResponseEntity<ApiResponse<T>>`. Never return a bare entity or map.
+- **[ApiResponse&lt;T&gt;](svcs/common/src/main/java/com/zenzmoney/common/dto/ApiResponse.java)** — the envelope for **every** JSON response: `{status, data, message, errorCode}`. Build with `ApiResponse.success(data)` / `ApiResponse.error(statusCode)`. Controllers return `ResponseEntity<ApiResponse<T>>`. Never return a bare entity or map. `error` takes a `StatusCode`, never a string — there is deliberately no way to mint a code from a literal.
 
-- **Exceptions → status + error code.** Throw the typed exception from `common/exception`; [GlobalExceptionHandler](svcs/core/src/main/java/com/zenzmoney/core/web/advice/GlobalExceptionHandler.java) translates it once at the boundary. Do not catch-and-wrap inside services, and do not build error responses in controllers.
+- **[StatusCode](svcs/common/src/main/java/com/zenzmoney/common/status/StatusCode.java) is the single fact about a failure** — its wire `errorCode`, its HTTP status, and its default message, in one immutable value. Codes live in exactly two registries: [StatusCodes](svcs/common/src/main/java/com/zenzmoney/common/status/StatusCodes.java) (the five the boundary machinery itself needs) and [ServiceCodes](svcs/common/src/main/java/com/zenzmoney/common/status/ServiceCodes.java) (everything else, banded by concern). `ServiceCodes` extends `StatusCodes`, so core code imports **one** registry. Override the message at a call site with `SC_X.with("…")` — same code, same status, different text.
+
+  **Bands.** `E1000`–`E1009` infrastructure · `E1010`–`E1019` generic request outcomes · `E1050`–`E1059` rate limits · `E1060`–`E1079` auth and identity · `E1080`–`E1099` reserved (billing, if it ever lands) · `E1100`–`E1199` per-feature domain codes, sub-banded (`E111x` account, `E112x` category, `E113x` payee, `E114x` transaction, `E115x` budget, `E116x` recurring, `E117x` savings goal, `E118x` chat) · `E1300`–`E1399` external connectors, one per system. A new code goes in its band or the band map is a lie.
+
+- **Exceptions → status + error code.** Throw the typed exception from `common/exception`; [GlobalExceptionHandler](svcs/core/src/main/java/com/zenzmoney/core/web/advice/GlobalExceptionHandler.java) translates it once at the boundary — reading both the status and the code off the `StatusCode`, so neither is written out there. Do not catch-and-wrap inside services, and do not build error responses in controllers.
 
   | Exception | HTTP | Code |
   |---|---|---|
-  | `NotFoundException` | 404 | `E1010` |
-  | `BadRequestException` | 400 | `E1013` |
-  | `ForbiddenException` | 403 | `E1014` |
-  | `UnauthorizedException` | 401 | carries its own `errorCode` |
-  | `TooManyRequestsException` | 429 | own code + `Retry-After` header |
-  | `MethodArgumentNotValidException` (bean validation) | 400 | `E1015` |
+  | `NotFoundException` | 404 | `SC_NOT_FOUND` (`E1010`) by default |
+  | `BadRequestException` | 400 | `SC_BAD_REQUEST` (`E1013`) by default |
+  | `ForbiddenException` | 403 | `SC_NOT_AUTHORIZED` (`E1014`) by default |
+  | `UnauthorizedException` | 401 | **no default** — the code is always explicit, because "why you aren't authenticated" is what the client branches on |
+  | `TooManyRequestsException` | 429 | explicit code + `Retry-After` header |
+  | `ServiceException` (the base) | from the code | anything that isn't one of the above — today the `502`/`503` provider failures |
+  | `MethodArgumentNotValidException` (bean validation) | 400 | `SC_VALIDATION_FAILED` (`E1015`) |
+
+  The three with a default keep a `(String message)` constructor: `new BadRequestException("Email already in use")` is `SC_BAD_REQUEST.with(…)` and still answers `E1013`. Reach for the `(StatusCode)` form when the client needs to tell this rejection from its siblings.
 
 - **Entities use raw foreign-key ID fields, not JPA relationships.** `Transaction.accountId` is a `String`, not `@ManyToOne Account` ([Transaction.java:32](svcs/core/src/main/java/com/zenzmoney/core/entity/Transaction.java#L32)). The only association mapping in the codebase is `User.roles` (`@ElementCollection`). Follow this — it keeps queries explicit and avoids lazy-loading traps (see `open-in-view=false` below).
 
@@ -119,7 +126,7 @@ Hybrid model, both paths converging on Spring Security's `SecurityContext`:
 > ```
 > The role is loaded into the JWT principal on the user's next login (`AppUserDetailsService` maps it to `ROLE_ADMIN`). When admin management is needed, replace this note with the chosen mechanism (config-driven bootstrap or an admin-only role endpoint).
 
-- **Access denied** splits by path: `/api/**` gets a JSON `ApiResponse.error("E1014", …)`; anything else redirects to `/error/403`.
+- **Access denied** splits by path: `/api/**` gets a JSON `ApiResponse.error(SC_NOT_AUTHORIZED)` (`403 E1014`); anything else redirects to `/error/403`.
 - **CORS** comes from [CorsConfig](svcs/core/src/main/java/com/zenzmoney/core/config/CorsConfig.java).
 - **Vestigial:** `/stripe/webhook` is permitted in `SecurityConfig` and skipped by the CSP filter, but there is no Stripe code in this repo. Don't build on it; remove it or implement it deliberately.
 
@@ -291,6 +298,7 @@ The full runbook (VM creation, firewall's two layers, secrets, day-2 ops, backup
 - **Money never touches a float.** Minor-unit `long` end to end — request DTO, entity, aggregate, response. A `double` or `BigDecimal` amount in a diff is a defect.
 - **Scope every query by the authenticated user.** A finder without `user_id` in a request path is an authorization bug even when the UI would never send another user's id.
 - **Every new endpoint gets `@RolesAllowed`** (or is a deliberate, reviewed addition to `PUBLIC_PATHS`). URL rules are permissive by design; the annotation is the control.
+- **Error codes come from the registry, never from a literal.** A new failure the client must distinguish gets a constant in [ServiceCodes](svcs/common/src/main/java/com/zenzmoney/common/status/ServiceCodes.java), in its band, with a default message — plus a row in the catalogue in [docs/mobile-api-guide.md](docs/mobile-api-guide.md). One code means one thing: reusing a code for a second meaning, or minting a second code for the same meaning, both make client branching wrong. The **code** is the contract and the **message** is not (the client localises by code) — so never let a code's meaning drift, and never let two codes be distinguishable when the security answer is that they must not be: a wrong email and a wrong password share `E1067` precisely so a caller cannot enumerate accounts.
 - **A feature ships with its logs.** A new service, endpoint, scheduled job, or external call is not done until you can tell from the log files what it did and why it failed — you will be reading them at 2am with no debugger. Concretely: **every state change gets a line** (create/update/delete, money moved, status transitioned) at `INFO` with the ids and the minor-unit amounts involved; **every failure path** gets `WARN` (expected/recoverable — a validation refusal, a provider timeout) or `ERROR` (unexpected — the thing that should never happen); **every external call** (SMTP, OAuth provider, LLM) logs its outcome and duration, since a slow dependency and a broken one look identical from the outside. Reads need nothing — [MdcContextFilter](svcs/core/src/main/java/com/zenzmoney/core/web/filter/MdcContextFilter.java) already records method, path, status, and duration for every request. Security-relevant events go to the `audit` channel in [AppLog](svcs/core/src/main/java/com/zenzmoney/core/logging/AppLog.java); pick the level by *who is at fault* (a client mistake is `DEBUG`, an abuse signal is `WARN`), and use parameterised `{}` messages, never string concatenation. **Log the shape, not the content**: ids, counts, amounts, enum values, durations — never a password, token, OTP, or bcrypt hash, and not free-form user text (a transaction note or chat message is the user's private financial detail, so log its length instead). A diff that adds a service with no logging is incomplete in review; see *Checking Logs* for where the lines land.
 - **Rate-limit every user-triggered action that sends email or costs money/compute** — OTP issuance, invites, password reset, and later the AI/OCR paths. Use [RedisRateLimitService](svcs/core/src/main/java/com/zenzmoney/core/service/ratelimit/RedisRateLimitService.java) with `tryConsumeOrDeny` (fail **closed**) for abuse-sensitive paths and `tryConsume` (fail **open**) only where availability genuinely beats throttling. Never lean on a provider's cap as the guardrail.
 - **Bind identity server-side across every step of a multi-step flow.** The OTP is issued and verified per `(email, purpose)`, and the reset resolves the user from that same email — so a client can't validate one account's code and reset another's. Preserve that property in any change to registration, verification, or reset.

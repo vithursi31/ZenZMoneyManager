@@ -1,6 +1,8 @@
 package com.zenzmoney.core.service.oauth;
 
+import com.zenzmoney.common.exception.ServiceException;
 import com.zenzmoney.common.exception.UnauthorizedException;
+import com.zenzmoney.common.status.ServiceCodes;
 import com.zenzmoney.core.web.dto.FacebookAuthRequest;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
@@ -39,10 +41,10 @@ public class FacebookAuthConnector {
 
     public FacebookAuthResp verifyAuth(FacebookAuthRequest req) {
         if (req.getType() == null) {
-            throw new UnauthorizedException("VALIDATION_FAILED", "Missing Facebook auth type");
+            throw new UnauthorizedException(ServiceCodes.SC_OAUTH_REQUEST_INVALID.with("Missing Facebook auth type"));
         }
         if (req.getValue() == null || req.getValue().isBlank()) {
-            throw new UnauthorizedException("VALIDATION_FAILED", "Missing Facebook auth value");
+            throw new UnauthorizedException(ServiceCodes.SC_OAUTH_REQUEST_INVALID.with("Missing Facebook auth value"));
         }
         requireConfig();
 
@@ -67,7 +69,9 @@ public class FacebookAuthConnector {
 
     private void requireConfig() {
         if (appId.isBlank() || appSecret.isBlank()) {
-            throw new UnauthorizedException("CONFIG_MISSING", "Facebook OAuth is not configured");
+            log.error("Facebook sign-in is not configured — app id or secret is missing");
+            throw new ServiceException(ServiceCodes.SC_PROVIDER_NOT_CONFIGURED
+                    .with("Facebook sign-in is not available right now."));
         }
     }
 
@@ -76,7 +80,9 @@ public class FacebookAuthConnector {
                 ? requestRedirect
                 : defaultRedirectUrl;
         if (redirect == null || redirect.isBlank()) {
-            throw new UnauthorizedException("CONFIG_MISSING", "Facebook redirect URI is not configured");
+            log.error("Facebook sign-in is not configured — redirect URI is missing");
+            throw new ServiceException(ServiceCodes.SC_PROVIDER_NOT_CONFIGURED
+                    .with("Facebook sign-in is not available right now."));
         }
 
         Map<String, Object> resp = webClient.get()
@@ -93,7 +99,8 @@ public class FacebookAuthConnector {
                 .block();
 
         if (resp == null || resp.get("access_token") == null) {
-            throw new UnauthorizedException("VALIDATION_FAILED", "Facebook did not return access_token");
+            throw new ServiceException(ServiceCodes.SC_FACEBOOK_CONNECTOR_ERROR
+                    .with("Facebook did not return access_token"));
         }
         return (String) resp.get("access_token");
     }
@@ -114,17 +121,20 @@ public class FacebookAuthConnector {
                 .block();
 
         if (resp == null || !(resp.get("data") instanceof Map<?, ?> dataMap)) {
-            throw new UnauthorizedException("VALIDATION_FAILED", "Facebook debug_token returned empty");
+            throw new ServiceException(ServiceCodes.SC_FACEBOOK_CONNECTOR_ERROR
+                    .with("Facebook debug_token returned empty"));
         }
         Map<String, Object> data = (Map<String, Object>) dataMap;
 
         Object isValid = data.get("is_valid");
         if (!(isValid instanceof Boolean b) || !b) {
-            throw new UnauthorizedException("VALIDATION_FAILED", "Facebook access token is not valid");
+            throw new UnauthorizedException(ServiceCodes.SC_OAUTH_TOKEN_INVALID
+                    .with("Facebook access token is not valid"));
         }
         Object tokenAppId = data.get("app_id");
         if (tokenAppId == null || !appId.equals(tokenAppId.toString())) {
-            throw new UnauthorizedException("VALIDATION_FAILED", "Facebook token issued for a different app");
+            throw new UnauthorizedException(ServiceCodes.SC_OAUTH_TOKEN_INVALID
+                    .with("Facebook token issued for a different app"));
         }
     }
 
@@ -141,13 +151,13 @@ public class FacebookAuthConnector {
                 .block();
 
         if (me == null) {
-            throw new UnauthorizedException("VALIDATION_FAILED", "Facebook /me returned empty");
+            throw new ServiceException(ServiceCodes.SC_FACEBOOK_CONNECTOR_ERROR.with("Facebook /me returned empty"));
         }
 
         String email = (String) me.get("email");
         if (email == null || email.isBlank()) {
-            throw new UnauthorizedException("VALIDATION_FAILED",
-                    "Facebook account has no email; please use another sign-in method");
+            throw new UnauthorizedException(ServiceCodes.SC_OAUTH_EMAIL_UNVERIFIED.with(
+                    "Facebook account has no email; please use another sign-in method"));
         }
 
         FacebookAuthResp r = new FacebookAuthResp();

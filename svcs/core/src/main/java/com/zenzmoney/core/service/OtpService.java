@@ -2,6 +2,7 @@ package com.zenzmoney.core.service;
 
 import com.zenzmoney.common.exception.BadRequestException;
 import com.zenzmoney.common.exception.TooManyRequestsException;
+import com.zenzmoney.common.status.ServiceCodes;
 import com.zenzmoney.core.entity.Verification;
 import com.zenzmoney.core.entity.Verification.Purpose;
 import com.zenzmoney.core.entity.Verification.Status;
@@ -40,8 +41,6 @@ public class OtpService {
 
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final int MAX_ATTEMPTS = 5;
-
-    private static final String RATE_LIMIT_CODE = "E1051";
 
     /**
      * Per-email throttle on code issuance (register, forgot-password, resends all
@@ -82,9 +81,9 @@ public class OtpService {
             log.warn("OTP request rate-limit exceeded for {} (purpose={})", email, purpose);
             audit.warn("OTP issuance denied for {} (purpose={}) — rate limit exceeded, retry after {}s",
                     email, purpose, rl.retryAfterSeconds());
-            throw new TooManyRequestsException(RATE_LIMIT_CODE,
+            throw new TooManyRequestsException(ServiceCodes.SC_OTP_RATE_LIMIT_EXCEEDED.with(
                     "Too many verification code requests. You can request up to 3 codes per 10 minutes, "
-                            + "5 per hour, and 10 per day. Please wait before trying again.",
+                            + "5 per hour, and 10 per day. Please wait before trying again."),
                     rl.retryAfterSeconds());
         }
 

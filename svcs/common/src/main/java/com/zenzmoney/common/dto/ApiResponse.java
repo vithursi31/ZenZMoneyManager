@@ -1,5 +1,6 @@
 package com.zenzmoney.common.dto;
 
+import com.zenzmoney.common.status.StatusCode;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -19,11 +20,15 @@ public class ApiResponse<T> {
         return resp;
     }
 
-    public static <T> ApiResponse<T> error(String errorCode, String message) {
+    /**
+     * The only way to build an error body: the code comes from the registry, never from a literal.
+     * Use {@link StatusCode#with(String)} for a call-site message.
+     */
+    public static <T> ApiResponse<T> error(StatusCode statusCode) {
         ApiResponse<T> resp = new ApiResponse<>();
         resp.status = "error";
-        resp.errorCode = errorCode;
-        resp.message = message;
+        resp.errorCode = statusCode.code();
+        resp.message = statusCode.description();
         return resp;
     }
 }

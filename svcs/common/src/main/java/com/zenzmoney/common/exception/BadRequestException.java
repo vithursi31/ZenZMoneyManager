@@ -1,8 +1,15 @@
 package com.zenzmoney.common.exception;
 
-public class BadRequestException extends RuntimeException {
+import com.zenzmoney.common.status.StatusCode;
+import com.zenzmoney.common.status.StatusCodes;
+
+public class BadRequestException extends ServiceException {
 
     public BadRequestException(String message) {
-        super(message);
+        super(StatusCodes.SC_BAD_REQUEST.with(message));
+    }
+
+    public BadRequestException(StatusCode statusCode) {
+        super(statusCode);
     }
 }

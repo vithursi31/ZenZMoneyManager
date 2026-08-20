@@ -67,14 +67,67 @@ On failure `status` is `"error"`, `data` is `null`, and `message`/`errorCode` ar
 }
 ```
 
+`errorCode` is the stable half of the contract and `message` is not: branch on the code, and treat
+`message` as display text that may be reworded or localised. Every code the API can answer with is
+listed below — there are no others, and one code always means one thing.
+
+### Generic outcomes
+
 | HTTP | errorCode | Meaning |
 |---|---|---|
-| 400 | `E1013` | Bad request (business-rule rejection, e.g. invalid password, duplicate email) |
-| 400 | `E1015` | Bean validation failure — message is `field: reason` |
-| 401 | varies (e.g. `INVALID_PASSWORD`, `INVALID_TOKEN`, `NO_TOKEN`) | Not authenticated / bad credentials / bad token |
+| 400 | `E1013` | Bad request — a business rule rejected the call (duplicate email, wrong category kind, last active account) |
+| 400 | `E1015` | Bean validation failure — `message` is `field: reason` |
 | 403 | `E1014` | Forbidden — authenticated but not allowed |
-| 404 | `E1010` | Not found |
-| 429 | `E1051` (OTP-related) | Rate limited — see `Retry-After` header |
+| 404 | `E1010` | Not found (or not owned by the caller) |
+| 500 | `E1000` | Server defect. `message` is always generic; quote the `X-Correlation-Id` in a bug report |
+
+### Rate limits — always with a `Retry-After` header
+
+| HTTP | errorCode | Fires on |
+|---|---|---|
+| 429 | `E1051` | Verification-code issuance (register, resend, forgot-password): 3 per 10 min, 5 per hour, 10 per day, per email |
+| 429 | `E1052` | Chat messages, and the AI insight path inside chat |
+| 429 | `E1053` | Failed logins for one account — **also locks the account**; the user must reset their password |
+
+### Authentication and identity
+
+| HTTP | errorCode | Meaning | What the client should do |
+|---|---|---|---|
+| 401 | `E1060` | No credential presented | Send the user to sign-in |
+| 401 | `E1061` | Token malformed, wrongly signed, or missing claims | Sign out, sign in again |
+| 401 | `E1062` | Access token expired | Call `/refresh-token`, retry once |
+| 401 | `E1063` | Wrong token type (refresh sent as access, or access sent to `/refresh-token`) | Fix the client; do not retry |
+| 401 | `E1064` | Token is valid but names no existing account | Sign out |
+| 401 | `E1065` | Account not active — email not verified yet | Route to email verification |
+| 401 | `E1066` | Account locked (see `E1053`) | Route to password reset |
+| 401 | `E1067` | Invalid email or password | Show one message; this code deliberately cannot tell you which half was wrong |
+| 401 | `E1068` | `currentPassword` doesn't match, on change-password | Re-prompt |
+| 401 | `E1069` | The account was created with a social login | Show the provider's button; `message` names the provider |
+
+### Social sign-in
+
+| HTTP | errorCode | Meaning |
+|---|---|---|
+| 401 | `E1070` | The social sign-in request was missing or had an unsupported `type`/value |
+| 401 | `E1071` | The provider's token failed verification (bad issuer/audience, expired, issued for another app) |
+| 401 | `E1072` | The provider supplied no verified email address — offer another sign-in method |
+| 502 | `E1304` / `E1305` / `E1306` | Google / Apple / Facebook could not be reached, or answered with an unusable response. Transient: retry |
+| 503 | `E1005` | That sign-in method is not configured on this server. Not the user's fault; hide the button |
+
+> **`E1005`, `E130x` and `E1062` are new in the 2026-08-20 status-code release, and the old 401 name
+> codes (`NO_TOKEN`, `INVALID_TOKEN`, `VALIDATION_FAILED`, `CONFIG_MISSING`, `INVALID_USERNAME`,
+> `INVALID_PASSWORD`, `USER_LOCKED`, `USER_NOT_ACTIVE`) are gone** — every 401 now carries an
+> `E1nnn` code. Two responses also changed status: an unconfigured OAuth provider was a `401` and is
+> now `503`, and a provider that cannot be reached was a `401` and is now `502`. A client that
+> treated any `401` as "sign out" will now correctly leave the user signed in through a provider
+> outage.
+
+### Codes not yet in use
+
+`E11xx` is reserved for per-feature domain codes (account, category, transaction, budget, recurring,
+savings goal, chat). Today those rejections all answer `E1013`; as individual ones are promoted to
+their own code they will be listed here and in the endpoint's own error list. A client should treat
+an unknown `E1nnn` as it treats the HTTP status.
 
 ## Authentication
 
@@ -214,7 +267,11 @@ Same shape as verify-email:
 
 ### Errors
 
-- `401` — wrong email/password, or account not yet verified.
+- `401 E1067` — wrong email or password (the two are indistinguishable on purpose).
+- `401 E1065` — account not yet verified.
+- `401 E1066` — account locked after too many failed attempts.
+- `401 E1069` — the account was created with a social login; `message` names the provider.
+- `429 E1053` — too many failed attempts; the account is now locked.
 
 > Social login (`/authenticate/google`, `/authenticate/apple`, `/authenticate/facebook`) exists but is out of scope here.
 
@@ -251,7 +308,7 @@ Returns the caller's identity and preferences. The client should call this right
 
 ### Errors
 
-- `401` — missing/invalid/expired access token.
+- `401 E1060` / `E1061` / `E1062` — no token, an invalid one, or an expired one.
 
 ---
 
@@ -287,7 +344,7 @@ Verifies the caller's current password before setting a new one. Only works for 
 ### Errors
 
 - `400 E1013` — new password fails validation, or the account isn't password-auth (e.g. `"This account uses google login and has no password to change."`).
-- `401 INVALID_PASSWORD` — `currentPassword` doesn't match.
+- `401 E1068` — `currentPassword` doesn't match.
 
 ---
 

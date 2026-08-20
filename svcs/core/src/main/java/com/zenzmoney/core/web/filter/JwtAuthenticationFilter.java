@@ -3,6 +3,8 @@ package com.zenzmoney.core.web.filter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zenzmoney.common.dto.ApiResponse;
 import com.zenzmoney.common.exception.UnauthorizedException;
+import com.zenzmoney.common.status.ServiceCodes;
+import com.zenzmoney.common.status.StatusCode;
 import com.zenzmoney.core.logging.AppLog;
 import com.zenzmoney.core.service.JwtTokenService;
 import io.jsonwebtoken.Claims;
@@ -87,8 +89,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 // either way it is the one token-type confusion this filter exists to stop.
                 audit.warn("Token rejected on {}: required access token, got '{}' (subject={})",
                         path, type, claims.getSubject());
-                writeError(response, "INVALID_TOKEN",
-                        "Required access token but found '" + type + "'");
+                writeError(response, ServiceCodes.SC_TOKEN_TYPE_MISMATCH
+                        .with("Required access token but found '" + type + "'"));
                 return;
             }
 
@@ -100,14 +102,15 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             SecurityContextHolder.getContext().setAuthentication(auth);
             log.debug("Authenticated {} for {}", email, path);
         } catch (UnauthorizedException e) {
-            audit.warn("Token rejected on {}: {} — {}", path, e.getErrorCode(), e.getMessage());
-            writeError(response, e.getErrorCode(), e.getMessage());
+            audit.warn("Token rejected on {}: {} — {}", path,
+                    e.getStatusCode().code(), e.getMessage());
+            writeError(response, e.getStatusCode());
             return;
         } catch (Exception e) {
-            // Malformed, expired, or wrong-signature token: e.getMessage() describes the failure and
-            // carries no secret, so it is safe to record. A burst of these is worth noticing.
+            // Anything JwtTokenService did not already label (it answers expiry and malformed tokens
+            // with their own codes). e.getMessage() carries no secret, so it is safe to record.
             audit.warn("Token rejected on {}: {}", path, e.getMessage());
-            writeError(response, "INVALID_TOKEN", e.getMessage());
+            writeError(response, ServiceCodes.SC_TOKEN_INVALID.with(e.getMessage()));
             return;
         }
 
@@ -133,9 +136,9 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         return (q != null && !q.isEmpty()) ? q : null;
     }
 
-    private void writeError(HttpServletResponse resp, String code, String desc) throws IOException {
-        resp.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+    private void writeError(HttpServletResponse resp, StatusCode statusCode) throws IOException {
+        resp.setStatus(statusCode.httpStatus());
         resp.setContentType("application/json");
-        objectMapper.writeValue(resp.getOutputStream(), ApiResponse.error(code, desc));
+        objectMapper.writeValue(resp.getOutputStream(), ApiResponse.error(statusCode));
     }
 }

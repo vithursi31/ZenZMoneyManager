@@ -1,6 +1,8 @@
 package com.zenzmoney.core.service.oauth;
 
+import com.zenzmoney.common.exception.ServiceException;
 import com.zenzmoney.common.exception.UnauthorizedException;
+import com.zenzmoney.common.status.ServiceCodes;
 import com.zenzmoney.core.web.dto.GoogleAuthRequest;
 import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Value;
@@ -57,7 +59,7 @@ public class GoogleAuthConnector {
 
     public GoogleAuthResp verifyAuth(GoogleAuthRequest req) {
         if (req.getType() == null) {
-            throw new UnauthorizedException("VALIDATION_FAILED", "Missing Google auth type");
+            throw new UnauthorizedException(ServiceCodes.SC_OAUTH_REQUEST_INVALID.with("Missing Google auth type"));
         }
         long startedAt = System.currentTimeMillis();
         try {
@@ -78,13 +80,16 @@ public class GoogleAuthConnector {
             case AccessToken: return validateAccessToken(req.getValue());
             case AuthCode:    return validateIdToken(exchangeCodeForIdToken(req.getValue()));
             default:
-                throw new UnauthorizedException("VALIDATION_FAILED", "Unsupported Google auth type");
+                throw new UnauthorizedException(ServiceCodes.SC_OAUTH_REQUEST_INVALID
+                        .with("Unsupported Google auth type"));
         }
     }
 
     private String exchangeCodeForIdToken(String code) {
         if (appId.isBlank() || appSecret.isBlank() || redirectUrl.isBlank()) {
-            throw new UnauthorizedException("CONFIG_MISSING", "Google OAuth is not configured");
+            log.error("Google sign-in is not configured — app id or secret is missing");
+            throw new ServiceException(ServiceCodes.SC_PROVIDER_NOT_CONFIGURED
+                    .with("Google sign-in is not available right now."));
         }
         MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
         form.add("code", code);
@@ -103,7 +108,7 @@ public class GoogleAuthConnector {
                 .block();
 
         if (resp == null || resp.get("id_token") == null) {
-            throw new UnauthorizedException("VALIDATION_FAILED", "Google did not return id_token");
+            throw new ServiceException(ServiceCodes.SC_GOOGLE_CONNECTOR_ERROR.with("Google did not return id_token"));
         }
         return (String) resp.get("id_token");
     }
@@ -118,7 +123,7 @@ public class GoogleAuthConnector {
                 .block();
 
         if (m == null) {
-            throw new UnauthorizedException("VALIDATION_FAILED", "Google tokeninfo returned empty");
+            throw new ServiceException(ServiceCodes.SC_GOOGLE_CONNECTOR_ERROR.with("Google tokeninfo returned empty"));
         }
         Object audObj = m.get("aud");
         Object emailVerifiedObj = m.get("email_verified");
@@ -126,13 +131,14 @@ public class GoogleAuthConnector {
 
         String email = emailObj == null ? null : emailObj.toString();
         if (email == null || email.isBlank()) {
-            throw new UnauthorizedException("VALIDATION_FAILED", "Google email missing");
+            throw new UnauthorizedException(ServiceCodes.SC_OAUTH_EMAIL_UNVERIFIED);
         }
         if (!Boolean.parseBoolean(String.valueOf(emailVerifiedObj))) {
-            throw new UnauthorizedException("VALIDATION_FAILED", "Google email not verified");
+            throw new UnauthorizedException(ServiceCodes.SC_OAUTH_EMAIL_UNVERIFIED);
         }
         if (!validAppIds.contains(audObj)) {
-            throw new UnauthorizedException("VALIDATION_FAILED", "Invalid Google client id");
+            throw new UnauthorizedException(ServiceCodes.SC_OAUTH_TOKEN_INVALID
+                    .with("Google token was issued for a different app"));
         }
 
         GoogleAuthResp r = new GoogleAuthResp();
@@ -151,7 +157,8 @@ public class GoogleAuthConnector {
                 .bodyToMono(MAP_TYPE)
                 .block();
         if (ti == null || !validAppIds.contains(ti.get("aud"))) {
-            throw new UnauthorizedException("VALIDATION_FAILED", "Invalid Google client id");
+            throw new UnauthorizedException(ServiceCodes.SC_OAUTH_TOKEN_INVALID
+                    .with("Google token was issued for a different app"));
         }
 
         Map<String, Object> u = webClient.get()
@@ -162,16 +169,16 @@ public class GoogleAuthConnector {
                 .bodyToMono(MAP_TYPE)
                 .block();
         if (u == null) {
-            throw new UnauthorizedException("VALIDATION_FAILED", "Google userinfo returned empty");
+            throw new ServiceException(ServiceCodes.SC_GOOGLE_CONNECTOR_ERROR.with("Google userinfo returned empty"));
         }
 
         String email = (String) u.get("email");
         Object verified = u.get("email_verified");
         if (email == null || email.isBlank()) {
-            throw new UnauthorizedException("VALIDATION_FAILED", "Google email missing");
+            throw new UnauthorizedException(ServiceCodes.SC_OAUTH_EMAIL_UNVERIFIED);
         }
         if (!(verified instanceof Boolean b) || !b) {
-            throw new UnauthorizedException("VALIDATION_FAILED", "Google email not verified");
+            throw new UnauthorizedException(ServiceCodes.SC_OAUTH_EMAIL_UNVERIFIED);
         }
 
         GoogleAuthResp r = new GoogleAuthResp();

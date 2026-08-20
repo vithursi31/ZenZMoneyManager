@@ -8,6 +8,7 @@ import com.zenzmoney.common.domain.TransactionType;
 import com.zenzmoney.common.exception.BadRequestException;
 import com.zenzmoney.common.exception.NotFoundException;
 import com.zenzmoney.common.exception.TooManyRequestsException;
+import com.zenzmoney.common.status.ServiceCodes;
 import com.zenzmoney.core.entity.Category;
 import com.zenzmoney.core.entity.ChatMessage;
 import com.zenzmoney.core.entity.ParsedIntent;
@@ -75,8 +76,6 @@ public class ChatService {
      * message text itself is NOT logged — it is free-form user input about their own finances.
      */
     private static final Logger log = AppLog.LLM;
-
-    private static final String RATE_LIMIT_CODE = "E1052";
 
     /** {@code chat_message.content} is VARCHAR(2000); a runaway generation must not break the insert. */
     private static final int MAX_REPLY_CHARS = 2000;
@@ -157,8 +156,8 @@ public class ChatService {
 
         RateLimitResult limit = rateLimitService.tryConsumeOrDeny("chat:" + user.getId(), CHAT_POLICY);
         if (!limit.allowed()) {
-            throw new TooManyRequestsException(RATE_LIMIT_CODE,
-                    "Too many chat messages. Please wait a moment before trying again.",
+            throw new TooManyRequestsException(ServiceCodes.SC_CHAT_RATE_LIMIT_EXCEEDED.with(
+                    "Too many chat messages. Please wait a moment before trying again."),
                     limit.retryAfterSeconds());
         }
 
@@ -387,9 +386,9 @@ public class ChatService {
             RateLimitResult limit = rateLimitService.tryConsumeOrDeny(
                     "chat-insight:" + user.getId(), INSIGHT_POLICY);
             if (!limit.allowed()) {
-                throw new TooManyRequestsException(RATE_LIMIT_CODE,
+                throw new TooManyRequestsException(ServiceCodes.SC_CHAT_RATE_LIMIT_EXCEEDED.with(
                         "I can only work through your figures a few times a minute. "
-                                + "Please try again shortly.",
+                                + "Please try again shortly."),
                         limit.retryAfterSeconds());
             }
             String answer = adviceClient.answer(question, snapshot);

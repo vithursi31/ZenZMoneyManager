@@ -1,20 +1,16 @@
 package com.zenzmoney.common.exception;
 
+import com.zenzmoney.common.status.StatusCode;
 import lombok.Getter;
 
-/**
- * Thrown when a caller exceeds a rate limit. Maps to HTTP 429; the
- * {@code retryAfterSeconds} hint is surfaced as a {@code Retry-After} header.
- */
+/** A 429. The {@code retryAfterSeconds} hint is surfaced as a {@code Retry-After} header. */
 @Getter
-public class TooManyRequestsException extends RuntimeException {
+public class TooManyRequestsException extends ServiceException {
 
-    private final String errorCode;
     private final long retryAfterSeconds;
 
-    public TooManyRequestsException(String errorCode, String message, long retryAfterSeconds) {
-        super(message);
-        this.errorCode = errorCode;
+    public TooManyRequestsException(StatusCode statusCode, long retryAfterSeconds) {
+        super(statusCode);
         this.retryAfterSeconds = retryAfterSeconds;
     }
 }

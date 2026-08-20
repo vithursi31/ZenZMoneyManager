@@ -1,6 +1,7 @@
 package com.zenzmoney.core.web.advice;
 
 import com.zenzmoney.common.dto.ApiResponse;
+import com.zenzmoney.common.status.StatusCodes;
 import com.zenzmoney.core.logging.AppLog;
 import com.zenzmoney.core.web.util.AuthUtil;
 import jakarta.servlet.http.HttpServletRequest;
@@ -33,7 +34,7 @@ public class AccessDeniedAdvice {
                 request.getMethod(), path, AuthUtil.currentUsername());
         if (path.startsWith("/api/")) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                    .body(ApiResponse.error("E1014", "Access denied"));
+                    .body(ApiResponse.error(StatusCodes.SC_NOT_AUTHORIZED));
         }
         ModelAndView mav = new ModelAndView("error/403");
         mav.addObject("pageTitle", "Access denied");

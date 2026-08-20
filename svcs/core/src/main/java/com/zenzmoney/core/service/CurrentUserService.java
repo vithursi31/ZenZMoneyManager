@@ -1,6 +1,7 @@
 package com.zenzmoney.core.service;
 
 import com.zenzmoney.common.exception.UnauthorizedException;
+import com.zenzmoney.common.status.ServiceCodes;
 import com.zenzmoney.core.entity.User;
 import com.zenzmoney.core.repository.UserRepository;
 import com.zenzmoney.core.web.util.AuthUtil;
@@ -25,10 +26,10 @@ public class CurrentUserService {
     public User requireUser() {
         String email = AuthUtil.currentUsername();
         if (email == null || AuthUtil.ANONYMOUS.equals(email)) {
-            throw new UnauthorizedException("NO_TOKEN", "Authentication required");
+            throw new UnauthorizedException(ServiceCodes.SC_AUTHORIZATION_MISSING);
         }
         return userRepository.findByEmail(email)
-                .orElseThrow(() -> new UnauthorizedException("INVALID_TOKEN", "Authenticated user not found"));
+                .orElseThrow(() -> new UnauthorizedException(ServiceCodes.SC_ACCOUNT_NOT_FOUND));
     }
 
     /** The authenticated user's id — the value every owned-entity query is scoped by. */

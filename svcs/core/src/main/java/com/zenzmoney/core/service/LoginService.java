@@ -3,6 +3,7 @@ package com.zenzmoney.core.service;
 import com.zenzmoney.common.domain.UserStatus;
 import com.zenzmoney.common.exception.TooManyRequestsException;
 import com.zenzmoney.common.exception.UnauthorizedException;
+import com.zenzmoney.common.status.ServiceCodes;
 import com.zenzmoney.core.entity.User;
 import com.zenzmoney.core.logging.AppLog;
 import com.zenzmoney.core.repository.UserRepository;
@@ -27,8 +28,6 @@ public class LoginService {
      * be reconstructed from it, which is worthless if reading it hands over live credentials.
      */
     private static final Logger audit = AppLog.AUDIT;
-
-    private static final String RATE_LIMIT_CODE = "E1053";
 
     /**
      * Per-account throttle on wrong-password attempts — mirrors {@code OtpService.OTP_POLICY}:
@@ -59,20 +58,22 @@ public class LoginService {
     @Transactional
     public AuthenticationResponse login(String emailRaw, String password) {
         if (emailRaw == null || password == null) {
-            throw new UnauthorizedException("INVALID_USERNAME", "Invalid email or password");
+            throw new UnauthorizedException(ServiceCodes.SC_INVALID_CREDENTIALS);
         }
         String email = emailRaw.toLowerCase().trim();
 
         Optional<User> found = userRepository.findByEmail(email);
         if (found.isEmpty()) {
             audit.info("Login denied for {} — no such account", email);
-            throw new UnauthorizedException("INVALID_USERNAME", "Invalid email or password");
+            // Same code and message as a wrong password: a client that could tell the two apart
+            // could enumerate which emails hold accounts here.
+            throw new UnauthorizedException(ServiceCodes.SC_INVALID_CREDENTIALS);
         }
         User user = found.get();
 
         if (user.isLocked()) {
             audit.warn("Login denied for {} — account locked", email);
-            throw new UnauthorizedException("USER_LOCKED", "Account is locked");
+            throw new UnauthorizedException(ServiceCodes.SC_ACCOUNT_LOCKED);
         }
 
         if (!"password".equals(user.getAuthMode()) && user.isSystemGeneratedPassword()) {
@@ -81,14 +82,14 @@ public class LoginService {
                 provider = Character.toUpperCase(provider.charAt(0)) + provider.substring(1);
             }
             audit.info("Login denied for {} — account uses {} login", email, user.getAuthMode());
-            throw new UnauthorizedException("VALIDATION_FAILED",
-                    "This account was created using " + provider + " login. Please use 'Login with " + provider + "'.");
+            throw new UnauthorizedException(ServiceCodes.SC_ACCOUNT_USES_SOCIAL_LOGIN.with(
+                    "This account was created using " + provider
+                            + " login. Please use 'Login with " + provider + "'."));
         }
 
         if (user.getStatus() != UserStatus.ACTIVE) {
             audit.info("Login denied for {} — account status {}", email, user.getStatus());
-            throw new UnauthorizedException("USER_NOT_ACTIVE",
-                    "Account is not active. Please verify your email.");
+            throw new UnauthorizedException(ServiceCodes.SC_ACCOUNT_SUSPENDED);
         }
 
         if (passwordEncoder.matches(password, user.getPasswordHash())) {
@@ -106,12 +107,13 @@ public class LoginService {
             userRepository.save(user);
             audit.warn("Account {} locked — wrong-password attempts exceeded the rate limit, retry after {}s",
                     email, rl.retryAfterSeconds());
-            throw new TooManyRequestsException(RATE_LIMIT_CODE,
-                    "Too many failed login attempts. Your account has been locked; reset your password to regain access.",
+            throw new TooManyRequestsException(ServiceCodes.SC_LOGIN_RATE_LIMIT_EXCEEDED.with(
+                    "Too many failed login attempts. Your account has been locked; "
+                            + "reset your password to regain access."),
                     rl.retryAfterSeconds());
         }
 
         audit.info("Login denied for {} — wrong password", email);
-        throw new UnauthorizedException("INVALID_PASSWORD", "Invalid email or password");
+        throw new UnauthorizedException(ServiceCodes.SC_INVALID_CREDENTIALS);
     }
 }

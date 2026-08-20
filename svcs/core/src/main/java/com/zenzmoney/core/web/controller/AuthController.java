@@ -2,6 +2,7 @@ package com.zenzmoney.core.web.controller;
 
 import com.zenzmoney.common.dto.ApiResponse;
 import com.zenzmoney.common.exception.UnauthorizedException;
+import com.zenzmoney.common.status.ServiceCodes;
 import com.zenzmoney.core.service.JwtTokenService;
 import com.zenzmoney.core.service.LoginService;
 import com.zenzmoney.core.service.OAuthLoginService;
@@ -100,15 +101,16 @@ public class AuthController {
     public ResponseEntity<ApiResponse<Map<String, String>>> refresh(
             @RequestHeader("Authorization") String authHeader) {
         if (authHeader == null || authHeader.isBlank()) {
-            throw new UnauthorizedException("NO_TOKEN", "Missing authorization header");
+            throw new UnauthorizedException(
+                    ServiceCodes.SC_AUTHORIZATION_MISSING.with("Missing authorization header"));
         }
         String token = authHeader.startsWith("Bearer ") ? authHeader.substring(7) : authHeader.trim();
 
         Claims claims = jwtTokenService.extractClaims(token);
         String type = jwtTokenService.extractTokenType(claims);
         if (!JwtTokenService.TYPE_REFRESH.equals(type)) {
-            throw new UnauthorizedException("INVALID_TOKEN",
-                    "Required refresh token but found '" + type + "'");
+            throw new UnauthorizedException(ServiceCodes.SC_TOKEN_TYPE_MISMATCH
+                    .with("Required refresh token but found '" + type + "'"));
         }
 
         String accessToken = jwtTokenService.generateAccessToken(claims.getSubject());

@@ -10,6 +10,15 @@ A self-contained reference for re-implementing the MindMap AI auth flow in anoth
 
 The original code uses an internal `infinistack` framework (`Context`, `Result<T>`, `Session`, `Store<P,Q>`, `TxExecutor`). Below, those are replaced with plain Spring + JPA equivalents so you can paste directly.
 
+> **The string codes in the snippets below (`NO_TOKEN`, `INVALID_TOKEN`, `INVALID_USERNAME`, …) are
+> the original's, kept so the snippets stay readable next to it. ZenZ does not use them any more** —
+> every failure carries a `StatusCode` from
+> [ServiceCodes](common/src/main/java/com/zenzmoney/common/status/ServiceCodes.java) (`E1060`,
+> `E1061`, `E1067`, …); see the registry and the band map in [CLAUDE.md](../CLAUDE.md). One snippet
+> below is also **deliberately not** what ZenZ does: it returns `INVALID_USERNAME` for an unknown
+> email and `INVALID_PASSWORD` for a wrong one, which lets a caller enumerate accounts. ZenZ answers
+> `E1067` to both.
+
 ---
 
 ## 1. Dependencies (Maven)

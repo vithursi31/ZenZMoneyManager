@@ -2,9 +2,11 @@ package com.zenzmoney.core.service;
 
 import com.zenzmoney.common.domain.UserStatus;
 import com.zenzmoney.common.exception.UnauthorizedException;
+import com.zenzmoney.common.status.ServiceCodes;
 import com.zenzmoney.core.entity.User;
 import com.zenzmoney.core.repository.UserRepository;
 import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.ExpiredJwtException;
 import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
@@ -71,26 +73,28 @@ public class JwtTokenService {
                     .build()
                     .parseSignedClaims(token)
                     .getPayload();
+        } catch (ExpiredJwtException e) {
+            throw new UnauthorizedException(ServiceCodes.SC_TOKEN_EXPIRED);
         } catch (JwtException | IllegalArgumentException e) {
-            throw new UnauthorizedException("INVALID_TOKEN", e.getMessage());
+            throw new UnauthorizedException(ServiceCodes.SC_TOKEN_INVALID.with(e.getMessage()));
         }
 
         String type = claims.get(CLAIM_TYPE, String.class);
         if (type == null) {
-            throw new UnauthorizedException("INVALID_TOKEN", "Missing token type");
+            throw new UnauthorizedException(ServiceCodes.SC_TOKEN_INVALID.with("Missing token type"));
         }
 
         if (TYPE_ACCESS.equals(type) || TYPE_REFRESH.equals(type)) {
             String email = claims.getSubject();
             if (email == null || email.isBlank()) {
-                throw new UnauthorizedException("INVALID_TOKEN", "Missing subject");
+                throw new UnauthorizedException(ServiceCodes.SC_TOKEN_INVALID.with("Missing subject"));
             }
             Optional<User> u = userRepository.findByEmail(email);
             if (u.isEmpty()) {
-                throw new UnauthorizedException("INVALID_TOKEN", "Account does not exist");
+                throw new UnauthorizedException(ServiceCodes.SC_ACCOUNT_NOT_FOUND);
             }
             if (u.get().getStatus() != UserStatus.ACTIVE) {
-                throw new UnauthorizedException("INVALID_TOKEN", "Account is not active");
+                throw new UnauthorizedException(ServiceCodes.SC_ACCOUNT_SUSPENDED);
             }
         }
 

@@ -2,6 +2,7 @@ package com.zenzmoney.core.service;
 
 import com.zenzmoney.common.exception.BadRequestException;
 import com.zenzmoney.common.exception.UnauthorizedException;
+import com.zenzmoney.common.status.ServiceCodes;
 import com.zenzmoney.core.entity.User;
 import com.zenzmoney.core.logging.AppLog;
 import com.zenzmoney.core.repository.UserRepository;
@@ -43,7 +44,7 @@ public class ChangePasswordService {
         if (!passwordEncoder.matches(currentPassword, user.getPasswordHash())) {
             audit.warn("Password change denied for {} (user {}) — wrong current password",
                     user.getEmail(), user.getId());
-            throw new UnauthorizedException("INVALID_PASSWORD", "Current password is incorrect");
+            throw new UnauthorizedException(ServiceCodes.SC_CURRENT_PASSWORD_INVALID);
         }
 
         user.setPasswordHash(passwordEncoder.encode(newPassword));

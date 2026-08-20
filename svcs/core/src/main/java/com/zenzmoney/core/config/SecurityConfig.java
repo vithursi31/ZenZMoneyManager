@@ -2,6 +2,7 @@ package com.zenzmoney.core.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zenzmoney.common.dto.ApiResponse;
+import com.zenzmoney.common.status.StatusCodes;
 import com.zenzmoney.core.logging.AppLog;
 import com.zenzmoney.core.web.util.AuthUtil;
 import com.zenzmoney.core.web.filter.JwtAuthenticationFilter;
@@ -81,7 +82,7 @@ public class SecurityConfig {
                 response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                 response.setContentType("application/json");
                 mapper.writeValue(response.getOutputStream(),
-                        ApiResponse.error("E1014", "Access denied"));
+                        ApiResponse.error(StatusCodes.SC_NOT_AUTHORIZED));
             } else {
                 response.sendRedirect("/error/403");
             }
