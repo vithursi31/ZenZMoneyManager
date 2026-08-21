@@ -24,7 +24,6 @@ Product docs — read these before designing any finance feature:
 | [docs/domain/domain-documentation.md](docs/domain/domain-documentation.md) | The consolidated domain model — entities, ERD, enums, invariants, per-part scope. The authority on schema shape. |
 | [docs/roadmap.md](docs/roadmap.md) | Phase sequencing and what is deliberately unscheduled. |
 | [docs/features/chat-transaction-entry-plan.md](docs/features/chat-transaction-entry-plan.md) | Design rationale for F-1.11 (NLP transaction entry) — now implemented. |
-| [docs/features/multi-language-messages-plan.md](docs/features/multi-language-messages-plan.md) | Design and remaining work for F-1.26 (multi-language). The server-side message path has shipped — this records *why* a message key is a separate identity from an error code, and what is still English. |
 | [docs/features/push-notifications-fcm-plan.md](docs/features/push-notifications-fcm-plan.md) | Plan for F-1.20 notifications — **FCM push over the existing REST API**, device-token registration, and the audience seam Phase 3 sharing (F-3.3) extends. Records why no WebSocket is being built: chat is request/response, and the reminders that matter fire while the app is closed. |
 | [svcs/AUTH_FLOW_PORTABLE.md](svcs/AUTH_FLOW_PORTABLE.md) | Framework-free walkthrough of the whole auth flow. |
 | [docs/production-release.md](docs/production-release.md) | The prd release process — pre-flight gates, versioning/tagging, build, deploy, verify, rollback. Read with [DEPLOYMENT.md](DEPLOYMENT.md), which is the one-time infrastructure runbook. |
@@ -121,11 +120,15 @@ throw new BadRequestException(Msg.CATEGORY_DUPLICATE, name);   // service: key +
 - **A configured language with no bundle is dropped at startup, with an ERROR line.** Because this is Spring config it can be overridden per profile or by env var on a running server, where the only symptom would otherwise be a language a user can select that silently answers in English — [SupportedLanguages](svcs/core/src/main/java/com/zenzmoney/core/util/SupportedLanguages.java) checks the classpath instead. **English is not removable**: `messages.properties` *is* the English bundle and every other language falls back to it key by key.
 - **Only four places render a message**, and they are all boundary code: [GlobalExceptionHandler](svcs/core/src/main/java/com/zenzmoney/core/web/advice/GlobalExceptionHandler.java), [AccessDeniedAdvice](svcs/core/src/main/java/com/zenzmoney/core/web/advice/AccessDeniedAdvice.java) (where `@RolesAllowed` actually refuses a caller), [JwtAuthenticationFilter](svcs/core/src/main/java/com/zenzmoney/core/web/filter/JwtAuthenticationFilter.java) (401s written before the dispatcher runs), and the access-denied handler in [SecurityConfig](svcs/core/src/main/java/com/zenzmoney/core/config/SecurityConfig.java) (the filter-chain fallback for the same thing). A fifth would be a bug: it means something below the web layer acquired a `Locale`.
 - **Language precedence:** the signed-in user's stored `language`, then `Accept-Language`, then English. The stored value wins because the picker is a promise; the header is what exists before a user does. Resolved **lazily on the error path** ([RequestLocale](svcs/core/src/main/java/com/zenzmoney/core/i18n/RequestLocale.java)), so a successful request pays nothing, and it never throws — an exception raised while rendering an exception loses the original failure.
+- **A client discovers the list at runtime** from `GET /api/v1/onboarding/languages` (`OnboardingService.listLanguages`), which mirrors the existing `/currencies` picker and is built from the same property — so a picker can never offer a language the write path would refuse. Display names come from the JDK, not a hand-kept table; Chinese is named by script ("Chinese (Simplified)") because that is what its two bundles differ by.
+- **What gets written to `app_user.language` is the matched bundle's tag, not what the client sent** — `en-US`/`en-GB`/`en-UK` all store as `en`, `pt-BR` as `pt`, `zh-HK` as `zh-TW`. One stored value per bundle, and whatever `GET /me` returns can be sent straight back.
 - **`errorCode` is never localised**, and neither are field names in an `E1015` message, enum values, currency codes, or ISO dates. **Do not put a money amount in a message** — clients format money.
 - **Logs stay English.** One exception yields two strings: the caller's language on the wire, `Locale.ENGLISH` in the log. `audit.log` is kept a year and is read with grep; a Sinhala line there is both unreadable and unsearchable.
 - **Watch the apostrophes.** Any entry with `{0}` is a `MessageFormat` pattern where `'` escapes the next character — write `''{0}''`. A stray quote in a *translated* string breaks that string only, which is why the completeness test parses every pattern in every language.
 
-> **Still English, deliberately:** chat replies (`ChatService`, `ChatSuggestions`), the LLM prompt language, and the Thymeleaf templates. The infrastructure above serves them unchanged — see [docs/features/multi-language-messages-plan.md](docs/features/multi-language-messages-plan.md) §7.3.
+> **Still English, deliberately:** chat replies (`ChatService`, `ChatSuggestions`), the LLM prompt language, and the Thymeleaf templates. The machinery above serves them unchanged when they are picked up — a chat sentence becomes a `Msg` key like any other. Tracked on **F-1.26** in [features-list.md](docs/features-list.md).
+>
+> **Every bundle except English is machine-assisted and unreviewed** — each file says so in its header. The mechanics are proven (key-complete, every `{0}` interpolates, quoting holds); the *wording* has had no native speaker over it. Review is per-language: bless one bundle, or drop its tag from the property to withdraw it.
 
 ## Web Layer
 
@@ -177,6 +180,8 @@ Hybrid model, both paths converging on Spring Security's `SecurityContext`:
 | `POST /reset-password` | public | OTP + new password → tokens |
 | `POST /refresh-token` | refresh token in `Authorization` | New access token |
 | `GET /me` | `USER`/`ADMIN` | Current user |
+| `PUT /me` | `USER`/`ADMIN` | Update first/last name and `language` (the only way to change language after onboarding) |
+| `POST /change-password` | `USER`/`ADMIN` | Change password |
 | `GET /admin/ping` | `ADMIN` | Admin smoke check |
 
 **Pages** — `/` (`home`), `/dashboard` (`USER`/`ADMIN`), `/admin` (`ADMIN`), `/error/{403,404,500}`, `POST /logout` → `/?logout=true`. `/login` and `/register` page mappings are **commented out** in [MarketingPageController](svcs/core/src/main/java/com/zenzmoney/core/web/controller/MarketingPageController.java) even though the templates exist — the header links to them and currently 404s.

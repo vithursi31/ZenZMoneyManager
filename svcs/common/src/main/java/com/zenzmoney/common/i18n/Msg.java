@@ -4,8 +4,8 @@ import static com.zenzmoney.common.i18n.MessageKey.of;
 
 /**
  * Every user-facing sentence the API can answer with, as a key. Text lives in the bundles under
- * {@code core/src/main/resources/i18n/}; the band map and the naming convention are documented in
- * docs/features/multi-language-messages-plan.md.
+ * {@code core/src/main/resources/i18n/}; the rules for adding one are in CLAUDE.md under
+ * "Messages and Languages".
  *
  * <p>A key is not an error code. Codes stay coarse and are the client's contract
  * ({@link com.zenzmoney.common.status.ServiceCodes}); keys are one-per-rejection and decide only
