@@ -11,39 +11,39 @@ against it, and the categories everything is filed under. Roughly in call order:
 5. [Change password](#5-change-password)
 6. [Update profile](#6-update-profile)
 7. [Get available currencies](#7-get-available-currencies)
-8. [Complete onboarding](#8-complete-onboarding)
-9. [Get primary account](#9-get-primary-account)
-10. [List active accounts](#10-list-active-accounts)
-11. [Get one account](#11-get-one-account)
-12. [Create account](#12-create-account)
-13. [Rename account](#13-rename-account)
-14. [Delete account](#14-delete-account)
-15. [Create transaction](#15-create-transaction)
-16. [List transactions](#16-list-transactions)
-17. [Get one transaction](#17-get-one-transaction)
-18. [Update transaction](#18-update-transaction)
-19. [Delete transaction](#19-delete-transaction)
-20. [Monthly summary](#20-monthly-summary)
-21. [Category breakdown](#21-category-breakdown)
-22. [Create budget](#22-create-budget)
-23. [List budgets](#23-list-budgets)
-24. [Monthly budget summary](#24-monthly-budget-summary)
-25. [Get one budget](#25-get-one-budget)
-26. [Update budget](#26-update-budget)
-27. [Archive budget](#27-archive-budget)
-28. [Delete budget](#28-delete-budget)
-29. [List categories](#29-list-categories)
-30. [Create category](#30-create-category)
-31. [Get one category](#31-get-one-category)
-32. [Update category](#32-update-category)
-33. [Delete category](#33-delete-category)
-34. [Seed default categories](#34-seed-default-categories)
+8. [Complete onboarding](#9-complete-onboarding)
+9. [Get primary account](#10-get-primary-account)
+10. [List active accounts](#11-list-active-accounts)
+11. [Get one account](#12-get-one-account)
+12. [Create account](#13-create-account)
+13. [Rename account](#14-rename-account)
+14. [Delete account](#15-delete-account)
+15. [Create transaction](#16-create-transaction)
+16. [List transactions](#17-list-transactions)
+17. [Get one transaction](#18-get-one-transaction)
+18. [Update transaction](#19-update-transaction)
+19. [Delete transaction](#20-delete-transaction)
+20. [Monthly summary](#21-monthly-summary)
+21. [Category breakdown](#22-category-breakdown)
+22. [Create budget](#23-create-budget)
+23. [List budgets](#24-list-budgets)
+24. [Monthly budget summary](#25-monthly-budget-summary)
+25. [Get one budget](#26-get-one-budget)
+26. [Update budget](#27-update-budget)
+27. [Archive budget](#28-archive-budget)
+28. [Delete budget](#29-delete-budget)
+29. [List categories](#30-list-categories)
+30. [Create category](#31-create-category)
+31. [Get one category](#32-get-one-category)
+32. [Update category](#33-update-category)
+33. [Delete category](#34-delete-category)
+34. [Seed default categories](#35-seed-default-categories)
 
 Other endpoints (goals, recurring, chat) exist but are out of scope for this document.
 
 > **Categories are last but needed first.** Every transaction carries a `categoryId`
-> ([§15](#15-create-transaction)), so a client cannot record anything without one — but
-> it never has to *create* one to get started: [onboarding](#8-complete-onboarding) seeds
+> ([§16](#16-create-transaction)), so a client cannot record anything without one — but
+> it never has to *create* one to get started: [onboarding](#9-complete-onboarding) seeds
 > a full set. §§29–34 are the category-management screen, which is settings-time work
 > like accounts, not part of first run. Read [Categories — what the app must know
 > first](#categories--what-the-app-must-know-first) before building against them.
@@ -90,21 +90,23 @@ A client that branches on `errorCode` needs no changes at all.
 
 The language is chosen server-side, in this order:
 
-1. **The signed-in user's stored `language`** (set at [onboarding](#8-complete-onboarding), changed
+1. **The signed-in user's stored `language`** (set at [onboarding](#9-complete-onboarding), changed
    later via [Update Profile](#6-update-profile)). This wins — it is the language the user picked.
 2. **The `Accept-Language` request header**, for anything with no signed-in user: register, login,
    verify-email, forgot-password, and any request whose token was rejected.
 3. **English.**
 
-Supported today, 12 bundles:
+Supported today, 12 bundles — fetch this list at runtime from
+[Get Available Languages](#8-get-available-languages) rather than hard-coding it:
 
-| Tag | Language | | Tag | Language | | Tag | Language |
-|---|---|---|---|---|---|---|---|
-| `en` | English | | `pt` | Portuguese | | `ru` | Russian |
-| `zh-CN` | Chinese (Simplified) | | `de` | German | | `ja` | Japanese |
-| `zh-TW` | Chinese (Traditional) | | `it` | Italian | | `ko` | Korean |
-| `fr` | French | | `si` | Sinhala | | | |
-| `es` | Spanish | | | | | | |
+| Tag | Language | Tag | Language |
+|---|---|---|---|
+| `en` | English | `de` | German |
+| `zh-CN` | Chinese (Simplified) | `it` | Italian |
+| `zh-TW` | Chinese (Traditional) | `ru` | Russian |
+| `fr` | French | `ja` | Japanese |
+| `es` | Spanish | `ko` | Korean |
+| `pt` | Portuguese | `si` | Sinhala |
 
 **Region is ignored; script is not.** `fr-CA`, `pt-BR`, `es-MX` and `si-LK` all resolve to their
 language, so there is nothing regional to send. Chinese is the exception, because the script changes
@@ -119,6 +121,28 @@ A tag outside the set falls back to English rather than being an error, and `Acc
 honoured with its q-values, so `nl;q=1.0, zh-TW;q=0.8` gets Traditional Chinese. Sending
 `Accept-Language` on every request is harmless and is the right default: it is what the user sees
 before they have signed in.
+
+### What gets stored
+
+Anywhere you *write* a language — `locale` on [Register](#1-register), `language` on
+[Update Profile](#6-update-profile) and [Complete Onboarding](#9-complete-onboarding) — the server
+stores **the tag of the bundle it matched, not the tag you sent**:
+
+| You send | Stored, and returned by `GET /me` |
+|---|---|
+| `en-US`, `en-GB`, `en-UK`, `en_US`, `en-Latn-US` | `en` |
+| `pt-BR`, `pt-PT` | `pt` |
+| `fr-CA`, `fr-FR` | `fr` |
+| `si-LK` | `si` |
+| `zh-HK`, `zh-MO`, `zh-Hant` | `zh-TW` |
+| `zh-SG`, `zh-Hans`, `zh` | `zh-CN` |
+
+So there is exactly one stored value per bundle, and `GET /me` never surprises you with a regional
+variant you have to parse. **Round-tripping is safe**: whatever `GET /me` returns can be sent
+straight back. Only Chinese keeps a region, because there the region names a genuinely different
+bundle.
+
+Underscores are accepted (`en_US`) since some platforms produce them, and case is not significant.
 
 > **Translations other than English are machine-assisted and not yet reviewed by native speakers.**
 > Treat the wording as provisional; the `errorCode` is not.
@@ -243,7 +267,7 @@ Creates a user in `PENDING` status and emails a 6-digit OTP for verification. Re
 > **`locale` and `timezone` are hints, not enumerated choices — there's no fixed list to validate against, unlike currency (§7).**
 > - `timezone` must be a valid **IANA/Olson zone ID** (e.g. `America/New_York`, `Asia/Colombo`) — the same format both Android (`TimeZone.getDefault().getID()`) and iOS (`NSTimeZone.local.identifier`) already report natively, so just pass the OS value through.
 > - `locale` is free-form BCP-47; only its country part is used, to guess a starting currency.
-> - Neither is validated strictly here: an unparseable value is **silently ignored** and registration still succeeds — this endpoint is lenient because these are just hints. That's different from [Complete Onboarding](#8-complete-onboarding), where the user explicitly picks a timezone/currency and a bad value is rejected with `400`.
+> - Neither is validated strictly here: an unparseable value is **silently ignored** and registration still succeeds — this endpoint is lenient because these are just hints. That's different from [Complete Onboarding](#9-complete-onboarding), where the user explicitly picks a timezone/currency and a bad value is rejected with `400`.
 
 ### Response `data`
 
@@ -374,6 +398,7 @@ Returns the caller's identity and preferences. The client should call this right
 |---|---|
 | `onboarded` | `false` means `activeCurrency`/`language`/`timezone` are provisional guesses from signup, not confirmed choices. |
 | `activeCurrency` | ISO-4217 code. |
+| `language` | Always a tag from the [supported list](#message-is-localised-errorcode-is-not-f-126), never the regional variant you sent — see [What gets stored](#what-gets-stored). |
 
 ### Errors
 
@@ -500,7 +525,7 @@ Sorted alphabetically by `code`. Pseudo-currencies (precious metals, "no currenc
 
 ---
 
-## 7b. Get Available Languages
+## 8. Get Available Languages
 
 ```
 GET /api/v1/onboarding/languages
@@ -523,6 +548,8 @@ order, English first.
 ]
 ```
 
+*(First four of twelve; the full list is returned.)*
+
 | Field | Notes |
 |---|---|
 | `tag` | What to send back as `language`, and what `GET /me` returns. Send it verbatim. |
@@ -534,11 +561,13 @@ the script is what the two entries actually differ by.
 
 ### Errors
 
-- `401` — missing/invalid access token.
+- `403 E1014` — no token at all. A request with no credential reaches this endpoint as anonymous and
+  is refused by method security, so it is a 403, not a 401.
+- `401 E1061` / `E1062` — a token that was presented but is invalid or expired.
 
 ---
 
-## 8. Complete Onboarding
+## 9. Complete Onboarding
 
 ```
 POST /api/v1/onboarding
@@ -582,8 +611,8 @@ duplicate categories.
 
 | Field | Notes |
 |---|---|
-| `accountId` | The primary account — created here if it didn't already exist (see [§9](#9-get-primary-account)). |
-| `categoryCount` | Total categories the user now has: the seeded default set (16 — see [§34](#34-seed-default-categories)), or their existing ones if they'd already been seeded. |
+| `accountId` | The primary account — created here if it didn't already exist (see [§10](#10-get-primary-account)). |
+| `categoryCount` | Total categories the user now has: the seeded default set (16 — see [§35](#35-seed-default-categories)), or their existing ones if they'd already been seeded. |
 
 ### Errors
 
@@ -593,7 +622,7 @@ duplicate categories.
 
 ---
 
-## 9. Get Primary Account
+## 10. Get Primary Account
 
 ```
 GET /api/v1/account
@@ -627,12 +656,12 @@ onboarding runs, as long as the registration `locale` hint resolved to one.
 
 ### Errors
 
-- `400 E1013` — no active currency set yet (registration's locale hint didn't resolve to one, and onboarding hasn't run — call [Complete Onboarding](#8-complete-onboarding) first).
+- `400 E1013` — no active currency set yet (registration's locale hint didn't resolve to one, and onboarding hasn't run — call [Complete Onboarding](#9-complete-onboarding) first).
 - `401` — missing/invalid access token.
 
 ---
 
-## 10. List Active Accounts
+## 11. List Active Accounts
 
 ```
 GET /api/v1/account/active
@@ -640,7 +669,7 @@ GET /api/v1/account/active
 **Auth:** required (`Bearer <accessToken>`)
 
 Returns every `ACTIVE` account the caller currently holds — a user may hold
-more than one. Unlike [Get Primary Account](#9-get-primary-account), this
+more than one. Unlike [Get Primary Account](#10-get-primary-account), this
 never creates anything, so it can return an empty array before any account
 exists.
 
@@ -659,7 +688,7 @@ exists.
 
 ---
 
-## 11. Get One Account
+## 12. Get One Account
 
 ```
 GET /api/v1/account/{id}
@@ -670,7 +699,7 @@ Fetch one specific account by id, scoped to the caller.
 
 ### Response `data`
 
-Same shape as [Get Primary Account](#9-get-primary-account).
+Same shape as [Get Primary Account](#10-get-primary-account).
 
 ### Errors
 
@@ -679,7 +708,7 @@ Same shape as [Get Primary Account](#9-get-primary-account).
 
 ---
 
-## 12. Create Account
+## 13. Create Account
 
 ```
 POST /api/v1/account
@@ -703,7 +732,7 @@ caller's active currency — there's no way to give it a different currency.
 
 ### Response `data`
 
-Same shape as [Get Primary Account](#9-get-primary-account), for the new account.
+Same shape as [Get Primary Account](#10-get-primary-account), for the new account.
 
 ### Errors
 
@@ -713,7 +742,7 @@ Same shape as [Get Primary Account](#9-get-primary-account), for the new account
 
 ---
 
-## 13. Rename Account
+## 14. Rename Account
 
 ```
 PUT /api/v1/account/{id}/name
@@ -734,7 +763,7 @@ Renames one of the caller's own accounts.
 
 ### Response `data`
 
-Same shape as [Get Primary Account](#9-get-primary-account), with the new name.
+Same shape as [Get Primary Account](#10-get-primary-account), with the new name.
 
 ### Errors
 
@@ -745,7 +774,7 @@ Same shape as [Get Primary Account](#9-get-primary-account), with the new name.
 
 ---
 
-## 14. Delete Account
+## 15. Delete Account
 
 ```
 DELETE /api/v1/account/{id}
@@ -793,12 +822,12 @@ or zero amount is rejected.
 
 **3. The app does not choose the account or the currency.** Neither is accepted in a
 request body. The server stamps the transaction with the caller's active currency and
-resolves it to their primary account ([§9](#9-get-primary-account)) — so there is
+resolves it to their primary account ([§10](#10-get-primary-account)) — so there is
 currently **no way to post a transaction to a specific account**, even though a user
 may hold several. Both come back on the response.
 
 There is no stored balance anywhere. The figure for a month is summed from these rows
-on read — see [Monthly summary](#20-monthly-summary).
+on read — see [Monthly summary](#21-monthly-summary).
 
 ### The transaction object
 
@@ -831,7 +860,7 @@ Every endpoint in this section returns this shape:
 
 ---
 
-## 15. Create Transaction
+## 16. Create Transaction
 
 ```
 POST /api/v1/transactions
@@ -875,7 +904,7 @@ The created [transaction object](#the-transaction-object).
 
 ---
 
-## 16. List Transactions
+## 17. List Transactions
 
 ```
 GET /api/v1/transactions
@@ -899,7 +928,7 @@ GET /api/v1/transactions?startDate=2026-08-01&endDate=2026-08-31&type=EXPENSE
 ```
 
 > **Send plain calendar dates — do not convert to epoch millis.** The server resolves
-> them in the user's own timezone ([§8](#8-complete-onboarding)) and does the boundary
+> them in the user's own timezone ([§9](#9-complete-onboarding)) and does the boundary
 > arithmetic itself. Both ends are inclusive, so `endDate=2026-08-31` covers that whole
 > day through 23:59:59.999 local. This is deliberate: it is the same boundary rule the
 > monthly summary uses, so a transaction at midnight can never be counted by the list
@@ -935,7 +964,7 @@ because the query is scoped to the caller first.
 
 ---
 
-## 17. Get One Transaction
+## 18. Get One Transaction
 
 ```
 GET /api/v1/transactions/{id}
@@ -953,7 +982,7 @@ One [transaction object](#the-transaction-object).
 
 ---
 
-## 18. Update Transaction
+## 19. Update Transaction
 
 ```
 PUT /api/v1/transactions/{id}
@@ -962,7 +991,7 @@ PUT /api/v1/transactions/{id}
 
 ### Request body
 
-Identical to [Create Transaction](#15-create-transaction).
+Identical to [Create Transaction](#16-create-transaction).
 
 > **This is a full replacement, not a patch.** Every field is re-specified on every
 > edit: omitting `note`, `payeeName`, or `tags` **clears** them rather than leaving
@@ -978,20 +1007,20 @@ The updated [transaction object](#the-transaction-object).
 
 ### Errors
 
-Same as [Create Transaction](#15-create-transaction), plus:
+Same as [Create Transaction](#16-create-transaction), plus:
 
 - `404 E1010` — no transaction with that id owned by the caller.
 
 ---
 
-## 19. Delete Transaction
+## 20. Delete Transaction
 
 ```
 DELETE /api/v1/transactions/{id}
 ```
 **Auth:** required (`Bearer <accessToken>`)
 
-> **A hard delete** — unlike accounts ([§14](#14-delete-account)), the row is removed
+> **A hard delete** — unlike accounts ([§15](#15-delete-account)), the row is removed
 > outright. There is no undo and no `DELETED` status to restore from, so confirm in
 > the UI before calling.
 
@@ -1008,7 +1037,7 @@ DELETE /api/v1/transactions/{id}
 
 ---
 
-## 20. Monthly Summary
+## 21. Monthly Summary
 
 ```
 GET /api/v1/summary/monthly
@@ -1058,7 +1087,7 @@ GET /api/v1/summary/monthly?month=2026-08&accountId=9b1e2c44-...
 > **Keep this and the transaction list in step.** If the home screen has an account
 > picker, pass the same `accountId` to both — otherwise a filtered feed sits under an
 > unfiltered total. To list the rows behind these figures, call
-> [List transactions](#16-list-transactions) with that month's first and last day as
+> [List transactions](#17-list-transactions) with that month's first and last day as
 > `startDate`/`endDate`; both endpoints resolve month boundaries the same way, so the
 > rows always add up to the totals.
 
@@ -1073,14 +1102,14 @@ yet gets `0` across the board, which is the correct figure to render.
 
 ---
 
-## 21. Category Breakdown
+## 22. Category Breakdown
 
 ```
 GET /api/v1/summary/breakdown?startDate=2026-08-01&endDate=2026-08-31
 ```
 **Auth:** required (`Bearer <accessToken>`)
 
-The detail behind [§20](#20-monthly-summary): the same income and expense totals for a
+The detail behind [§21](#21-monthly-summary): the same income and expense totals for a
 period, plus the categories that make each one up. Use it for the reports screen —
 a pie or bar chart of where the money went, and the same figures broken out by
 income category and expense category.
@@ -1133,7 +1162,7 @@ for a week, a quarter, or a year.
 | Field | Notes |
 |---|---|
 | `income.total` / `expenses.total` | Minor units. Each equals the sum of its own `categories[].amount`. |
-| `position` | `income.total − expenses.total`. Matches [§20](#20-monthly-summary)'s `position` when the period is exactly one calendar month. |
+| `position` | `income.total − expenses.total`. Matches [§21](#21-monthly-summary)'s `position` when the period is exactly one calendar month. |
 | `categories[]` | **Sorted biggest amount first** — render in the order given. Empty array when nothing was recorded in that direction. |
 | `name` / `color` / `icon` | The category's own display fields, joined server-side so a chart doesn't need a second call to label and colour itself. |
 | `parentId` | Non-null for a subcategory. **Categories are listed flat**, so a subcategory appears as its own row, not folded into its parent — group on `parentId` if you want a top-level view with drill-down. |
@@ -1144,7 +1173,7 @@ for a week, a quarter, or a year.
 > minor-unit rounding and the server does not guess how you want it displayed.
 
 Like the monthly summary, nothing here is stored or cached — the buckets are one grouped
-aggregate over the same rows [List transactions](#16-list-transactions) returns for the
+aggregate over the same rows [List transactions](#17-list-transactions) returns for the
 same dates, so a report can never disagree with the ledger it describes.
 
 ### Errors
@@ -1185,7 +1214,7 @@ transaction is added, edited, or deleted, so refresh after any ledger write.
 **4. Two kinds of budget, and they must not be added together.** `categoryId` set is
 a cap on one EXPENSE category; `categoryId: null` is an **overall** cap on everything
 in that account. The overall budget's `spent` already contains every category's spend,
-so summing both double-counts the same money. [§24](#24-monthly-budget-summary) does
+so summing both double-counts the same money. [§25](#25-monthly-budget-summary) does
 this split for you.
 
 ### The budget object
@@ -1219,14 +1248,14 @@ Every endpoint in this section returns this shape:
 | `amountLimit` | Minor units, positive — the cap the user set. |
 | `currency` | ISO-4217, **derived from the linked account** on every read; a budget stores no currency of its own. |
 | `rollover` | Stored and echoed but **not yet applied** — `remaining` ignores it today. Don't ship UI that promises carry-over. |
-| `status` | `ACTIVE`, `ARCHIVED`, or `DELETED`. Delete is soft ([§28](#28-delete-budget)): a deleted budget never appears in a listing, but is still readable by id. |
+| `status` | `ACTIVE`, `ARCHIVED`, or `DELETED`. Delete is soft ([§29](#29-delete-budget)): a deleted budget never appears in a listing, but is still readable by id. |
 | `periodStart` / `periodEnd` | The exact window `spent` was summed over, epoch millis, `periodStart` inclusive and `periodEnd` exclusive, resolved in the user's timezone. |
 | `spent` | Σ EXPENSE in that window, on that account, in that category (all categories when `categoryId` is null). Positive. |
 | `remaining` | `amountLimit − spent`. **Legitimately negative** once the user is over budget — render an over-budget state rather than clamping at zero. |
 
 ---
 
-## 22. Create Budget
+## 23. Create Budget
 
 ```
 POST /api/v1/budgets
@@ -1241,7 +1270,7 @@ is rejected rather than silently replacing the first.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `accountId` | string | yes | One of the caller's own accounts ([§10](#10-list-active-accounts)). |
+| `accountId` | string | yes | One of the caller's own accounts ([§11](#11-list-active-accounts)). |
 | `categoryId` | string | no | An EXPENSE category. Omit or send `null` for an overall cap. |
 | `period` | string | yes | `MONTHLY` or `YEARLY`. |
 | `periodKey` | string | yes | `yyyy-MM` when `period` is `MONTHLY`, `yyyy` when `YEARLY`. Must match the period type. |
@@ -1282,7 +1311,7 @@ period, so a budget created mid-month shows the spending that already happened.
 
 ---
 
-## 23. List Budgets
+## 24. List Budgets
 
 ```
 GET /api/v1/budgets
@@ -1303,7 +1332,7 @@ A JSON array of [budget objects](#the-budget-object).
 
 > **This is not a month view.** Because each month is its own row, this list grows by
 > one entry per budget per month and mixes `MONTHLY` with `YEARLY` rows. For a budget
-> screen showing "this month", call [§24](#24-monthly-budget-summary) instead — it
+> screen showing "this month", call [§25](#25-monthly-budget-summary) instead — it
 > filters to the month and does the totalling. There is no `period` filter here yet.
 
 ### Errors
@@ -1312,7 +1341,7 @@ A JSON array of [budget objects](#the-budget-object).
 
 ---
 
-## 24. Monthly Budget Summary
+## 25. Monthly Budget Summary
 
 ```
 GET /api/v1/budgets/summary
@@ -1360,7 +1389,7 @@ GET /api/v1/budgets/summary?month=2026-08
 
 > **`MONTHLY` budgets only.** A `YEARLY` cap covers a different window, and folding a
 > 3,600,000 annual limit into a month's total would misstate both. Read yearly budgets
-> through [§23](#23-list-budgets) / [§25](#25-get-one-budget) and show them separately.
+> through [§24](#24-list-budgets) / [§26](#26-get-one-budget) and show them separately.
 >
 > Archived and deleted budgets are excluded — a summary is what the user is planning against now.
 
@@ -1375,7 +1404,7 @@ budget screen ("you spent X this month, set a budget?").
 
 ---
 
-## 25. Get One Budget
+## 26. Get One Budget
 
 ```
 GET /api/v1/budgets/{id}
@@ -1393,7 +1422,7 @@ One [budget object](#the-budget-object), with `spent` recomputed for its own per
 
 ---
 
-## 26. Update Budget
+## 27. Update Budget
 
 ```
 PUT /api/v1/budgets/{id}
@@ -1412,7 +1441,7 @@ PUT /api/v1/budgets/{id}
 ```
 
 > **A partial update, not a replacement** — the opposite of
-> [Update transaction](#18-update-transaction). A field left out or sent as `null` is
+> [Update transaction](#19-update-transaction). A field left out or sent as `null` is
 > left unchanged, so sending only `amountLimit` is the normal case.
 >
 > **`accountId`, `categoryId`, `period` and `periodKey` are the budget's identity and
@@ -1432,7 +1461,7 @@ The updated [budget object](#the-budget-object).
 
 ---
 
-## 27. Archive Budget
+## 28. Archive Budget
 
 ```
 POST /api/v1/budgets/{id}/archive
@@ -1440,12 +1469,12 @@ POST /api/v1/budgets/{id}/archive
 **Auth:** required (`Bearer <accessToken>`)
 
 Retires a budget without losing it: `status` → `ARCHIVED`. It disappears from
-[§23](#23-list-budgets) unless `includeArchived=true`, drops out of
-[§24](#24-monthly-budget-summary), and **frees its slot** so a new active budget can be
+[§24](#24-list-budgets) unless `includeArchived=true`, drops out of
+[§25](#25-monthly-budget-summary), and **frees its slot** so a new active budget can be
 created for the same account + category + period.
 
 Use it when the user is retiring a plan they may still want to see; use
-[§28](#28-delete-budget) when they want it off the screen for good. Both keep the row
+[§29](#29-delete-budget) when they want it off the screen for good. Both keep the row
 and both free the slot — the difference is visibility: an archived budget still comes
 back with `includeArchived=true`, a deleted one never does. There is **no un-archive
 endpoint yet** — an archived budget can only be replaced by a new one.
@@ -1461,23 +1490,23 @@ The archived [budget object](#the-budget-object), `status: "ARCHIVED"`.
 
 ---
 
-## 28. Delete Budget
+## 29. Delete Budget
 
 ```
 DELETE /api/v1/budgets/{id}
 ```
 **Auth:** required (`Bearer <accessToken>`)
 
-> **A soft delete** — unlike [Delete transaction](#19-delete-transaction), the row is
+> **A soft delete** — unlike [Delete transaction](#20-delete-transaction), the row is
 > kept and its `status` becomes `DELETED`. It leaves every listing
-> ([§23](#23-list-budgets), `includeArchived=true` included) and every summary, and can
+> ([§24](#24-list-budgets), `includeArchived=true` included) and every summary, and can
 > no longer be edited or archived, but it stays readable by id. Nothing references a
 > budget, so **no transaction is affected**: deleting a budget removes a plan, never any
 > recorded money.
 >
 > The row surviving is for history, not for undo — there is **no restore endpoint**, so
 > treat this as final in the UI and confirm before calling. Prefer
-> [§27](#27-archive-budget) when the user may want to see the budget again.
+> [§28](#28-archive-budget) when the user may want to see the budget again.
 
 Deleting frees the (`accountId`, `categoryId`, `period`, `periodKey`) slot, so a new
 budget can immediately be created for the same month and category.
@@ -1503,7 +1532,7 @@ budget can immediately be created for the same month and category.
 mismatching them is a `400`, not a silent coercion. So a category picker must filter
 by the direction the user is entering.
 
-**2. The user already has 16.** [Onboarding](#8-complete-onboarding) seeds a full set,
+**2. The user already has 16.** [Onboarding](#9-complete-onboarding) seeds a full set,
 so the ledger works before this API is ever called. Nothing here is needed to get a
 first transaction recorded.
 
@@ -1520,7 +1549,7 @@ one you want.
 
 **5. Delete is soft, and that is what makes it usable.** A category with months of
 transactions behind it can still be deleted: the row is kept, so
-[past reports keep naming it](#21-category-breakdown), while the category leaves every
+[past reports keep naming it](#22-category-breakdown), while the category leaves every
 picker and can no longer be chosen for anything new. Its name is freed for reuse.
 
 ### The category object
@@ -1547,16 +1576,16 @@ Every endpoint in this section returns this shape:
 | `parentId` | `null` for a top-level category; otherwise its parent, which is always top-level and the same `kind`. Fixed at creation. |
 | `color` / `icon` | Optional display hints the client chooses the meaning of — the server stores and returns them untouched (max 20 / 50 chars). Both are `null` on every seeded category, so the app needs its own fallbacks. |
 | `sortOrder` | Client-chosen ordering within a kind. Defaults `0`; the seeded set numbers each kind from `0`. |
-| `status` | `ACTIVE` or `DELETED`. Delete is soft ([§33](#33-delete-category)): a deleted category never appears in a listing and cannot be chosen, but stays readable by id so old records can still be labelled. |
+| `status` | `ACTIVE` or `DELETED`. Delete is soft ([§34](#34-delete-category)): a deleted category never appears in a listing and cannot be chosen, but stays readable by id so old records can still be labelled. |
 
-> **`color` and `icon` cannot be cleared once set.** [Update](#32-update-category)
+> **`color` and `icon` cannot be cleared once set.** [Update](#33-update-category)
 > treats `null` as "leave unchanged", so there is no way to unset one — sending
 > `"color": null` keeps the old value. Send a new value to change it, and expect to
 > keep whatever was set last.
 
 ---
 
-## 29. List Categories
+## 30. List Categories
 
 ```
 GET /api/v1/categories
@@ -1582,7 +1611,7 @@ A JSON array of [category objects](#the-category-object), sorted **`kind`, then
 > **Flat, not nested, and live only.** Sub-categories come back as their own rows —
 > group on `parentId` if the UI wants a tree. Deleted categories are never returned,
 > and there is no `includeDeleted` flag; to resolve one that an old transaction still
-> points at, fetch it by id ([§31](#31-get-one-category)).
+> points at, fetch it by id ([§32](#32-get-one-category)).
 
 There is no filter for `kind` — the list is small (16 by default), so filter client-side
 and the picker gets both directions from one call.
@@ -1593,7 +1622,7 @@ and the picker gets both directions from one call.
 
 ---
 
-## 30. Create Category
+## 31. Create Category
 
 ```
 POST /api/v1/categories
@@ -1636,7 +1665,7 @@ The created [category object](#the-category-object).
 
 ---
 
-## 31. Get One Category
+## 32. Get One Category
 
 ```
 GET /api/v1/categories/{id}
@@ -1658,7 +1687,7 @@ One [category object](#the-category-object).
 
 ---
 
-## 32. Update Category
+## 33. Update Category
 
 ```
 PUT /api/v1/categories/{id}
@@ -1678,8 +1707,8 @@ PUT /api/v1/categories/{id}
 { "name": "Food & Drink", "color": "#EF4444", "sortOrder": 1 }
 ```
 
-> **A partial update** — like [Update budget](#26-update-budget) and unlike
-> [Update transaction](#18-update-transaction). A field left out or sent as `null` is
+> **A partial update** — like [Update budget](#27-update-budget) and unlike
+> [Update transaction](#19-update-transaction). A field left out or sent as `null` is
 > left unchanged; a blank `name` is ignored rather than rejected.
 >
 > **`kind` and `parentId` are not editable**, and a deleted category cannot be edited
@@ -1699,7 +1728,7 @@ The updated [category object](#the-category-object).
 
 ---
 
-## 33. Delete Category
+## 34. Delete Category
 
 ```
 DELETE /api/v1/categories/{id}
@@ -1707,13 +1736,13 @@ DELETE /api/v1/categories/{id}
 **Auth:** required (`Bearer <accessToken>`)
 
 > **A soft delete** — `status` becomes `DELETED` and the row is kept, like
-> [Delete budget](#28-delete-budget) and unlike
-> [Delete transaction](#19-delete-transaction). **Transactions already filed under it
+> [Delete budget](#29-delete-budget) and unlike
+> [Delete transaction](#20-delete-transaction). **Transactions already filed under it
 > are untouched and keep pointing at it**, which is the whole point: a category with
 > months of history behind it stays deletable, and
-> [Category breakdown](#21-category-breakdown) still names it in those months.
+> [Category breakdown](#22-category-breakdown) still names it in those months.
 >
-> What changes is availability: it leaves [§29](#29-list-categories), cannot be chosen
+> What changes is availability: it leaves [§30](#30-list-categories), cannot be chosen
 > for a new transaction, recurring template or budget (those answer
 > `404 E1010`), cannot be edited, and frees its name for reuse. There is **no restore
 > endpoint**, so treat it as final in the UI.
@@ -1723,7 +1752,7 @@ Refused while it would leave something dangling:
 | Refused when | Why |
 |---|---|
 | it has a live sub-category | the child would be orphaned — delete or re-file the children first |
-| a live budget targets it | the budget would go on measuring spend against a category nothing can be filed under. Delete or archive the budget first ([§28](#28-delete-budget) / [§27](#27-archive-budget)) |
+| a live budget targets it | the budget would go on measuring spend against a category nothing can be filed under. Delete or archive the budget first ([§29](#29-delete-budget) / [§28](#28-archive-budget)) |
 
 Existing **transactions never block it** — that is the difference from the old
 behaviour, where a category used even once could not be removed.
@@ -1742,14 +1771,14 @@ behaviour, where a category used even once could not be removed.
 
 ---
 
-## 34. Seed Default Categories
+## 35. Seed Default Categories
 
 ```
 POST /api/v1/categories/seed-defaults
 ```
 **Auth:** required (`Bearer <accessToken>`)
 
-Provisions the default set. [Onboarding](#8-complete-onboarding) already calls this, so
+Provisions the default set. [Onboarding](#9-complete-onboarding) already calls this, so
 a normal client never needs to — it exists for a user who has ended up with no
 categories at all.
 
@@ -1759,7 +1788,7 @@ for a user who has deleted every category, since the check is on live rows.
 
 ### Response `data`
 
-The caller's full category list, same shape and ordering as [§29](#29-list-categories) —
+The caller's full category list, same shape and ordering as [§30](#30-list-categories) —
 either the 16 just created or the ones they already had.
 
 | Kind | Names |
@@ -1805,20 +1834,20 @@ Adding, renaming, or deleting further accounts (§§10–14) is also a
 settings-time action, not part of first run.
 
 Once the home screen is up, the ledger (§§15–19) is the app's steady state: list the
-current month's transactions for the feed, and [Monthly summary](#20-monthly-summary)
+current month's transactions for the feed, and [Monthly summary](#21-monthly-summary)
 for the figure at the top of it. The reports screen adds
-[Category breakdown](#21-category-breakdown) over whatever period the user picks. All
+[Category breakdown](#22-category-breakdown) over whatever period the user picks. All
 three read the same rows, so they agree by construction — refresh them together after
 any write, and pass the same `accountId` to all of them when an account picker is on
 screen.
 
 Managing categories (§§29–34) is settings-time work like accounts: the seeded set
-covers first run, and [List categories](#29-list-categories) is what every category
+covers first run, and [List categories](#30-list-categories) is what every category
 picker reads. Refresh that list after a create, rename or delete, since all three
 change what the picker may offer.
 
 The budget screen (§§22–28) sits beside the reports one: read it with
-[Monthly budget summary](#24-monthly-budget-summary) for whichever month the user is
+[Monthly budget summary](#25-monthly-budget-summary) for whichever month the user is
 viewing, and refresh it after **any** ledger write — `spent` is derived from the same
 transaction rows, so adding an expense moves a budget immediately. Setting a cap for a
 new month is always a create, never an edit: one `POST` per month, with that month's
