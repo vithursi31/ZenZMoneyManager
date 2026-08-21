@@ -1,8 +1,9 @@
-# Mobile API Guide — Onboarding, Account, Transactions, Budgets & Categories
+# Mobile API Guide — Onboarding, Account, Transactions, Recurring, Budgets & Categories
 
 Scope: the sign-up-to-first-screen flow, the account endpoints those screens
-depend on, the transaction ledger the app is built around, the budgets planned
-against it, and the categories everything is filed under. Roughly in call order:
+depend on, the transaction ledger the app is built around, the recurring
+commitments and subscriptions that post into it, the budgets planned against it,
+and the categories everything is filed under. Roughly in call order:
 
 1. [Register](#1-register)
 2. [Verify email](#2-verify-email)
@@ -38,8 +39,14 @@ against it, and the categories everything is filed under. Roughly in call order:
 32. [Update category](#33-update-category)
 33. [Delete category](#34-delete-category)
 34. [Seed default categories](#35-seed-default-categories)
+35. [Create recurring template](#36-create-recurring-template)
+36. [List recurring templates](#37-list-recurring-templates)
+37. [Upcoming payments](#38-upcoming-payments)
+38. [Get one recurring template](#39-get-one-recurring-template)
+39. [Update recurring template](#40-update-recurring-template)
+40. [Delete recurring template](#41-delete-recurring-template)
 
-Other endpoints (goals, recurring, chat) exist but are out of scope for this document.
+Other endpoints (goals, chat) exist but are out of scope for this document.
 
 > **Categories are last but needed first.** Every transaction carries a `categoryId`
 > ([§16](#16-create-transaction)), so a client cannot record anything without one — but
@@ -165,14 +172,18 @@ Two things stay English on purpose:
 | 404 | `E1010` | Not found (or not owned by the caller) |
 | 500 | `E1000` | Server defect. `message` is always generic; quote the `X-Correlation-Id` in a bug report |
 
-> **A body the server cannot parse currently answers `500 E1000`, not `400`.** That
-> covers malformed JSON and — the case a client hits by accident — **any enum field
-> sent with a value outside its set**: `kind` on a category, `type` on a transaction,
-> `period` on a budget. The request never reaches the validation layer, so no `E1015`
-> field message comes back either. Treat a `500` on a write as "check the payload"
-> before reporting it, and send enum values exactly as this document spells them.
-> Unknown paths (`404 E1010`) and unsupported methods (`405 E1013`) are reported
-> correctly.
+> **A body the server cannot parse answers `400 E1013`.** That covers malformed JSON
+> and — the case a client hits by accident — **any enum field sent with a value outside
+> its set**: `kind` on a category, `type` on a transaction, `period` on a budget,
+> `paymentMethod` on either a transaction or a recurring template. Deserialization
+> failed, so the request never reached the validation layer and there is no `E1015`
+> field message to go with it: the `message` is the generic "Bad request" and the
+> offending field is not named. Send enum values exactly as this document spells them.
+> Unknown paths (`404 E1010`) and unsupported methods (`405 E1013`) are reported the
+> same way.
+>
+> *(This was `500 E1000` before 2026-08-21. If you are testing against an older build,
+> treat a `500` on a write as "check the payload" first.)*
 
 ### Rate limits — always with a `Retry-After` header
 
@@ -844,6 +855,7 @@ Every endpoint in this section returns this shape:
   "txnDate": 1755500000000,
   "payeeId": "p88f2e10-...-uuid",
   "note": "burger",
+  "paymentMethod": "CARD",
   "tags": ["lunch"],
   "recurringId": null
 }
@@ -856,6 +868,7 @@ Every endpoint in this section returns this shape:
 | `currency` | ISO-4217, stamped server-side from the user's active currency. |
 | `txnDate` | Epoch milliseconds. |
 | `payeeId` | `null` unless a `payeeName` was sent; the server resolves the name to a payee, creating it on first use. |
+| `paymentMethod` | `CASH`, `CARD`, `BANK_TRANSFER`, `WALLET`, `OTHER`, or `null`. **A label, not an account** — `null` means the user did not say, and every row recorded before this field existed has `null`. Do not substitute a default when rendering it. |
 | `recurringId` | Non-null means this row was generated automatically from a recurring template, not entered by hand — useful for badging it in the list. |
 
 ---
@@ -877,6 +890,7 @@ POST /api/v1/transactions
 | `txnDate` | number | no | Epoch millis. Defaults to now when omitted, null, or `0`. |
 | `payeeName` | string | no | Max 300 chars. Free text — the merchant or payer. Resolved to a payee server-side; you get a `payeeId` back. |
 | `note` | string | no | Max 500 chars. |
+| `paymentMethod` | string | no | `CASH`, `CARD`, `BANK_TRANSFER`, `WALLET`, or `OTHER`. Omit it when the user did not pick one — it is a label on the entry, **not** a choice of account. |
 | `tags` | string[] | no | Defaults to `[]`. |
 
 ```json
@@ -887,9 +901,17 @@ POST /api/v1/transactions
   "txnDate": 1755500000000,
   "payeeName": "Corner Cafe",
   "note": "burger",
+  "paymentMethod": "CARD",
   "tags": ["lunch"]
 }
 ```
+
+> **`txnDate` carries the user's own clock.** Build it from the date *and* the time the
+> picker produced, in the device's timezone, and send the resulting instant — 20/08/2026
+> 20:00 in `Asia/Colombo` is `1787236200000`. The server never re-interprets the wall
+> clock: it stores the instant, and slices months by it in the user's timezone
+> ([§9](#9-complete-onboarding)), which is why that timezone has to be sent at register
+> or onboarding.
 
 ### Response `data`
 
@@ -898,6 +920,7 @@ The created [transaction object](#the-transaction-object).
 ### Errors
 
 - `400 E1015` — `type` missing, `categoryId` blank, `amount` not positive, or `note`/`payeeName` over length.
+- `400 E1013` — `paymentMethod` is not one of the five values (a JSON body the server cannot read is a bad request, not a validation report, so it has no field list).
 - `400 E1013` — the category's kind doesn't match `type` (e.g. an expense category on an `INCOME` transaction).
 - `404 E1010` — no category with that id owned by the caller.
 - `401` — missing/invalid access token.
@@ -1660,7 +1683,7 @@ The created [category object](#the-category-object).
 - `400 E1015` — `name` blank or over 200 chars, `kind` missing, or `color`/`icon` over length.
 - `400 E1013` — a live category of this kind already holds that name (`"A category named 'FOOD' already exists."`), the parent already has a parent (`"Sub-categories are only one level deep."`), the parent's kind differs, or the parent is deleted.
 - `404 E1010` — no category with that `parentId` owned by the caller.
-- `500 E1000` — `kind` present but not `INCOME`/`EXPENSE`. See the [unreadable-body note](#generic-outcomes); send a valid value.
+- `400 E1013` — `kind` present but not `INCOME`/`EXPENSE`. See the [unreadable-body note](#generic-outcomes) — the field is not named in the message, so send a valid value.
 - `401` — missing/invalid access token.
 
 ---
@@ -1805,6 +1828,322 @@ user-owned rows — fully renameable and deletable, not a system table.
 
 ---
 
+## Recurring & subscriptions — what the app must know first
+
+A recurring template is a **rule**, not a transaction: *£9.99 to Spotify, monthly,
+next on the 24th*. A background job turns it into real ledger rows on their due
+dates, and those rows are ordinary transactions — same shape, same totals, with
+`recurringId` pointing back at the template that produced them.
+
+**1. A subscription is a recurring expense.** There is no separate subscription
+endpoint or entity. Netflix, the gym, and the rent are all one template with a
+`cadence`; what makes a subscription a subscription is that it may carry a
+`trialEndDate`. The entry screen's "Billing Cycle" maps straight onto `cadence`.
+
+**2. "One-time" is not a cadence — it is a different endpoint.** If the user leaves
+Billing Cycle on *One-time*, post to [Create Transaction](#16-create-transaction).
+Anything else posts here. Build one payload object in the client and pick the URL
+from that field; the two bodies deliberately share their field names.
+
+**3. Nothing is posted before its date.** A template does not write anything into
+the ledger until the due date arrives, so it changes no month's position until then.
+The payments the user is *about* to make come from [Upcoming
+payments](#38-upcoming-payments) — a projection, not rows.
+
+**4. The account and currency are not yours to send**, exactly as for a transaction
+([§Transactions](#transactions--what-the-app-must-know-first)). The currency you get
+back on a template is read off its account on every request, not stored against the
+template — one less thing that can disagree with itself. The transactions it generates
+each keep their own `currency`, because a ledger row records what the money *was*.
+
+### The recurring template object
+
+```json
+{
+  "id": "b7d81c02-...-uuid",
+  "categoryId": "c31d0a77-...-uuid",
+  "type": "EXPENSE",
+  "amount": 999,
+  "currency": "USD",
+  "cadence": "MONTHLY",
+  "nextRunDate": 1787000000000,
+  "anchorDay": 24,
+  "trialEndDate": null,
+  "endDate": null,
+  "active": true,
+  "payeeId": "p88f2e10-...-uuid",
+  "note": "Spotify",
+  "paymentMethod": "CARD"
+}
+```
+
+| Field | Notes |
+|---|---|
+| `cadence` | `DAILY`, `WEEKLY`, `MONTHLY`, `YEARLY`. The repeat or billing frequency. |
+| `currency` | ISO-4217, **resolved from the account** the template posts to rather than stored on it — so it always agrees with that account and can never go stale. Returned on every read; never sent. |
+| `nextRunDate` | Epoch millis of the next due or renewal date. Advances past each generated row. |
+| `anchorDay` | Day-of-month the MONTHLY/YEARLY cycle is pinned to, **read in the user's timezone**. A 31st template clamps to a short month's last day and then returns to the 31st, so it never drifts to the 28th permanently. Server-derived from `nextRunDate` — you never send it. |
+| `trialEndDate` | Epoch millis; free-trial end. `null` for anything without a trial. |
+| `endDate` | Epoch millis; generation stops once the next run would pass it, and `active` flips to `false`. |
+| `active` | `false` means paused (or finished). A paused template generates nothing and appears in no upcoming list. |
+| `paymentMethod` | As on a transaction, and **copied onto every row this template generates**. |
+
+---
+
+## 36. Create Recurring Template
+
+```
+POST /api/v1/recurring
+```
+**Auth:** required (`Bearer <accessToken>`)
+
+### Request body
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `type` | string | yes | `INCOME` or `EXPENSE`. |
+| `categoryId` | string | yes | The caller's own category; its kind must match `type`. |
+| `amount` | number | yes | Minor units, **positive**. The subscription's cost. |
+| `cadence` | string | yes | `DAILY`, `WEEKLY`, `MONTHLY`, `YEARLY`. |
+| `nextRunDate` | number | yes | Epoch millis of the **first** run. Its day-of-month, read in the user's timezone, anchors MONTHLY/YEARLY cycles. |
+| `trialEndDate` | number | no | Epoch millis; free-trial end. |
+| `endDate` | number | no | Epoch millis; stop generating once the next run passes it. |
+| `payeeName` | string | no | Max 300 chars. Resolved to a payee and copied onto generated rows. |
+| `note` | string | no | Max 500 chars. Copied onto generated rows. |
+| `paymentMethod` | string | no | `CASH`, `CARD`, `BANK_TRANSFER`, `WALLET`, `OTHER`. Copied onto generated rows. |
+
+```json
+{
+  "type": "EXPENSE",
+  "categoryId": "c31d0a77-...-uuid",
+  "amount": 999,
+  "cadence": "MONTHLY",
+  "nextRunDate": 1787236200000,
+  "payeeName": "Spotify",
+  "note": "Spotify Premium",
+  "paymentMethod": "CARD"
+}
+```
+
+> Build `nextRunDate` the same way as `txnDate` — the local date *and* time the user
+> picked, converted to an instant in the device's timezone. It is what pins the billing
+> day, so an off-by-one here bills the user in the wrong month.
+
+### Response `data`
+
+```json
+{
+  "template": { "id": "b7d81c02-...", "...": "..." },
+  "posted":   null
+}
+```
+
+| Field | Notes |
+|---|---|
+| `template` | The created [recurring template object](#the-recurring-template-object). |
+| `posted` | Normally `null`. Non-null when `nextRunDate` had **already arrived**: the server posts that one occurrence in the same request and returns it as a [transaction object](#the-transaction-object), so a subscription added on its billing day is in the ledger immediately. |
+
+> **`posted` is at most one row, even for a badly backdated `nextRunDate`.** A template
+> dated a year ago has a year of catch-up owed to it; the request posts the first
+> occurrence and the background job works through the rest. If `posted` is non-null,
+> refresh the ledger, the monthly summary and any budget on screen — real money moved.
+
+### Errors
+
+- `400 E1015` — `type`, `categoryId`, `cadence` or `nextRunDate` missing, or `amount` not positive.
+- `400 E1013` — the category's kind doesn't match `type`, or `cadence`/`paymentMethod` is not a known value.
+- `404 E1010` — no category with that id owned by the caller.
+- `401` — missing/invalid access token.
+
+---
+
+## 37. List Recurring Templates
+
+```
+GET /api/v1/recurring
+```
+**Auth:** required (`Bearer <accessToken>`)
+
+Returns the caller's templates ordered by **`nextRunDate` ascending** — soonest
+first, which is the order a "your commitments" screen wants.
+
+### Query parameters
+
+| Param | Type | Notes |
+|---|---|---|
+| `includeInactive` | boolean | Default `false`. `true` also returns paused and finished templates. |
+
+### Response `data`
+
+A JSON array of [recurring template objects](#the-recurring-template-object).
+
+### Errors
+
+- `401` — missing/invalid access token.
+
+---
+
+## 38. Upcoming Payments
+
+```
+GET /api/v1/recurring/upcoming
+```
+**Auth:** required (`Bearer <accessToken>`)
+
+Every bill, renewal and salary falling due in the next few days, **projected from
+the templates**. This is what feeds an "upcoming" strip on the home or entry screen.
+
+### Query parameters
+
+| Param | Type | Notes |
+|---|---|---|
+| `withinDays` | number | `1`–`90`. Default `3`. |
+
+```
+GET /api/v1/recurring/upcoming?withinDays=7
+```
+
+> **These are not transactions and they have no `id`.** Nothing has been written: each
+> entry is computed from its template on every call, and it is counted by **no** total —
+> not the monthly summary, not a budget, not the category breakdown. That is deliberate,
+> and it is why the figure at the top of the screen stays a record of what happened
+> rather than of what is expected. Act on an entry through its `recurringId`.
+
+The window runs to the **end** of the target day in the user's timezone, so a renewal
+on the 24th appears on the 21st with `withinDays=3` whatever time of day it falls at.
+
+### Response `data`
+
+```json
+[
+  {
+    "recurringId": "b7d81c02-...-uuid",
+    "type": "EXPENSE",
+    "categoryId": "c31d0a77-...-uuid",
+    "amount": 999,
+    "currency": "USD",
+    "cadence": "MONTHLY",
+    "dueDate": 1787236200000,
+    "due": false,
+    "payeeId": "p88f2e10-...-uuid",
+    "note": "Spotify",
+    "paymentMethod": "CARD",
+    "trialEndDate": null,
+    "trialEnding": false
+  }
+]
+```
+
+Sorted by `dueDate` ascending, across every active template. A `DAILY` template
+contributes one entry per day in the window (capped at 60 per template).
+
+| Field | Notes |
+|---|---|
+| `recurringId` | The template this came from — the id to open, edit or pause. |
+| `dueDate` | Epoch millis this occurrence falls due. |
+| `due` | `true` once `dueDate` has passed and the row has **not been posted yet**; the generation job posts it within ~15 minutes. Render both states as pending — the user has not paid either of them. |
+| `trialEnding` | `true` when the template's free trial ends inside the requested window. Worth surfacing: it is the last chance to cancel before the first charge. |
+
+**When it disappears:** an entry leaves this list as the job posts it, and the same
+money appears in the ledger as a transaction with `recurringId` set. Refresh both
+together, and de-duplicate on `recurringId` + date if you cache the list, so the same
+charge is never drawn twice during that handover.
+
+### Errors
+
+- `400 E1013` — `withinDays` below 1 or above 90.
+- `401` — missing/invalid access token.
+
+---
+
+## 39. Get One Recurring Template
+
+```
+GET /api/v1/recurring/{id}
+```
+**Auth:** required (`Bearer <accessToken>`)
+
+### Response `data`
+
+One [recurring template object](#the-recurring-template-object).
+
+### Errors
+
+- `404 E1010` — no template with that id owned by the caller.
+- `401` — missing/invalid access token.
+
+---
+
+## 40. Update Recurring Template
+
+```
+PUT /api/v1/recurring/{id}
+```
+**Auth:** required (`Bearer <accessToken>`)
+
+### Request body
+
+**A patch, not a replacement** — the opposite of [Update
+Transaction](#19-update-transaction). Every field is optional and a field you omit is
+left alone.
+
+| Field | Type | Notes |
+|---|---|---|
+| `amount` | number | Minor units, positive. |
+| `nextRunDate` | number | Epoch millis. **Reschedules and re-anchors** the MONTHLY/YEARLY day-of-month. |
+| `trialEndDate` | number | Epoch millis. |
+| `endDate` | number | Epoch millis. |
+| `active` | boolean | `false` pauses generation, `true` resumes it. |
+| `payeeName` | string | Max 300 chars. |
+| `note` | string | Max 500 chars. |
+| `paymentMethod` | string | One of the five values. |
+
+> **`type`, `categoryId` and `cadence` are the template's identity and cannot be
+> changed here** — they are what its already-generated rows were filed under. To change
+> one, pause or delete this template and create a new one.
+>
+> **Pause, don't delete, to stop a subscription.** `active: false` keeps the history
+> readable; deleting removes the template while leaving its rows behind with a
+> `recurringId` that no longer resolves.
+
+### Response `data`
+
+The updated [recurring template object](#the-recurring-template-object).
+
+### Errors
+
+- `400 E1013` — `amount` not positive, or `nextRunDate` not a positive epoch-millis value.
+- `404 E1010` — no template with that id owned by the caller.
+- `401` — missing/invalid access token.
+
+---
+
+## 41. Delete Recurring Template
+
+```
+DELETE /api/v1/recurring/{id}
+```
+**Auth:** required (`Bearer <accessToken>`)
+
+**A hard delete, and it is not a soft one like an account or a category.** The
+template row is gone. Transactions it already generated are real money and are left
+untouched; their `recurringId` becomes a historical label pointing at nothing.
+Prefer `active: false` ([§40](#40-update-recurring-template)) unless the user means
+"this was a mistake, forget it".
+
+### Response `data`
+
+```json
+{ "message": "Recurring template deleted" }
+```
+
+### Errors
+
+- `404 E1010` — no template with that id owned by the caller.
+- `401` — missing/invalid access token.
+
+---
+
 ## Suggested client flow
 
 ```
@@ -1845,6 +2184,13 @@ Managing categories (§§29–34) is settings-time work like accounts: the seede
 covers first run, and [List categories](#30-list-categories) is what every category
 picker reads. Refresh that list after a create, rename or delete, since all three
 change what the picker may offer.
+
+The entry screen writes to one of two endpoints depending on its Billing Cycle field:
+*One-time* goes to [Create transaction](#16-create-transaction), anything else to
+[Create recurring template](#36-create-recurring-template) (§§35–40 are that screen's
+full surface). Read [Upcoming payments](#38-upcoming-payments) for the "you are about to
+pay" strip — poll it alongside the ledger, since an entry moves from that list into the
+ledger when its due date passes, and refresh both after any recurring write.
 
 The budget screen (§§22–28) sits beside the reports one: read it with
 [Monthly budget summary](#25-monthly-budget-summary) for whichever month the user is

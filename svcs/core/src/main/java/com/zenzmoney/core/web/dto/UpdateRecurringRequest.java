@@ -1,5 +1,6 @@
 package com.zenzmoney.core.web.dto;
 
+import com.zenzmoney.common.domain.PaymentMethod;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 import lombok.Getter;
@@ -33,4 +34,7 @@ public class UpdateRecurringRequest {
 
     @Size(max = 500)
     private String note;
+
+    /** Optional label for how the money moved; omit when the user did not say. Not an account. */
+    private PaymentMethod paymentMethod;
 }

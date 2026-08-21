@@ -1,6 +1,7 @@
 package com.zenzmoney.core.entity;
 
 import com.zenzmoney.common.domain.BaseEntity;
+import com.zenzmoney.common.domain.PaymentMethod;
 import com.zenzmoney.common.domain.TransactionType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -48,6 +49,10 @@ public class Transaction extends BaseEntity {
 
     @Column(length = 500)
     private String note;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "payment_method", length = 50)
+    private PaymentMethod paymentMethod;
 
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb")

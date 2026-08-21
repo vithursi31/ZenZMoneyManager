@@ -1,5 +1,6 @@
 package com.zenzmoney.core.web.dto;
 
+import com.zenzmoney.common.domain.PaymentMethod;
 import com.zenzmoney.common.domain.TransactionType;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -39,4 +40,7 @@ public class UpdateTransactionRequest {
     private String note;
 
     private List<String> tags;
+
+    /** Optional label for how the money moved; omit when the user did not say. Not an account. */
+    private PaymentMethod paymentMethod;
 }

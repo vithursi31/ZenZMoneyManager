@@ -14,6 +14,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.mock.http.MockHttpInputMessage;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
@@ -53,6 +55,25 @@ class GlobalExceptionHandlerTest {
 
         assertEquals(404, response.getStatusCode().value());
         assertEquals("E1010", response.getBody().getErrorCode());
+    }
+
+    /**
+     * An enum value the app does not have is a typo in the request, not a defect: it must not
+     * reach the catch-all. Unlike the two cases above this exception carries no status of its
+     * own, which is exactly why it needs its own handler.
+     */
+    @Test
+    void unreadableBody_is400_andJacksonsTextStaysOutOfTheResponse() {
+        ResponseEntity<ApiResponse<Void>> response = handler.handleUnreadableBody(
+                new HttpMessageNotReadableException(
+                        "JSON parse error: Cannot deserialize value of type "
+                                + "`com.zenzmoney.common.domain.PaymentMethod` from String \"CHEQUE\"",
+                        new MockHttpInputMessage(new byte[0])));
+
+        assertEquals(400, response.getStatusCode().value());
+        assertEquals("E1013", response.getBody().getErrorCode());
+        assertEquals("Bad request", response.getBody().getMessage());
+        assertFalse(response.getBody().getMessage().contains("PaymentMethod"));
     }
 
     @Test

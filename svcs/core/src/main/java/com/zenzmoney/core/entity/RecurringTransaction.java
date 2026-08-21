@@ -1,6 +1,7 @@
 package com.zenzmoney.core.entity;
 
 import com.zenzmoney.common.domain.BaseEntity;
+import com.zenzmoney.common.domain.PaymentMethod;
 import com.zenzmoney.common.domain.RecurringCadence;
 import com.zenzmoney.common.domain.TransactionType;
 import jakarta.persistence.Column;
@@ -33,9 +34,6 @@ public class RecurringTransaction extends BaseEntity {
     @Column(nullable = false)
     private long amount;
 
-    @Column(nullable = false, length = 3)
-    private String currency;
-
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 50)
     private RecurringCadence cadence;
@@ -60,4 +58,8 @@ public class RecurringTransaction extends BaseEntity {
 
     @Column(length = 500)
     private String note;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "payment_method", length = 50)
+    private PaymentMethod paymentMethod;
 }

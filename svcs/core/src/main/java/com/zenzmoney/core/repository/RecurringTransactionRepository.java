@@ -12,6 +12,9 @@ public interface RecurringTransactionRepository extends JpaRepository<RecurringT
 
     Optional<RecurringTransaction> findByIdAndUserId(String id, String userId);
 
+    /** Drives the upcoming-payments projection: a paused template has nothing due. */
+    List<RecurringTransaction> findByUserIdAndActiveTrue(String userId);
+
     /** Drives the generation job: active templates whose next run is due. */
     List<RecurringTransaction> findByActiveTrueAndNextRunDateLessThanEqual(long now);
 

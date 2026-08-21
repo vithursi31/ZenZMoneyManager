@@ -89,11 +89,17 @@ currency is a **user-level** setting, not a per-account choice (feature F-1.25):
   guessing. `app_user.onboarded` marks which of the two it is: while `false` the
   value is a guess that onboarding may replace, and once `true` the switch guard
   below applies.
-- **Every** owned entity that stores money — `Account`, `Transaction`, `Budget`,
-  `RecurringTransaction`, `SavingsGoal`, `Loan` — carries `currency`, and all rows
-  for a user share the user's active currency. Storing it per row keeps the money
-  representation self-contained and makes a future switch to true multi-currency a
-  non-breaking change.
+- **An entity that stores money either carries `currency` or derives it from its
+  account, and which one it is follows what the row *is*.** A row recording money
+  that moved carries its own copy — `Transaction`, `SavingsGoal`, `Loan`, and
+  `Account` itself — because that is a historical fact and cannot be re-derived
+  from today's settings. A row that is a *rule about* an account reads the
+  currency off that account at request time — `Budget` ([§1.7](#17-budget)) and
+  `RecurringTransaction` ([§1.8](#18-recurringtransaction)) — because a rule has
+  no history to protect, and a stored copy could only ever disagree with the
+  account it belongs to. All rows for a user still share the user's active
+  currency in the MVP; the per-row copies on the historical side are what make a
+  future switch to true multi-currency a non-breaking change.
 - **Switching** the active currency is allowed but guarded: because amounts are
   stored as minor units in the old currency, a switch means historical figures
   either stay in their original currency or get an explicit one-time conversion.
@@ -102,8 +108,12 @@ currency is a **user-level** setting, not a per-account choice (feature F-1.25):
   is in force at any moment. (Note there is no *balance* to convert — the position
   is derived per month, [§1.10](#110-monthly-position-invariant).)
 - Genuinely **mixing** currencies within one user, and cross-currency FX, are
-  **out of scope** (future — F-F.2). The per-row `currency` column is the seam
-  that makes that later work additive rather than a schema rewrite.
+  **out of scope** (future — F-F.2). The per-row `currency` column on the
+  historical side, plus `account.currency`, are the seam that makes that later
+  work additive rather than a schema rewrite. When F-F.2 lands, a template billed
+  in a currency other than its account's would need its own column back
+  (`V9` dropped it on 2026-08-21); that is a deliberate trade of a column
+  today for one fact in one place.
 
 ## 0.4 The `app_user` extensions
 
@@ -300,6 +310,7 @@ public enum BudgetPeriod     { MONTHLY, YEARLY }
 public enum BudgetStatus     { ACTIVE, ARCHIVED, DELETED }
 public enum RecurringCadence { DAILY, WEEKLY, MONTHLY, YEARLY }
 public enum GoalStatus       { ACTIVE, ACHIEVED, ARCHIVED }
+public enum PaymentMethod    { CASH, CARD, BANK_TRANSFER, WALLET, OTHER }
 ```
 
 > **`AccountStatus` was restored on 2026-08-18** when the one-account rule was
@@ -311,6 +322,15 @@ public enum GoalStatus       { ACTIVE, ACHIEVED, ARCHIVED }
 > which doesn't exist yet. `BudgetPeriod` dropped `WEEKLY` the same day, once
 > budgets became calendar-aligned ([§1.7](#17-budget)) — a week doesn't nest
 > inside a calendar month or year the way both remaining periods do.
+>
+> **`PaymentMethod` was added on 2026-08-21** for the "Payment" row on the entry
+> screen (F-1.3). It is deliberately *not* an account type: it records how the
+> money moved, while the account records where the activity is tracked
+> ([§1.6](#16-transaction)). Nullable everywhere — no row is given a method it was
+> not recorded with. There is no `ONE_TIME` in `RecurringCadence` to match the
+> "One-time" option on that screen: one-time means *not recurring*, so the client
+> posts a transaction instead of a template, and a cadence value that must never
+> be persisted would be a trap for the generation job.
 
 ## 1.4 Account
 
@@ -416,6 +436,7 @@ The core ledger record. Every movement of money is one transaction row.
 | `txnDate` | `long` | Epoch millis of the transaction date. Not null, indexed. **Decides which month the row counts in** ([§1.10](#110-monthly-position-invariant)). |
 | `payeeId` | `String` | Optional FK → `payee` ([§1.5b](#15b-payee)). The merchant/payer as an entity, not free text. Null for unnamed one-off entries. Indexed (drives payee filtering, F-1.9). |
 | `note` | `String(500)` | Optional free-text description / item (e.g. "burger", "tea things"). |
+| `paymentMethod` | `PaymentMethod` | Optional. How the money moved — cash, card, bank transfer, wallet. Nullable, and null is meaningful: the user did not say. |
 | `tags` | `jsonb` | Optional string array. |
 | `recurringId` | `String` | Nullable FK → `recurring_transaction` if auto-generated. |
 
@@ -425,6 +446,7 @@ The core ledger record. Every movement of money is one transaction row.
 - **There is no `TRANSFER`.** A transfer moves money between two accounts the client picks, and the write path still resolves only one account implicitly ([§1.4](#14-account)), so the type, the `transferAccountId` column, and the "destination account" validation are all gone. This returns with the rest of F-F.1.
 - Creating, editing, or deleting a transaction changes **only the position of the month its `txnDate` falls in** ([§1.10](#110-monthly-position-invariant)). Nothing is written back to the account. Moving a transaction's date *across* a month boundary changes two months' positions — both are simply recomputed on next read.
 - **Receipt images are not stored** — scanning (F-1.13) extracts merchant/date/total into an ordinary transaction and the image is discarded. There is no `Attachment` entity.
+- **`paymentMethod` is a label, not a place.** Where activity is tracked is the `Account` ([§1.4](#14-account)); this column only records the instrument, so it carries no balance and nothing sums by it. If a user wants "cash" and "card" to hold separate figures, that is two accounts, not two payment methods. Nullable rather than defaulted: every row written before the column existed keeps null, because a backfilled value would be a guess shown back to the user as their own answer.
 - **Search & filter** (F-1.9) over transactions (keyword, date range, category, amount, payee, tags) is a first-class MVP capability; the indexed `txnDate`, `userId`, `categoryId`, and `payeeId` columns support it. Payee filtering is by `payeeId` ([§1.5b](#15b-payee)), not free-text match.
 
 ## 1.7 Budget
@@ -474,7 +496,6 @@ subscription is a recurring expense with a renewal date, not a separate entity.
 | `categoryId` | `String` | FK → `category`. Required; `kind` must match `type`. |
 | `type` | `TransactionType` | `INCOME` / `EXPENSE`. Not null. |
 | `amount` | `long` | Minor units, positive. Not null. The subscription's cost. |
-| `currency` | `String(3)` | ISO-4217. |
 | `cadence` | `RecurringCadence` | Not null. The repeat / billing frequency. |
 | `nextRunDate` | `long` | Epoch millis of the next generation — the next due or renewal date. Not null, indexed. |
 | `trialEndDate` | `long` | Nullable. Free-trial end, for the trial-expiry reminder (F-1.7 / F-1.20). |
@@ -482,13 +503,31 @@ subscription is a recurring expense with a renewal date, not a separate entity.
 | `active` | `boolean` | Default `true`. |
 | `payeeId` | `String` | Optional FK → `payee` ([§1.5b](#15b-payee)). Copied onto generated transactions. |
 | `note` | `String(500)` | Copied onto generated transactions. |
+| `paymentMethod` | `PaymentMethod` | Optional ([§1.6](#16-transaction)). Copied onto generated transactions, so a subscription billed to a card does not produce rows with no method. |
 
 **Rules**
+- **Currency is derived, not stored** — a template's currency is its account's `currency` ([§1.4](#14-account)), read at request time, the same rule a budget follows ([§1.7](#17-budget)). The column was dropped in `V9` (2026-08-21): it was only ever written from the user's active currency at create, so it was a third copy of one fact and the only one that could go stale. The API still returns `currency` on a template and on an upcoming occurrence — it is resolved on read. **A generated `Transaction` keeps its own copy**, stamped from the account at generation time: the row records what the money *was*.
+- On the write path a template whose account cannot be read is a hard failure rather than a guess at the currency; the scheduler isolates that one template and logs it.
 - A scheduled job scans `active = true AND next_run_date <= now`, creates a `Transaction` (with `recurringId` set back to the template), then advances `nextRunDate` by the cadence.
 - The same validation as `Transaction` applies to the generated row — including "no TRANSFER templates".
 - A generated row lands in the month its run date falls in, so it counts toward exactly that month's position ([§1.10](#110-monthly-position-invariant)).
 - Reaching `endDate` sets `active = false`.
 - **Reminders** (F-1.20) read this table: upcoming `nextRunDate` drives bill and renewal reminders, and `trialEndDate` drives the trial-expiry warning.
+- **The schedule advances in the owner's timezone** (`app_user.timezone`), the same zone the monthly position is sliced in ([§1.10](#110-monthly-position-invariant)). The client sends `nextRunDate` as epoch millis built from the local date and time the user picked, so *reading* that instant back in UTC is what breaks: local midnight on the 1st in `Asia/Colombo` is 18:30 on the last day of the previous month in UTC, which anchors the template to the 31st and generates rows into the neighbouring month. `anchorDay` is therefore read in the owner's zone at create and at every reschedule, and DAILY/WEEKLY advance by a calendar day/week so a template keeps its local time of day across a DST shift. The scheduler has no caller, so it resolves the zone from the row's owner; a missing owner row falls back to UTC rather than skipping generation.
+- **Creating a template whose first run has already arrived posts that one occurrence immediately**, in the same transaction, and returns it with the response — a subscription added on its billing day is in the ledger at once instead of after the next scheduler tick. Exactly one, even for a badly backdated template: the rest is catch-up, and belongs to the scheduler rather than to a user's request.
+
+### Upcoming payments are projected, never stored
+
+**A payment the user has not made yet is not a row.** The upcoming-payments list
+(F-1.7, and the reminders in F-1.20) is computed from the templates on every read
+by walking each `nextRunDate` forward by its cadence until it leaves the window —
+nothing is written, and nothing needs cleaning up if the user edits or cancels the
+template.
+
+- The window is `[now, end of the day <n> days from today)` in the owner's timezone, default `n = 3`, so a renewal on the 24th is visible on the 21st whatever time of day it falls at.
+- **An occurrence still listed after its due date is not an error.** The template's `nextRunDate` has not advanced past it, so it exists nowhere else; it is flagged as due and the next generation pass posts it. The generation cadence is therefore what bounds that gap (15 minutes by default, `zenzmoney.recurring.cron`), not correctness.
+- **There is deliberately no `PENDING`/`PAID` status on a transaction.** A status that flips purely because a date passed is derivable from the date — `pending ⟺ dueDate > now` — so storing it would mean maintaining a field the clock already answers, and every aggregate below would have to remember to filter it. A stored status earns its place only when it records something the clock cannot infer: *skip this month*, *this did not go through*, or an amount that differed from the template. None of those actions exist yet.
+- Consequently a projected occurrence is counted by **no** total: not the monthly position, not budget spend, not the category breakdown, not the AI snapshot. The position stays a record of what happened rather than of what is expected.
 
 ## 1.9 SavingsGoal & GoalContribution
 
@@ -560,6 +599,7 @@ position(m) = income(m) − expenses(m)
 - **Boundaries are resolved in `app_user.timezone`** (default `UTC`) and then converted to epoch millis. A user in `Asia/Colombo` gets Colombo months; changing the timezone re-slices every month on the next read, because nothing was precomputed (OQ-2).
 - **Nothing carries forward.** `position(August)` does not seed September. There is no opening figure, no closing figure, no cumulative running total, and consequently no "reset".
 - **Any month is computable** — past months are the same query with a different window.
+- **Only real rows are summed.** Upcoming recurring payments ([§1.8](#18-recurringtransaction)) are projections, not transactions, and enter the position on the day the generation job posts them — never before, and never on the strength of being three days away.
 - **A write only affects its own month.** Creating / editing / deleting a transaction changes the position of the month its `txnDate` falls in, and no other. Moving a date across a boundary affects exactly the two months involved.
 - Spending analysis (F-1.18), reports (F-1.19), and the dashboard (F-1.17) all use **this** window rule, so every month-labelled figure on screen agrees with every other.
 - **Budgets follow the same calendar-alignment rule** ([§1.7](#17-budget)) — a `MONTHLY` budget's window is the calendar month its `periodKey` names, `YEARLY` that calendar year, both resolved in the *account owner's* timezone exactly like the position above. This changed on 2026-08-18: budgets previously anchored to an arbitrary `startDate` and rolled every period from there, so a monthly budget started mid-month wasn't a calendar month; that flexibility was traded away for a simpler, always-calendar-aligned model, and `startDate` was dropped.
@@ -752,10 +792,11 @@ billing cycle, a renewal date, and an optional free-trial end date — all of wh
 | What the old design had | Where it lives now |
 |---|---|
 | `name` / `provider` | The template's [`Payee`](#15b-payee) (*Netflix*) plus its `note`. |
-| `amount`, `currency`, `billingCycle` | `RecurringTransaction.amount` / `currency` / `cadence`. |
+| `amount`, `currency`, `billingCycle` | `RecurringTransaction.amount` / `cadence`; the currency comes from the template's account ([§1.8](#18-recurringtransaction)). |
 | `nextRenewalDate` | `RecurringTransaction.nextRunDate`. |
 | `trialEndDate` | `RecurringTransaction.trialEndDate`. |
 | `status` (`ACTIVE`/`PAUSED`/`CANCELLED`) | `RecurringTransaction.active` + `endDate`. |
+| How it is billed (card/wallet) | `RecurringTransaction.paymentMethod` ([§1.6](#16-transaction)), copied onto each generated row. |
 | `recurringId` link | Not needed — it *is* the recurring row. |
 
 **Why merge.** The two models were the same shape, and the split forced every
@@ -769,6 +810,7 @@ cannot double-count.
 
 - Reminders (renewal soon, trial ending) are emitted by the notification system (F-1.20) keyed off `nextRunDate` / `trialEndDate`.
 - Total monthly subscription cost is a derived aggregate over active EXPENSE templates.
+- "What am I about to be charged" is the upcoming-payments projection in [§1.8](#18-recurringtransaction) — read off the templates, not a stored queue of pending charges.
 
 ---
 

@@ -3,7 +3,9 @@ package com.zenzmoney.core.web.controller;
 import com.zenzmoney.common.dto.ApiResponse;
 import com.zenzmoney.core.service.RecurringTransactionService;
 import com.zenzmoney.core.web.dto.CreateRecurringRequest;
+import com.zenzmoney.core.web.dto.RecurringCreatedResponse;
 import com.zenzmoney.core.web.dto.RecurringResponse;
+import com.zenzmoney.core.web.dto.UpcomingOccurrenceResponse;
 import com.zenzmoney.core.web.dto.UpdateRecurringRequest;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.validation.Valid;
@@ -33,7 +35,8 @@ public class RecurringTransactionController {
     }
 
     @PostMapping
-    public ResponseEntity<ApiResponse<RecurringResponse>> create(@Valid @RequestBody CreateRecurringRequest req) {
+    public ResponseEntity<ApiResponse<RecurringCreatedResponse>> create(
+            @Valid @RequestBody CreateRecurringRequest req) {
         return ResponseEntity.ok(ApiResponse.success(recurringService.create(req)));
     }
 
@@ -41,6 +44,16 @@ public class RecurringTransactionController {
     public ResponseEntity<ApiResponse<List<RecurringResponse>>> list(
             @RequestParam(name = "includeInactive", defaultValue = "false") boolean includeInactive) {
         return ResponseEntity.ok(ApiResponse.success(recurringService.list(includeInactive)));
+    }
+
+    /**
+     * Bills, renewals and salary falling due in the next {@code withinDays} days.
+     * These are projections, not ledger rows — see {@code RecurringTransactionService#upcoming}.
+     */
+    @GetMapping("/upcoming")
+    public ResponseEntity<ApiResponse<List<UpcomingOccurrenceResponse>>> upcoming(
+            @RequestParam(name = "withinDays", required = false) Integer withinDays) {
+        return ResponseEntity.ok(ApiResponse.success(recurringService.upcoming(withinDays)));
     }
 
     @GetMapping("/{id}")

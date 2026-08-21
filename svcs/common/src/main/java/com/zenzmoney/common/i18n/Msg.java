@@ -109,6 +109,8 @@ public interface Msg {
     // ── recurring ───────────────────────────────────────────────────────────────
     MessageKey RECURRING_NOT_FOUND     = of("error.recurring.not-found");
     MessageKey RECURRING_NEXT_RUN_INVALID = of("error.recurring.next-run-invalid");
+    /** {0} = the maximum window in days. */
+    MessageKey RECURRING_UPCOMING_WINDOW_INVALID = of("error.recurring.upcoming-window-invalid");
 
     // ── savings goal ────────────────────────────────────────────────────────────
     MessageKey GOAL_NOT_FOUND          = of("error.goal.not-found");

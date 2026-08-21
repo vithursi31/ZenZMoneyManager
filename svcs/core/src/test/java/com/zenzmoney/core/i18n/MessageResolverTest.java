@@ -14,6 +14,7 @@ import java.util.Locale;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * The fallback ladder, which is what keeps a half-finished translation from ever being visible as
@@ -71,6 +72,16 @@ class MessageResolverTest {
     void argumentsAreInterpolated() {
         assertEquals("Unknown currency code: XYZ",
                 resolver.render(StatusCodes.SC_BAD_REQUEST.with(Msg.CURRENCY_UNKNOWN, "XYZ"), Locale.ENGLISH));
+    }
+
+    /** A numeric argument reaches the sentence as a plain number, in every language. */
+    @Test
+    void aNumericArgumentIsInterpolated() {
+        assertEquals("Upcoming window must be between 1 and 90 days.",
+                resolver.render(StatusCodes.SC_BAD_REQUEST.with(Msg.RECURRING_UPCOMING_WINDOW_INVALID, 90),
+                        Locale.ENGLISH));
+        assertTrue(resolver.render(StatusCodes.SC_BAD_REQUEST.with(Msg.RECURRING_UPCOMING_WINDOW_INVALID, 90),
+                SINHALA).contains("90"));
     }
 
     /** A language with no bundle of its own must land on the base bundle, not the JVM default. */

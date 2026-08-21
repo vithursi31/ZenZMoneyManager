@@ -17,7 +17,9 @@ import java.util.List;
  *
  * <p>Catch-up lives in {@code runTemplate}, so the tick cadence only bounds latency,
  * not correctness: missed occurrences during downtime are generated on the next tick.
- * Override the schedule with {@code zenzmoney.recurring.cron} (default: top of the hour).
+ * The tick is what bounds the gap between an occurrence leaving the upcoming-payments
+ * window (F-1.7) and its row existing, so it runs every 15 minutes rather than hourly.
+ * Override with {@code zenzmoney.recurring.cron}.
  */
 @Component
 public class RecurringTransactionScheduler {
@@ -31,7 +33,7 @@ public class RecurringTransactionScheduler {
         this.recurringService = recurringService;
     }
 
-    @Scheduled(cron = "${zenzmoney.recurring.cron:0 0 * * * *}")
+    @Scheduled(cron = "${zenzmoney.recurring.cron:0 0/15 * * * *}")
     public void generateDue() {
         List<String> due = recurringService.dueTemplateIds();
         if (due.isEmpty()) {

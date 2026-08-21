@@ -1,5 +1,6 @@
 package com.zenzmoney.core.web.dto;
 
+import com.zenzmoney.common.domain.PaymentMethod;
 import com.zenzmoney.common.domain.RecurringCadence;
 import com.zenzmoney.common.domain.TransactionType;
 import com.zenzmoney.core.entity.RecurringTransaction;
@@ -22,13 +23,14 @@ public class RecurringResponse {
     private final boolean active;
     private final String payeeId;
     private final String note;
+    private final PaymentMethod paymentMethod;
 
-    private RecurringResponse(RecurringTransaction r) {
+    private RecurringResponse(RecurringTransaction r, String currency) {
         this.id = r.getId();
         this.categoryId = r.getCategoryId();
         this.type = r.getType();
         this.amount = r.getAmount();
-        this.currency = r.getCurrency();
+        this.currency = currency;
         this.cadence = r.getCadence();
         this.nextRunDate = r.getNextRunDate();
         this.anchorDay = r.getAnchorDay();
@@ -37,9 +39,11 @@ public class RecurringResponse {
         this.active = r.isActive();
         this.payeeId = r.getPayeeId();
         this.note = r.getNote();
+        this.paymentMethod = r.getPaymentMethod();
     }
 
-    public static RecurringResponse of(RecurringTransaction r) {
-        return new RecurringResponse(r);
+    /** {@code currency} comes from the account the template posts to (§1.4) — it is not stored here. */
+    public static RecurringResponse of(RecurringTransaction r, String currency) {
+        return new RecurringResponse(r, currency);
     }
 }

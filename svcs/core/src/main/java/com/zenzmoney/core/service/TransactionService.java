@@ -2,6 +2,7 @@ package com.zenzmoney.core.service;
 
 import com.zenzmoney.common.domain.CategoryKind;
 import com.zenzmoney.common.domain.CategoryStatus;
+import com.zenzmoney.common.domain.PaymentMethod;
 import com.zenzmoney.common.domain.TimeUtils;
 import com.zenzmoney.common.domain.TransactionType;
 import com.zenzmoney.common.exception.BadRequestException;
@@ -65,12 +66,12 @@ public class TransactionService {
     public TransactionResponse create(CreateTransactionRequest req) {
         User user = currentUser.requireUser();
         Transaction txn = new Transaction();
-        apply(txn, user, req.getType(), req.getCategoryId(), req.getAmount(),
-                req.getTxnDate(), req.getPayeeName(), req.getNote(), req.getTags());
+        apply(txn, user, req.getType(), req.getCategoryId(), req.getAmount(), req.getTxnDate(),
+                req.getPayeeName(), req.getNote(), req.getTags(), req.getPaymentMethod());
         Transaction saved = transactionRepository.save(txn);
-        log.info("Transaction created: {} {} {} dated {} (txn {}, user {})",
+        log.info("Transaction created: {} {} {} dated {} via {} (txn {}, user {})",
                 saved.getType(), saved.getAmount(), saved.getCurrency(),
-                saved.getTxnDate(), saved.getId(), user.getId());
+                saved.getTxnDate(), saved.getPaymentMethod(), saved.getId(), user.getId());
         return TransactionResponse.of(saved);
     }
 
@@ -81,8 +82,8 @@ public class TransactionService {
         Transaction txn = requireOwned(id, user.getId());
 
         long previousDate = txn.getTxnDate();
-        apply(txn, user, req.getType(), req.getCategoryId(), req.getAmount(),
-                req.getTxnDate(), req.getPayeeName(), req.getNote(), req.getTags());
+        apply(txn, user, req.getType(), req.getCategoryId(), req.getAmount(), req.getTxnDate(),
+                req.getPayeeName(), req.getNote(), req.getTags(), req.getPaymentMethod());
         Transaction saved = transactionRepository.save(txn);
 
         // The date is called out because moving a row across a month boundary is the one edit
@@ -143,20 +144,27 @@ public class TransactionService {
      * re-resolved. {@code recurringId} links the row back to its template. Called by the
      * scheduler within the template's transaction, so the generation and the template's
      * {@code nextRunDate} advance commit atomically.
+     *
+     * <p>{@code currency} is resolved by the caller from the template's account (§1.4) and
+     * passed in: a catch-up run generates many rows for one template, and re-reading the
+     * same account per row would be a query per occurrence. The row keeps its own copy
+     * because a ledger row records what the money <em>was</em>.
      */
     @Transactional
-    public TransactionResponse generateFromRecurring(RecurringTransaction template, long runDate) {
+    public TransactionResponse generateFromRecurring(RecurringTransaction template, long runDate,
+                                                     String currency) {
         Transaction txn = new Transaction();
         txn.setUserId(template.getUserId());
         txn.setAccountId(template.getAccountId());
         txn.setType(template.getType());
         txn.setCategoryId(template.getCategoryId());
         txn.setAmount(template.getAmount());
-        txn.setCurrency(template.getCurrency());
+        txn.setCurrency(currency);
         txn.setTxnDate(runDate);
         txn.setNote(template.getNote());
         txn.setTags(new ArrayList<>());
         txn.setPayeeId(template.getPayeeId());     // template payee is already resolved
+        txn.setPaymentMethod(template.getPaymentMethod());
         txn.setRecurringId(template.getId());
         Transaction saved = transactionRepository.save(txn);
         // Money moved without a user in the request — the scheduler did it. The template id is what
@@ -171,7 +179,8 @@ public class TransactionService {
 
     /** Validates the ledger rules (§1.6) and writes them onto {@code txn}. */
     private void apply(Transaction txn, User user, TransactionType type, String categoryId,
-                       long amount, Long txnDate, String payeeName, String note, List<String> tags) {
+                       long amount, Long txnDate, String payeeName, String note,
+                       List<String> tags, PaymentMethod paymentMethod) {
         if (amount <= 0) {
             throw new BadRequestException(Msg.AMOUNT_NOT_POSITIVE);
         }
@@ -195,6 +204,7 @@ public class TransactionService {
         txn.setNote(note);
         txn.setTags(tags != null ? tags : new ArrayList<>());
         txn.setPayeeId(payeeService.resolveOrCreate(userId, payeeName));
+        txn.setPaymentMethod(paymentMethod);
     }
 
     private Transaction requireOwned(String id, String userId) {

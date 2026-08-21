@@ -1,5 +1,6 @@
 package com.zenzmoney.core.web.dto;
 
+import com.zenzmoney.common.domain.PaymentMethod;
 import com.zenzmoney.common.domain.TransactionType;
 import com.zenzmoney.core.entity.Transaction;
 import lombok.Getter;
@@ -19,6 +20,7 @@ public class TransactionResponse {
     private final long txnDate;
     private final String payeeId;
     private final String note;
+    private final PaymentMethod paymentMethod;
     private final List<String> tags;
     private final String recurringId;
 
@@ -32,6 +34,7 @@ public class TransactionResponse {
         this.txnDate = t.getTxnDate();
         this.payeeId = t.getPayeeId();
         this.note = t.getNote();
+        this.paymentMethod = t.getPaymentMethod();
         this.tags = t.getTags();
         this.recurringId = t.getRecurringId();
     }

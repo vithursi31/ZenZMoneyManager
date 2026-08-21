@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 # GET /api/v1/recurring — list the caller's recurring templates, soonest next-run
-# first. Each row includes nextRunDate, anchorDay, cadence, endDate, and active.
-#   ./api-recurring-list.sh                       # active only
+# first. Each row includes cadence, nextRunDate, anchorDay, trialEndDate, endDate,
+# active, and paymentMethod.
+#
+# This lists the RULES. For the payments those rules are about to produce, use
+# api-recurring-upcoming.sh — a template due next month appears here but not there.
+#
+#   ./api-recurring-list.sh                        # active only
 #   INCLUDE_INACTIVE=true ./api-recurring-list.sh  # include paused/ended
 source define-envars.sh;
 

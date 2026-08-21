@@ -2,6 +2,7 @@ package com.zenzmoney.core.service;
 
 import com.zenzmoney.common.domain.CategoryStatus;
 import com.zenzmoney.common.domain.CategoryKind;
+import com.zenzmoney.common.domain.PaymentMethod;
 import com.zenzmoney.common.domain.TransactionType;
 import com.zenzmoney.common.exception.BadRequestException;
 import com.zenzmoney.common.exception.NotFoundException;
@@ -25,6 +26,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -394,16 +396,16 @@ class TransactionServiceTest {
         template.setType(TransactionType.EXPENSE);
         template.setCategoryId("c1");
         template.setAmount(9_900);
-        template.setCurrency("USD");
         template.setPayeeId("p1");
         template.setNote("Netflix");
+        template.setPaymentMethod(PaymentMethod.CARD);
         when(transactionRepository.save(any())).thenAnswer(inv -> {
             Transaction t = inv.getArgument(0);
             t.setId("t1");
             return t;
         });
 
-        transactionService.generateFromRecurring(template, JAN_2026);
+        transactionService.generateFromRecurring(template, JAN_2026, "LKR");
 
         ArgumentCaptor<Transaction> saved = ArgumentCaptor.forClass(Transaction.class);
         verify(transactionRepository).save(saved.capture());
@@ -414,5 +416,58 @@ class TransactionServiceTest {
         assertEquals("p1", t.getPayeeId());
         assertEquals("r1", t.getRecurringId());
         assertEquals(JAN_2026, t.getTxnDate());
+        // A subscription billed to a card must not generate rows with no method (§1.8).
+        assertEquals(PaymentMethod.CARD, t.getPaymentMethod());
+        // The template stores no currency: the caller resolves it from the account the row
+        // posts to, and the ledger row keeps its own copy as a historical fact (§0.3).
+        assertEquals("LKR", t.getCurrency());
+    }
+
+    // --- payment method: a label on the row, not an account (§1.6) ---
+
+    @Test
+    void create_storesThePaymentMethod() {
+        stubHappyPath(CategoryKind.EXPENSE);
+        CreateTransactionRequest r = req(TransactionType.EXPENSE, "c1", 1_050);
+        r.setPaymentMethod(PaymentMethod.CASH);
+
+        TransactionResponse resp = transactionService.create(r);
+
+        ArgumentCaptor<Transaction> saved = ArgumentCaptor.forClass(Transaction.class);
+        verify(transactionRepository).save(saved.capture());
+        assertEquals(PaymentMethod.CASH, saved.getValue().getPaymentMethod());
+        assertEquals(PaymentMethod.CASH, resp.getPaymentMethod());
+    }
+
+    /** Null is a real answer — "the user did not say" — and is never guessed at. */
+    @Test
+    void create_leavesThePaymentMethodNull_whenNotSent() {
+        stubHappyPath(CategoryKind.EXPENSE);
+
+        assertNull(transactionService.create(req(TransactionType.EXPENSE, "c1", 1_050)).getPaymentMethod());
+    }
+
+    /** PUT is a full replacement, so omitting the method clears it like note and tags. */
+    @Test
+    void update_clearsThePaymentMethod_whenOmitted() {
+        User u = user();
+        Transaction existing = new Transaction();
+        existing.setId("t1");
+        existing.setUserId("u1");
+        existing.setPaymentMethod(PaymentMethod.CARD);
+        when(currentUser.requireUser()).thenReturn(u);
+        when(accountService.requireAccountId(u)).thenReturn("a1");
+        when(transactionRepository.findByIdAndUserId("t1", "u1")).thenReturn(Optional.of(existing));
+        when(categoryRepository.findByIdAndUserIdAndStatus("c1", "u1", CategoryStatus.ACTIVE))
+                .thenReturn(Optional.of(category("c1", CategoryKind.EXPENSE)));
+        when(transactionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        UpdateTransactionRequest req = new UpdateTransactionRequest();
+        req.setType(TransactionType.EXPENSE);
+        req.setCategoryId("c1");
+        req.setAmount(1_050);
+        req.setTxnDate(JAN_2026);
+
+        assertNull(transactionService.update("t1", req).getPaymentMethod());
     }
 }

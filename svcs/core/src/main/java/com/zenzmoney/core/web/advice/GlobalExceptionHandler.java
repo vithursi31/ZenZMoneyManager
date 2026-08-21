@@ -18,6 +18,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.ErrorResponse;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -154,6 +155,23 @@ public class GlobalExceptionHandler {
             return StatusCodes.SC_NOT_AUTHORIZED;
         }
         return StatusCodes.SC_BAD_REQUEST;
+    }
+
+    /**
+     * An unreadable request body — malformed JSON, or a value outside an enum's set such as
+     * {@code "paymentMethod": "CHEQUE"}. A client mistake, so a 400: unlike its siblings this
+     * exception carries no status of its own (it is not an {@link ErrorResponse}), so without
+     * this handler it reaches the catch-all and a typo is reported as a server outage.
+     *
+     * <p>Jackson's text names Java classes and lists the enum's constants, so it is a log-only
+     * diagnostic; the caller gets the code's generic sentence in their language. There is no field
+     * list to give them either — deserialization failed, so no binding result exists.
+     */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ApiResponse<Void>> handleUnreadableBody(HttpMessageNotReadableException ex) {
+        StatusCode sc = StatusCodes.SC_BAD_REQUEST.with(ex.getMessage());
+        log.debug("400 {} unreadable body: {}", sc.code(), ex.getMessage());
+        return ResponseEntity.status(sc.httpStatus()).body(ApiResponse.error(sc, localised(sc)));
     }
 
     /**

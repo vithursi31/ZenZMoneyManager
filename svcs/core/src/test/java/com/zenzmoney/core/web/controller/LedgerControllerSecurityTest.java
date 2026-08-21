@@ -86,4 +86,15 @@ class LedgerControllerSecurityTest {
         mockMvc.perform(get("/api/v1/transactions")).andExpect(status().isForbidden());
         mockMvc.perform(get("/api/v1/recurring")).andExpect(status().isForbidden());
     }
+
+    /**
+     * Upcoming payments name what the user owes and to whom. It is a literal path under a
+     * class-level {@code @RolesAllowed}, so this proves the gate covers it rather than the
+     * request falling through to the {@code /{id}} mapping.
+     */
+    @Test
+    void anonymousCannotReadUpcomingPayments() throws Exception {
+        mockMvc.perform(get("/api/v1/recurring/upcoming")).andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/v1/recurring/upcoming?withinDays=7")).andExpect(status().isForbidden());
+    }
 }

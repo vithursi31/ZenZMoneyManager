@@ -87,6 +87,7 @@ come in the `ApiResponse` envelope: `{status, data, message, errorCode}`.
 | Goals | `api-goal-contribution-delete.sh` | `DELETE /api/v1/goals/{id}/contributions/{contributionId}` |
 | Recurring | `api-recurring-create.sh` | `POST /api/v1/recurring` |
 | Recurring | `api-recurring-list.sh` | `GET /api/v1/recurring` |
+| Recurring | `api-recurring-upcoming.sh` | `GET /api/v1/recurring/upcoming` |
 | Recurring | `api-recurring-get.sh` | `GET /api/v1/recurring/{id}` |
 | Recurring | `api-recurring-update.sh` | `PUT /api/v1/recurring/{id}` |
 | Recurring | `api-recurring-delete.sh` | `DELETE /api/v1/recurring/{id}` |

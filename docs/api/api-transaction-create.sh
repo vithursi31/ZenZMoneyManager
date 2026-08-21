@@ -7,6 +7,9 @@
 #   txnDate    : optional epoch millis; defaults to now
 #   payeeName  : optional, max 300; resolved to a Payee row (deduped, created on first use)
 #   note       : optional, max 500
+#   paymentMethod : optional CASH | CARD | BANK_TRANSFER | WALLET | OTHER — how the
+#                money moved. A LABEL on the row, not a choice of account; omit it
+#                when the user did not say (null is the stored form of "did not say")
 #   tags       : optional array of strings
 #
 # Neither accountId nor currency is sent. The server stamps the caller's active
@@ -39,5 +42,6 @@ curl -kv -H "Authorization:Bearer $ACCESS_TOKEN" \
 #     "amount": 1050,
 #     "payeeName": "Corner Cafe",
 #     "note": "burger",
+#     "paymentMethod": "CARD",
 #     "tags": ["lunch"]
 #   }'

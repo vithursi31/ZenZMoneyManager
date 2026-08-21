@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # GET /api/v1/recurring/{id} — one recurring template, scoped to the caller.
-# Pass the id as arg 1 or set RECURRING_ID.
+# Pass the id as arg 1 or set RECURRING_ID; an upcoming entry's recurringId is one.
+# Someone else's id answers 404, not 403 — the query is scoped to the caller first.
 source define-envars.sh;
 
 RECURRING_ID="${1:-${RECURRING_ID:-}}"

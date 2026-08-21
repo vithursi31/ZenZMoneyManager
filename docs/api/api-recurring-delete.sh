@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
-# DELETE /api/v1/recurring/{id} — delete a recurring template (USER/ADMIN). Already-
-# generated transactions are real ledger rows and are kept untouched. To stop future
-# generation without deleting, PUT active=false instead. Pass the id as arg 1 or set
-# RECURRING_ID.
+# DELETE /api/v1/recurring/{id} — delete a recurring template (USER/ADMIN).
+#
+# A HARD delete, unlike an account or a category: the template row is gone. The
+# transactions it already generated are real money and are kept untouched — their
+# recurringId becomes a historical label pointing at nothing.
+#
+# To stop future generation while keeping the history readable, PUT active=false
+# instead (api-recurring-update.sh). Pass the id as arg 1 or set RECURRING_ID.
 source define-envars.sh;
 
 RECURRING_ID="${1:-${RECURRING_ID:-}}"
