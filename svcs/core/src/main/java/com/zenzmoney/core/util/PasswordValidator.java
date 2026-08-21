@@ -1,5 +1,8 @@
 package com.zenzmoney.core.util;
 
+import com.zenzmoney.common.i18n.Message;
+import com.zenzmoney.common.i18n.Msg;
+
 import java.util.Optional;
 import java.util.regex.Pattern;
 
@@ -16,14 +19,14 @@ public final class PasswordValidator {
 
     private PasswordValidator() {}
 
-    public static Optional<String> validate(String password) {
-        if (password == null || password.isEmpty())         return Optional.of("Password cannot be empty");
-        if (WHITESPACE_PATTERN.matcher(password).matches()) return Optional.of("Password cannot contain spaces");
-        if (!SPECIAL_CHAR_PATTERN.matcher(password).find()) return Optional.of("Password must contain a special character");
-        if (!LETTER_PATTERN.matcher(password).find())       return Optional.of("Password must contain a letter");
-        if (!DIGIT_PATTERN.matcher(password).find())        return Optional.of("Password must contain a digit");
-        if (password.length() < MIN_LENGTH)                 return Optional.of("Password must be at least " + MIN_LENGTH + " chars");
-        if (password.length() > MAX_LENGTH)                 return Optional.of("Password must be at most "  + MAX_LENGTH + " chars");
+    public static Optional<Message> validate(String password) {
+        if (password == null || password.isEmpty())         return Optional.of(Message.of(Msg.PASSWORD_EMPTY));
+        if (WHITESPACE_PATTERN.matcher(password).matches()) return Optional.of(Message.of(Msg.PASSWORD_WHITESPACE));
+        if (!SPECIAL_CHAR_PATTERN.matcher(password).find()) return Optional.of(Message.of(Msg.PASSWORD_NO_SPECIAL));
+        if (!LETTER_PATTERN.matcher(password).find())       return Optional.of(Message.of(Msg.PASSWORD_NO_LETTER));
+        if (!DIGIT_PATTERN.matcher(password).find())        return Optional.of(Message.of(Msg.PASSWORD_NO_DIGIT));
+        if (password.length() < MIN_LENGTH)                 return Optional.of(Message.of(Msg.PASSWORD_TOO_SHORT, MIN_LENGTH));
+        if (password.length() > MAX_LENGTH)                 return Optional.of(Message.of(Msg.PASSWORD_TOO_LONG, MAX_LENGTH));
         return Optional.empty();
     }
 }

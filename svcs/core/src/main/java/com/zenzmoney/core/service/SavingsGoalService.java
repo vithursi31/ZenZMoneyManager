@@ -4,6 +4,7 @@ import com.zenzmoney.common.domain.GoalStatus;
 import com.zenzmoney.common.domain.TimeUtils;
 import com.zenzmoney.common.exception.BadRequestException;
 import com.zenzmoney.common.exception.NotFoundException;
+import com.zenzmoney.common.i18n.Msg;
 import com.zenzmoney.core.entity.GoalContribution;
 import com.zenzmoney.core.entity.SavingsGoal;
 import com.zenzmoney.core.entity.Transaction;
@@ -60,7 +61,7 @@ public class SavingsGoalService {
         User user = currentUser.requireUser();
         String userId = user.getId();
         if (req.getTargetAmount() <= 0) {
-            throw new BadRequestException("Target amount must be positive.");
+            throw new BadRequestException(Msg.GOAL_TARGET_NOT_POSITIVE);
         }
 
         SavingsGoal goal = new SavingsGoal();
@@ -101,7 +102,7 @@ public class SavingsGoalService {
         }
         if (req.getTargetAmount() != null) {
             if (req.getTargetAmount() <= 0) {
-                throw new BadRequestException("Target amount must be positive.");
+                throw new BadRequestException(Msg.GOAL_TARGET_NOT_POSITIVE);
             }
             goal.setTargetAmount(req.getTargetAmount());
         }
@@ -132,7 +133,7 @@ public class SavingsGoalService {
     public void delete(String id) {
         SavingsGoal goal = requireOwned(id, currentUser.requireUserId());
         if (!contributionRepository.findByGoalId(id).isEmpty()) {
-            throw new BadRequestException("Goal has contributions and cannot be deleted; archive it instead.");
+            throw new BadRequestException(Msg.GOAL_HAS_CONTRIBUTIONS);
         }
         goalRepository.delete(goal);
         // Hard delete, allowed only because the goal was unfunded — this line is the last record.
@@ -147,18 +148,18 @@ public class SavingsGoalService {
         String userId = currentUser.requireUserId();
         SavingsGoal goal = requireOwned(goalId, userId);
         if (req.getAmount() <= 0) {
-            throw new BadRequestException("Contribution amount must be positive.");
+            throw new BadRequestException(Msg.CONTRIBUTION_NOT_POSITIVE);
         }
 
         String transactionId = normalizeId(req.getTransactionId());
         if (transactionId != null) {
             Transaction txn = transactionRepository.findByIdAndUserId(transactionId, userId)
-                    .orElseThrow(() -> new NotFoundException("Transaction not found"));
+                    .orElseThrow(() -> new NotFoundException(Msg.TRANSACTION_NOT_FOUND));
             if (txn.getAmount() != req.getAmount()) {
-                throw new BadRequestException("Contribution amount must match the linked transaction.");
+                throw new BadRequestException(Msg.CONTRIBUTION_AMOUNT_MISMATCH);
             }
             if (!txn.getCurrency().equals(goal.getCurrency())) {
-                throw new BadRequestException("Contribution currency must match the goal.");
+                throw new BadRequestException(Msg.CONTRIBUTION_CURRENCY_MISMATCH);
             }
         }
 
@@ -191,7 +192,7 @@ public class SavingsGoalService {
     public void deleteContribution(String goalId, String contributionId) {
         SavingsGoal goal = requireOwned(goalId, currentUser.requireUserId());
         GoalContribution c = contributionRepository.findByIdAndGoalId(contributionId, goalId)
-                .orElseThrow(() -> new NotFoundException("Contribution not found"));
+                .orElseThrow(() -> new NotFoundException(Msg.CONTRIBUTION_NOT_FOUND));
         contributionRepository.delete(c);
         log.info("Goal contribution deleted: {} {} from goal {} (contribution {}, user {})",
                 c.getAmount(), goal.getCurrency(), goalId, contributionId, goal.getUserId());
@@ -224,14 +225,13 @@ public class SavingsGoalService {
 
     private SavingsGoal requireOwned(String id, String userId) {
         return goalRepository.findByIdAndUserId(id, userId)
-                .orElseThrow(() -> new NotFoundException("Goal not found"));
+                .orElseThrow(() -> new NotFoundException(Msg.GOAL_NOT_FOUND));
     }
 
     private static String requireActiveCurrency(User user) {
         String currency = user.getActiveCurrency();
         if (currency == null || currency.isBlank()) {
-            throw new BadRequestException(
-                    "No active currency set; complete onboarding before creating a goal.");
+            throw new BadRequestException(Msg.GOAL_NO_CURRENCY);
         }
         return currency.toUpperCase();
     }

@@ -4,18 +4,25 @@ import com.zenzmoney.common.exception.BadRequestException;
 import com.zenzmoney.core.entity.Account;
 import com.zenzmoney.core.entity.User;
 import com.zenzmoney.core.repository.UserRepository;
+import com.zenzmoney.core.util.SupportedLanguages;
 import com.zenzmoney.core.web.dto.CategoryResponse;
 import com.zenzmoney.core.web.dto.CurrencyResponse;
+import com.zenzmoney.core.web.dto.LanguageResponse;
 import com.zenzmoney.core.web.dto.OnboardingRequest;
 import com.zenzmoney.core.web.dto.OnboardingResponse;
+import java.util.Map;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -31,6 +38,8 @@ class OnboardingServiceTest {
     @Mock AccountService accountService;
     @Mock CategoryService categoryService;
     @Mock CurrentUserService currentUser;
+    // A real one, not a mock: the allowlist is behaviour under test, not a collaborator.
+    @Spy SupportedLanguages supportedLanguages = new SupportedLanguages("en,si");
     @InjectMocks OnboardingService onboardingService;
 
     /** A user still carrying whatever registration guessed for them (F-1.27). */
@@ -69,10 +78,10 @@ class OnboardingServiceTest {
         when(currentUser.requireUser()).thenReturn(u);
         stubProvisioning();
 
-        OnboardingResponse resp = onboardingService.complete(req("lkr", "ta", "Asia/Colombo"));
+        OnboardingResponse resp = onboardingService.complete(req("lkr", "si-LK", "Asia/Colombo"));
 
         assertEquals("LKR", u.getActiveCurrency());   // normalized to upper case
-        assertEquals("ta", u.getLanguage());
+        assertEquals("si", u.getLanguage());          // normalized to a tag with a bundle
         assertEquals("Asia/Colombo", u.getTimezone());
         assertEquals("a1", resp.getAccountId());
         assertTrue(u.isOnboarded(), "the currency is confirmed and now frozen");
@@ -183,5 +192,63 @@ class OnboardingServiceTest {
 
         List<String> codes = currencies.stream().map(CurrencyResponse::getCode).toList();
         assertEquals(codes.stream().sorted().toList(), codes);
+    }
+
+    /**
+     * Same rule as {@code PUT /me}: a language with no bundle behind it is refused rather than
+     * stored, because storing it means every message silently stays English (F-1.26).
+     */
+    @Test
+    void complete_refusesALanguageTheServerCannotAnswerIn() {
+        User u = user(null);
+        when(currentUser.requireUser()).thenReturn(u);
+
+        assertThrows(BadRequestException.class,
+                () -> onboardingService.complete(req("LKR", "ta", "Asia/Colombo")));
+
+        verify(userRepository, never()).save(u);
+    }
+
+    /**
+     * The picker and the validator must be the same list, or a client offers a language the server
+     * then refuses (F-1.26). Order is the configured order, so the operator controls the picker by
+     * editing one property.
+     */
+    @Test
+    void listLanguages_isTheAllowlist_inConfiguredOrder() {
+        List<LanguageResponse> offered = onboardingService.listLanguages();
+
+        assertEquals(List.of("en", "si"), offered.stream().map(LanguageResponse::getTag).toList());
+        for (LanguageResponse language : offered) {
+            assertNotNull(supportedLanguages.match(language.getTag()),
+                    language.getTag() + " is offered but would be rejected on write");
+        }
+    }
+
+    /** A picker is read before the app speaks your language, so the native name has to be there. */
+    @Test
+    void listLanguages_carriesBothAnEnglishAndANativeName() {
+        LanguageResponse english = onboardingService.listLanguages().get(0);
+
+        assertEquals("en", english.getTag());
+        assertEquals("English", english.getName());
+        assertEquals("English", english.getNativeName());
+    }
+
+    /**
+     * Chinese is named by script, not region: the two bundles differ by writing system, and
+     * "Chinese (Simplified)" is what the user is choosing — "Chinese (China)" is not.
+     */
+    @Test
+    void listLanguages_namesChineseByScript() {
+        OnboardingService withChinese = new OnboardingService(userRepository, accountService,
+                categoryService, currentUser, new SupportedLanguages("en,zh-CN,zh-TW"));
+
+        Map<String, LanguageResponse> byTag = withChinese.listLanguages().stream()
+                .collect(Collectors.toMap(LanguageResponse::getTag, l -> l));
+
+        assertEquals("Chinese (Simplified)", byTag.get("zh-CN").getName());
+        assertEquals("Chinese (Traditional)", byTag.get("zh-TW").getName());
+        assertNotEquals(byTag.get("zh-CN").getNativeName(), byTag.get("zh-TW").getNativeName());
     }
 }

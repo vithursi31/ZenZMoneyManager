@@ -2,6 +2,7 @@ package com.zenzmoney.core.service;
 
 import com.zenzmoney.common.exception.BadRequestException;
 import com.zenzmoney.common.exception.NotFoundException;
+import com.zenzmoney.common.i18n.Msg;
 import com.zenzmoney.core.entity.Payee;
 import com.zenzmoney.core.repository.PayeeRepository;
 import com.zenzmoney.core.repository.RecurringTransactionRepository;
@@ -115,7 +116,7 @@ public class PayeeService {
             payeeRepository.findByUserIdAndNormalizedName(userId, normalized)
                     .filter(other -> !other.getId().equals(id))
                     .ifPresent(other -> {
-                        throw new BadRequestException("Another payee with that name already exists.");
+                        throw new BadRequestException(Msg.PAYEE_DUPLICATE);
                     });
             payee.setName(name);
             payee.setNormalizedName(normalized);
@@ -134,7 +135,7 @@ public class PayeeService {
     public void delete(String id) {
         Payee payee = requireOwned(id, currentUser.requireUserId());
         if (transactionRepository.existsByPayeeId(id) || recurringRepository.existsByPayeeId(id)) {
-            throw new BadRequestException("Payee is used by transactions and cannot be deleted.");
+            throw new BadRequestException(Msg.PAYEE_IN_USE);
         }
         payeeRepository.delete(payee);
         // Hard delete, allowed only because nothing referenced it — this line is the last record.
@@ -143,7 +144,7 @@ public class PayeeService {
 
     private Payee requireOwned(String id, String userId) {
         return payeeRepository.findByIdAndUserId(id, userId)
-                .orElseThrow(() -> new NotFoundException("Payee not found"));
+                .orElseThrow(() -> new NotFoundException(Msg.PAYEE_NOT_FOUND));
     }
 
     /** Trim, collapse internal whitespace, lower-case — the dedup key. */

@@ -1,5 +1,7 @@
 package com.zenzmoney.core.service;
 
+import com.zenzmoney.common.i18n.MessageKey;
+import com.zenzmoney.core.i18n.MessageResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -7,19 +9,29 @@ import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.stereotype.Service;
 
+import java.util.Locale;
+
 @Service
 public class SmtpEmailSender implements EmailSender {
 
     private static final Logger log = LoggerFactory.getLogger(SmtpEmailSender.class);
 
+    private static final MessageKey VERIFICATION_SUBJECT = MessageKey.of("email.verification.subject");
+    private static final MessageKey VERIFICATION_BODY = MessageKey.of("email.verification.body");
+    private static final MessageKey RESET_SUBJECT = MessageKey.of("email.password-reset.subject");
+    private static final MessageKey RESET_BODY = MessageKey.of("email.password-reset.body");
+
     private final JavaMailSender mailSender;
+    private final MessageResolver messages;
     private final String fromEmail;
     private final boolean logCodeOnSendFailure;
 
     public SmtpEmailSender(JavaMailSender mailSender,
+                           MessageResolver messages,
                            @Value("${zenzmoney.app.from-email:no-reply@zenzmoney.local}") String fromEmail,
                            @Value("${zenzmoney.app.log-code-on-send-failure:false}") boolean logCodeOnSendFailure) {
         this.mailSender = mailSender;
+        this.messages = messages;
         this.fromEmail = fromEmail;
         this.logCodeOnSendFailure = logCodeOnSendFailure;
     }
@@ -39,17 +51,18 @@ public class SmtpEmailSender implements EmailSender {
         }
     }
 
+    /**
+     * The locale is passed in, not read from the request: registration sends this before the user
+     * has picked a language, so the caller decides — the signup locale hint for a new account, the
+     * stored preference for one that already exists.
+     */
     @Override
-    public void sendVerificationCode(String to, String code) {
+    public void sendVerificationCode(String to, String code, Locale locale) {
         SimpleMailMessage msg = new SimpleMailMessage();
         msg.setFrom(fromEmail);
         msg.setTo(to);
-        msg.setSubject("Your ZenZ Money Manager verification code");
-        msg.setText("Welcome to ZenZ Money Manager!\n\n"
-                + "Your email verification code is:\n\n"
-                + "    " + code + "\n\n"
-                + "Enter it in the app to finish setting up your account (valid for 10 minutes).\n\n"
-                + "If you did not create this account, you can ignore this message.\n");
+        msg.setSubject(messages.render(VERIFICATION_SUBJECT, locale));
+        msg.setText(messages.render(VERIFICATION_BODY, locale, code));
         try {
             mailSender.send(msg);
             log.info("Sent verification code to {}", to);
@@ -60,16 +73,12 @@ public class SmtpEmailSender implements EmailSender {
     }
 
     @Override
-    public void sendPasswordResetCode(String to, String code) {
+    public void sendPasswordResetCode(String to, String code, Locale locale) {
         SimpleMailMessage msg = new SimpleMailMessage();
         msg.setFrom(fromEmail);
         msg.setTo(to);
-        msg.setSubject("Your ZenZ Money Manager password reset code");
-        msg.setText("We received a request to reset your ZenZ Money Manager password.\n\n"
-                + "Your password reset code is:\n\n"
-                + "    " + code + "\n\n"
-                + "Enter it in the app along with your new password (valid for 10 minutes).\n\n"
-                + "If you did not request this, you can safely ignore this message — your password will not change.\n");
+        msg.setSubject(messages.render(RESET_SUBJECT, locale));
+        msg.setText(messages.render(RESET_BODY, locale, code));
         try {
             mailSender.send(msg);
             log.info("Sent password-reset code to {}", to);

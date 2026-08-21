@@ -11,6 +11,7 @@ import com.zenzmoney.core.service.oauth.FacebookAuthConnector;
 import com.zenzmoney.core.service.oauth.FacebookAuthResp;
 import com.zenzmoney.core.service.oauth.GoogleAuthConnector;
 import com.zenzmoney.core.service.oauth.GoogleAuthResp;
+import com.zenzmoney.core.util.SupportedLanguages;
 import com.zenzmoney.core.web.dto.AppleAuthRequest;
 import com.zenzmoney.core.web.dto.AuthenticationResponse;
 import com.zenzmoney.core.web.dto.FacebookAuthRequest;
@@ -115,7 +116,7 @@ public class OAuthLoginService {
         u.setLastLoginTime(System.currentTimeMillis());
         // Same provisional footing as a password signup (F-1.27), minus the currency:
         // none of the three providers reports a locale, so onboarding asks for it.
-        u.setLanguage(SignupDefaults.LANGUAGE);
+        u.setLanguage(SupportedLanguages.DEFAULT.toLanguageTag());
         u.setOnboarded(false);
         User saved = userRepository.save(u);
         audit.info("Account registered for {} via {} (user {}, roles={}, language={}, onboarded=false) "

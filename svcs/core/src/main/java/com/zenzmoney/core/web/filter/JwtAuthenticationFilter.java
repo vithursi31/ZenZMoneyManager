@@ -5,6 +5,7 @@ import com.zenzmoney.common.dto.ApiResponse;
 import com.zenzmoney.common.exception.UnauthorizedException;
 import com.zenzmoney.common.status.ServiceCodes;
 import com.zenzmoney.common.status.StatusCode;
+import com.zenzmoney.core.i18n.MessageResolver;
 import com.zenzmoney.core.logging.AppLog;
 import com.zenzmoney.core.service.JwtTokenService;
 import io.jsonwebtoken.Claims;
@@ -14,6 +15,7 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.context.i18n.LocaleContextHolder;
 import org.springframework.security.authentication.AnonymousAuthenticationToken;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -41,6 +43,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtTokenService jwtTokenService;
     private final UserDetailsService userDetailsService;
+    private final MessageResolver messages;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private static final Set<String> PUBLIC_PATHS = Set.of(
@@ -57,9 +60,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             List.of(new SimpleGrantedAuthority("ROLE_ANONYMOUS"));
 
     public JwtAuthenticationFilter(JwtTokenService jwtTokenService,
-                                   UserDetailsService userDetailsService) {
+                                   UserDetailsService userDetailsService,
+                                   MessageResolver messages) {
         this.jwtTokenService = jwtTokenService;
         this.userDetailsService = userDetailsService;
+        this.messages = messages;
     }
 
     @Override
@@ -136,9 +141,16 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         return (q != null && !q.isEmpty()) ? q : null;
     }
 
+    /**
+     * A 401 written before any controller runs, so there is no principal to read a stored language
+     * preference from — the caller's {@code Accept-Language}, already resolved into
+     * {@link LocaleContextHolder} by {@code RequestLocaleFilter}, is all we have and all we need.
+     */
     private void writeError(HttpServletResponse resp, StatusCode statusCode) throws IOException {
         resp.setStatus(statusCode.httpStatus());
-        resp.setContentType("application/json");
-        objectMapper.writeValue(resp.getOutputStream(), ApiResponse.error(statusCode));
+        resp.setContentType("application/json;charset=UTF-8");
+        resp.setCharacterEncoding("UTF-8");
+        objectMapper.writeValue(resp.getOutputStream(),
+                ApiResponse.error(statusCode, messages.render(statusCode, LocaleContextHolder.getLocale())));
     }
 }

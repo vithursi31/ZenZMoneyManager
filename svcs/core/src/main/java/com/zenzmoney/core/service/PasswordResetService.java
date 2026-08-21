@@ -2,12 +2,14 @@ package com.zenzmoney.core.service;
 
 import com.zenzmoney.common.domain.UserStatus;
 import com.zenzmoney.common.exception.BadRequestException;
+import com.zenzmoney.common.i18n.Msg;
 import com.zenzmoney.core.entity.User;
 import com.zenzmoney.core.entity.Verification.Purpose;
 import com.zenzmoney.core.logging.AppLog;
 import com.zenzmoney.core.repository.UserRepository;
 import com.zenzmoney.core.util.EmailValidator;
 import com.zenzmoney.core.util.PasswordValidator;
+import com.zenzmoney.core.util.SupportedLanguages;
 import com.zenzmoney.core.web.dto.AuthenticationResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,17 +36,20 @@ public class PasswordResetService {
     private final JwtTokenService jwtTokenService;
     private final EmailSender emailSender;
     private final OtpService otpService;
+    private final SupportedLanguages supportedLanguages;
 
     public PasswordResetService(UserRepository userRepository,
                                 PasswordEncoder passwordEncoder,
                                 JwtTokenService jwtTokenService,
                                 EmailSender emailSender,
-                                OtpService otpService) {
+                                OtpService otpService,
+                                SupportedLanguages supportedLanguages) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtTokenService = jwtTokenService;
         this.emailSender = emailSender;
         this.otpService = otpService;
+        this.supportedLanguages = supportedLanguages;
     }
 
     @Transactional
@@ -67,7 +72,7 @@ public class PasswordResetService {
 
         audit.info("Password reset code requested for {}", email);
         String code = otpService.issue(email, Purpose.RESET_PASSWORD);
-        emailSender.sendPasswordResetCode(email, code);
+        emailSender.sendPasswordResetCode(email, code, supportedLanguages.resolveOrDefault(user.getLanguage()));
     }
 
     @Transactional
@@ -79,11 +84,10 @@ public class PasswordResetService {
                 .ifPresent(m -> { throw new BadRequestException(m); });
 
         User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new BadRequestException("No account found for that email"));
+                .orElseThrow(() -> new BadRequestException(Msg.EMAIL_UNKNOWN));
 
         if (!"password".equals(user.getAuthMode())) {
-            throw new BadRequestException(
-                    "This account uses " + user.getAuthMode() + " login and cannot reset a password");
+            throw new BadRequestException(Msg.SOCIAL_NO_RESET, user.getAuthMode());
         }
 
         otpService.verify(email, code, Purpose.RESET_PASSWORD);

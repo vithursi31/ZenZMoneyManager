@@ -1,7 +1,10 @@
 package com.zenzmoney.core.web.advice;
 
 import com.zenzmoney.common.dto.ApiResponse;
+import com.zenzmoney.common.status.StatusCode;
 import com.zenzmoney.common.status.StatusCodes;
+import com.zenzmoney.core.i18n.MessageResolver;
+import com.zenzmoney.core.i18n.RequestLocale;
 import com.zenzmoney.core.logging.AppLog;
 import com.zenzmoney.core.web.util.AuthUtil;
 import jakarta.servlet.http.HttpServletRequest;
@@ -27,14 +30,23 @@ public class AccessDeniedAdvice {
      */
     private static final Logger audit = AppLog.AUDIT;
 
+    private final MessageResolver messages;
+    private final RequestLocale requestLocale;
+
+    public AccessDeniedAdvice(MessageResolver messages, RequestLocale requestLocale) {
+        this.messages = messages;
+        this.requestLocale = requestLocale;
+    }
+
     @ExceptionHandler(AccessDeniedException.class)
     public Object handleAccessDenied(AccessDeniedException ex, HttpServletRequest request) {
         String path = request.getRequestURI();
         audit.warn("Access denied: {} {} for {}",
                 request.getMethod(), path, AuthUtil.currentUsername());
         if (path.startsWith("/api/")) {
+            StatusCode sc = StatusCodes.SC_NOT_AUTHORIZED;
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                    .body(ApiResponse.error(StatusCodes.SC_NOT_AUTHORIZED));
+                    .body(ApiResponse.error(sc, messages.render(sc, requestLocale.resolve())));
         }
         ModelAndView mav = new ModelAndView("error/403");
         mav.addObject("pageTitle", "Access denied");

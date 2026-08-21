@@ -3,6 +3,7 @@ package com.zenzmoney.core.web.controller;
 import com.zenzmoney.common.dto.ApiResponse;
 import com.zenzmoney.core.service.OnboardingService;
 import com.zenzmoney.core.web.dto.CurrencyResponse;
+import com.zenzmoney.core.web.dto.LanguageResponse;
 import com.zenzmoney.core.web.dto.OnboardingRequest;
 import com.zenzmoney.core.web.dto.OnboardingResponse;
 import jakarta.annotation.security.RolesAllowed;
@@ -42,5 +43,14 @@ public class OnboardingController {
     @GetMapping("/currencies")
     public ResponseEntity<ApiResponse<List<CurrencyResponse>>> currencies() {
         return ResponseEntity.ok(ApiResponse.success(onboardingService.listCurrencies()));
+    }
+
+    /**
+     * The language picker's options (F-1.26) — the same allowlist {@link #complete} and
+     * {@code PUT /me} validate against, so a client never offers a language the server would refuse.
+     */
+    @GetMapping("/languages")
+    public ResponseEntity<ApiResponse<List<LanguageResponse>>> languages() {
+        return ResponseEntity.ok(ApiResponse.success(onboardingService.listLanguages()));
     }
 }

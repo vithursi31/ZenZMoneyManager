@@ -66,8 +66,9 @@ class SignupDefaultsTest {
         assertNull(SignupDefaults.timezoneFor("Mars/Olympus"));
     }
 
-    @Test
-    void language_defaultsToEnglish() {
-        assertEquals("en", SignupDefaults.LANGUAGE);
-    }
+    /**
+     * Language seeding moved to SupportedLanguages when the allowlist became configuration — it
+     * needs the configured set, which a static utility cannot reach. Covered by
+     * SupportedLanguagesTest and RegistrationServiceTest.
+     */
 }

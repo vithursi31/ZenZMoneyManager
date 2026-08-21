@@ -3,6 +3,7 @@ package com.zenzmoney.core.service;
 import com.zenzmoney.common.domain.AccountStatus;
 import com.zenzmoney.common.exception.BadRequestException;
 import com.zenzmoney.common.exception.NotFoundException;
+import com.zenzmoney.common.i18n.Msg;
 import com.zenzmoney.core.entity.Account;
 import com.zenzmoney.core.entity.User;
 import com.zenzmoney.core.repository.AccountRepository;
@@ -52,7 +53,7 @@ public class AccountService {
     public AccountResponse findOne(String accountId) {
         String userId = currentUser.requireUserId();
         return AccountResponse.of(accountRepository.findByIdAndUserId(accountId, userId)
-                .orElseThrow(() -> new NotFoundException("Account not found")));
+                .orElseThrow(() -> new NotFoundException(Msg.ACCOUNT_NOT_FOUND)));
     }
 
     @Transactional
@@ -65,9 +66,9 @@ public class AccountService {
     public AccountResponse updateName(String accountId, UpdateAccountNameRequest req) {
         String userId = currentUser.requireUserId();
         Account account = accountRepository.findByIdAndUserId(accountId, userId)
-                .orElseThrow(() -> new NotFoundException("Account not found"));
+                .orElseThrow(() -> new NotFoundException(Msg.ACCOUNT_NOT_FOUND));
         if (account.getStatus() == AccountStatus.DELETED) {
-            throw new BadRequestException("Cannot rename a deleted account.");
+            throw new BadRequestException(Msg.ACCOUNT_RENAME_DELETED);
         }
         String name = req.getName().trim();
         account.setName(name);
@@ -80,13 +81,13 @@ public class AccountService {
     public void delete(String accountId) {
         String userId = currentUser.requireUserId();
         Account account = accountRepository.findByIdAndUserId(accountId, userId)
-                .orElseThrow(() -> new NotFoundException("Account not found"));
+                .orElseThrow(() -> new NotFoundException(Msg.ACCOUNT_NOT_FOUND));
         if (account.getStatus() == AccountStatus.DELETED) {
-            throw new BadRequestException("Account already deleted.");
+            throw new BadRequestException(Msg.ACCOUNT_ALREADY_DELETED);
         }
         if (account.getStatus() == AccountStatus.ACTIVE
                 && accountRepository.countByUserIdAndStatus(userId, AccountStatus.ACTIVE) <= 1) {
-            throw new BadRequestException("At least one active account is required.");
+            throw new BadRequestException(Msg.ACCOUNT_LAST_ACTIVE);
         }
         account.setStatus(AccountStatus.DELETED);
         accountRepository.save(account);
@@ -111,7 +112,7 @@ public class AccountService {
         }
         String trimmed = accountId.trim();
         accountRepository.findByIdAndUserId(trimmed, userId)
-                .orElseThrow(() -> new NotFoundException("Account not found"));
+                .orElseThrow(() -> new NotFoundException(Msg.ACCOUNT_NOT_FOUND));
         return trimmed;
     }
 
@@ -130,8 +131,7 @@ public class AccountService {
             return;
         }
         if (transactionRepository.existsByUserId(user.getId())) {
-            throw new BadRequestException("Amounts are already recorded in " + account.getCurrency()
-                    + "; changing your currency is not supported yet.");
+            throw new BadRequestException(Msg.ACCOUNT_CURRENCY_LOCKED, account.getCurrency());
         }
         String previous = account.getCurrency();
         account.setCurrency(currency);
@@ -143,8 +143,7 @@ public class AccountService {
     private Account create(User user, String name) {
         String currency = user.getActiveCurrency();
         if (currency == null || currency.isBlank()) {
-            throw new BadRequestException(
-                    "No active currency set; complete onboarding before recording money.");
+            throw new BadRequestException(Msg.ACCOUNT_NO_CURRENCY);
         }
         Account account = new Account();
         account.setUserId(user.getId());

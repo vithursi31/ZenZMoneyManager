@@ -23,6 +23,11 @@
     </modules>
 
     <properties>
+        <!-- Sources carry non-ASCII literals (i18n eval fixtures, F-1.26). Without this Maven uses
+             the platform encoding, which is UTF-8 on a dev machine and often POSIX/ASCII inside a
+             build container — where the same source then compiles to mojibake instead of failing. -->
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <java.version>17</java.version>
         <jjwt.version>0.12.6</jjwt.version>
         <querydsl.version>5.1.0</querydsl.version>

@@ -4,10 +4,12 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.LoggerContext;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import com.zenzmoney.core.i18n.TestMessages;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.LoggerFactory;
@@ -16,11 +18,13 @@ import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
 
 import java.util.List;
+import java.util.Locale;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.verify;
 
 /**
  * The send-failure branch used to write the live OTP to the log unconditionally. That branch is
@@ -58,7 +62,12 @@ class SmtpEmailSenderTest {
     private SmtpEmailSender senderWithFailingSmtp(boolean logCodeOnSendFailure) {
         doThrow(new MailSendException("no route to mail host"))
                 .when(mailSender).send(any(SimpleMailMessage.class));
-        return new SmtpEmailSender(mailSender, "no-reply@zenzmoney.local", logCodeOnSendFailure);
+        return sender(logCodeOnSendFailure);
+    }
+
+    private SmtpEmailSender sender(boolean logCodeOnSendFailure) {
+        return new SmtpEmailSender(mailSender, TestMessages.resolver(),
+                "no-reply@zenzmoney.local", logCodeOnSendFailure);
     }
 
     private String loggedLines() {
@@ -68,7 +77,7 @@ class SmtpEmailSenderTest {
 
     @Test
     void doesNotLogTheVerificationCodeWhenTheFallbackIsDisabled() {
-        senderWithFailingSmtp(false).sendVerificationCode("someone@example.com", CODE);
+        senderWithFailingSmtp(false).sendVerificationCode("someone@example.com", CODE, Locale.ENGLISH);
 
         assertFalse(loggedLines().contains(CODE),
                 "a live OTP must never reach the log in dev/prd, got: " + loggedLines());
@@ -78,7 +87,7 @@ class SmtpEmailSenderTest {
 
     @Test
     void doesNotLogThePasswordResetCodeWhenTheFallbackIsDisabled() {
-        senderWithFailingSmtp(false).sendPasswordResetCode("someone@example.com", CODE);
+        senderWithFailingSmtp(false).sendPasswordResetCode("someone@example.com", CODE, Locale.ENGLISH);
 
         assertFalse(loggedLines().contains(CODE),
                 "a live reset code must never reach the log in dev/prd, got: " + loggedLines());
@@ -88,7 +97,7 @@ class SmtpEmailSenderTest {
 
     @Test
     void logsTheCodeOnlyWhenTheLocalDevFallbackIsExplicitlyEnabled() {
-        senderWithFailingSmtp(true).sendVerificationCode("someone@example.com", CODE);
+        senderWithFailingSmtp(true).sendVerificationCode("someone@example.com", CODE, Locale.ENGLISH);
 
         assertTrue(loggedLines().contains(CODE),
                 "loc needs the code in the console to finish a flow without SMTP");
@@ -96,10 +105,22 @@ class SmtpEmailSenderTest {
                 "the line must be labelled so it is obvious it is not a production path");
     }
 
+    /** The code is the point of the mail, so it has to survive whichever bundle rendered the body. */
+    @Test
+    void theCodeIsInTheBody_inEveryLanguage() {
+        ArgumentCaptor<SimpleMailMessage> sent = ArgumentCaptor.forClass(SimpleMailMessage.class);
+
+        sender(false).sendVerificationCode("someone@example.com", CODE, Locale.forLanguageTag("si"));
+
+        verify(mailSender).send(sent.capture());
+        assertTrue(sent.getValue().getText().contains(CODE));
+        assertFalse(sent.getValue().getSubject().contains("verification code"),
+                "the Sinhala bundle must actually have been used");
+    }
+
     @Test
     void logsNeitherCodeNorFailureOnASuccessfulSend() {
-        new SmtpEmailSender(mailSender, "no-reply@zenzmoney.local", true)
-                .sendVerificationCode("someone@example.com", CODE);
+        sender(true).sendVerificationCode("someone@example.com", CODE, Locale.ENGLISH);
 
         assertFalse(loggedLines().contains(CODE),
                 "the fallback must not fire when the send succeeded");

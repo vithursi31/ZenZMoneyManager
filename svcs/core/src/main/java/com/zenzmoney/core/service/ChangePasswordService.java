@@ -2,6 +2,7 @@ package com.zenzmoney.core.service;
 
 import com.zenzmoney.common.exception.BadRequestException;
 import com.zenzmoney.common.exception.UnauthorizedException;
+import com.zenzmoney.common.i18n.Msg;
 import com.zenzmoney.common.status.ServiceCodes;
 import com.zenzmoney.core.entity.User;
 import com.zenzmoney.core.logging.AppLog;
@@ -37,8 +38,7 @@ public class ChangePasswordService {
                 .ifPresent(m -> { throw new BadRequestException(m); });
 
         if (!"password".equals(user.getAuthMode())) {
-            throw new BadRequestException(
-                    "This account uses " + user.getAuthMode() + " login and has no password to change.");
+            throw new BadRequestException(Msg.SOCIAL_NO_PASSWORD, user.getAuthMode());
         }
 
         if (!passwordEncoder.matches(currentPassword, user.getPasswordHash())) {

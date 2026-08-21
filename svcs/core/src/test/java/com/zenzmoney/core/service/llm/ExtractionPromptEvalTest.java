@@ -93,7 +93,61 @@ class ExtractionPromptEvalTest {
             new Fixture("es", "recibí mi salario de 3000", TransactionType.INCOME, "3000"),
             new Fixture("es", "compré medicina por 800 en la farmacia", TransactionType.EXPENSE, "800"),
             new Fixture("es", "café 500", TransactionType.EXPENSE, "500"),
-            new Fixture("es", "gasté 1500 en el supermercado", TransactionType.EXPENSE, "1500"));
+            new Fixture("es", "gasté 1500 en el supermercado", TransactionType.EXPENSE, "1500"),
+
+            // Portuguese
+            new Fixture("pt", "gastei 15 no almoço", TransactionType.EXPENSE, "15"),
+            new Fixture("pt", "paguei 250 no táxi ontem", TransactionType.EXPENSE, "250"),
+            new Fixture("pt", "recebi o meu salário de 3000", TransactionType.INCOME, "3000"),
+            new Fixture("pt", "café 500", TransactionType.EXPENSE, "500"),
+
+            // German
+            new Fixture("de", "habe 15 für das Mittagessen ausgegeben", TransactionType.EXPENSE, "15"),
+            new Fixture("de", "gestern 250 für ein Taxi bezahlt", TransactionType.EXPENSE, "250"),
+            new Fixture("de", "Gehalt 3000 erhalten", TransactionType.INCOME, "3000"),
+            new Fixture("de", "Kaffee 500", TransactionType.EXPENSE, "500"),
+
+            // Italian
+            new Fixture("it", "ho speso 15 per il pranzo", TransactionType.EXPENSE, "15"),
+            new Fixture("it", "ho pagato 250 per il taxi ieri", TransactionType.EXPENSE, "250"),
+            new Fixture("it", "ho ricevuto lo stipendio di 3000", TransactionType.INCOME, "3000"),
+            new Fixture("it", "caffè 500", TransactionType.EXPENSE, "500"),
+
+            // Russian
+            new Fixture("ru", "потратил 15 на обед", TransactionType.EXPENSE, "15"),
+            new Fixture("ru", "заплатил 250 за такси вчера", TransactionType.EXPENSE, "250"),
+            new Fixture("ru", "получил зарплату 3000", TransactionType.INCOME, "3000"),
+            new Fixture("ru", "кофе 500", TransactionType.EXPENSE, "500"),
+
+            // Japanese
+            new Fixture("ja", "昼食に15使った", TransactionType.EXPENSE, "15"),
+            new Fixture("ja", "昨日タクシーで250払った", TransactionType.EXPENSE, "250"),
+            new Fixture("ja", "給料3000を受け取った", TransactionType.INCOME, "3000"),
+            new Fixture("ja", "コーヒー 500", TransactionType.EXPENSE, "500"),
+
+            // Korean
+            new Fixture("ko", "점심에 15 썼어", TransactionType.EXPENSE, "15"),
+            new Fixture("ko", "어제 택시비 250 냈어", TransactionType.EXPENSE, "250"),
+            new Fixture("ko", "월급 3000 받았어", TransactionType.INCOME, "3000"),
+            new Fixture("ko", "커피 500", TransactionType.EXPENSE, "500"),
+
+            // Chinese — the SAME six sentences in both scripts, converted character for character
+            // and nothing else. Regional wording (計程車 vs 打车) is deliberately held constant so
+            // this row pair measures script alone: if Simplified and Traditional score differently
+            // here, it is the writing system and not the vocabulary.
+            new Fixture("zh-Hans", "我花了15块买午餐", TransactionType.EXPENSE, "15"),
+            new Fixture("zh-Hans", "昨天打车花了250元", TransactionType.EXPENSE, "250"),
+            new Fixture("zh-Hans", "我收到工资3000", TransactionType.INCOME, "3000"),
+            new Fixture("zh-Hans", "在药店买药花了800", TransactionType.EXPENSE, "800"),
+            new Fixture("zh-Hans", "在超市买菜花了1200", TransactionType.EXPENSE, "1200"),
+            new Fixture("zh-Hans", "咖啡 500", TransactionType.EXPENSE, "500"),
+
+            new Fixture("zh-Hant", "我花了15塊買午餐", TransactionType.EXPENSE, "15"),
+            new Fixture("zh-Hant", "昨天打車花了250元", TransactionType.EXPENSE, "250"),
+            new Fixture("zh-Hant", "我收到工資3000", TransactionType.INCOME, "3000"),
+            new Fixture("zh-Hant", "在藥店買藥花了800", TransactionType.EXPENSE, "800"),
+            new Fixture("zh-Hant", "在超市買菜花了1200", TransactionType.EXPENSE, "1200"),
+            new Fixture("zh-Hant", "咖啡 500", TransactionType.EXPENSE, "500"));
 
     @Test
     void everyPhrasingHonoursTheExtractionContract() {

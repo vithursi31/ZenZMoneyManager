@@ -5,6 +5,7 @@ import com.zenzmoney.common.domain.CategoryKind;
 import com.zenzmoney.common.domain.CategoryStatus;
 import com.zenzmoney.common.exception.BadRequestException;
 import com.zenzmoney.common.exception.NotFoundException;
+import com.zenzmoney.common.i18n.Msg;
 import com.zenzmoney.core.entity.Category;
 import com.zenzmoney.core.repository.BudgetRepository;
 import com.zenzmoney.core.repository.CategoryRepository;
@@ -57,10 +58,10 @@ public class CategoryService {
         if (req.getParentId() != null && !req.getParentId().isBlank()) {
             Category parent = requireLive(req.getParentId(), userId);
             if (parent.getParentId() != null) {
-                throw new BadRequestException("Sub-categories are only one level deep.");
+                throw new BadRequestException(Msg.CATEGORY_DEPTH_EXCEEDED);
             }
             if (parent.getKind() != req.getKind()) {
-                throw new BadRequestException("A sub-category must have the same kind as its parent.");
+                throw new BadRequestException(Msg.CATEGORY_PARENT_KIND);
             }
             parentId = parent.getId();
         }
@@ -131,13 +132,13 @@ public class CategoryService {
         String userId = currentUser.requireUserId();
         Category category = requireOwned(id, userId);
         if (category.getStatus() == CategoryStatus.DELETED) {
-            throw new BadRequestException("Category already deleted.");
+            throw new BadRequestException(Msg.CATEGORY_ALREADY_DELETED);
         }
         if (categoryRepository.existsByUserIdAndParentIdAndStatus(userId, id, CategoryStatus.ACTIVE)) {
-            throw new BadRequestException("Category has sub-categories; delete or move them first.");
+            throw new BadRequestException(Msg.CATEGORY_HAS_CHILDREN);
         }
         if (budgetRepository.existsByCategoryIdAndStatusNot(id, BudgetStatus.DELETED)) {
-            throw new BadRequestException("Category is used by a budget and cannot be deleted.");
+            throw new BadRequestException(Msg.CATEGORY_USED_BY_BUDGET);
         }
         category.setStatus(CategoryStatus.DELETED);
         categoryRepository.save(category);
@@ -181,14 +182,14 @@ public class CategoryService {
 
     private Category requireOwned(String id, String userId) {
         return categoryRepository.findByIdAndUserId(id, userId)
-                .orElseThrow(() -> new NotFoundException("Category not found"));
+                .orElseThrow(() -> new NotFoundException(Msg.CATEGORY_NOT_FOUND));
     }
 
     /** Owned and not deleted — a deleted category is history, not something to build on. */
     private Category requireLive(String id, String userId) {
         Category category = requireOwned(id, userId);
         if (category.getStatus() == CategoryStatus.DELETED) {
-            throw new BadRequestException("Category is deleted.");
+            throw new BadRequestException(Msg.CATEGORY_DELETED);
         }
         return category;
     }
@@ -206,7 +207,7 @@ public class CategoryService {
                 .stream()
                 .anyMatch(c -> !c.getId().equals(excludeId));
         if (taken) {
-            throw new BadRequestException("A category named '" + name + "' already exists.");
+            throw new BadRequestException(Msg.CATEGORY_DUPLICATE, name);
         }
     }
 }

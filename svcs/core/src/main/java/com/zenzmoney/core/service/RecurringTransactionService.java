@@ -7,6 +7,7 @@ import com.zenzmoney.common.domain.TimeUtils;
 import com.zenzmoney.common.domain.TransactionType;
 import com.zenzmoney.common.exception.BadRequestException;
 import com.zenzmoney.common.exception.NotFoundException;
+import com.zenzmoney.common.i18n.Msg;
 import com.zenzmoney.core.entity.Category;
 import com.zenzmoney.core.entity.RecurringTransaction;
 import com.zenzmoney.core.entity.User;
@@ -115,13 +116,13 @@ public class RecurringTransactionService {
         RecurringTransaction r = requireOwned(id, userId);
         if (req.getAmount() != null) {
             if (req.getAmount() <= 0) {
-                throw new BadRequestException("Amount must be positive.");
+                throw new BadRequestException(Msg.AMOUNT_NOT_POSITIVE);
             }
             r.setAmount(req.getAmount());
         }
         if (req.getNextRunDate() != null) {
             if (req.getNextRunDate() <= 0) {
-                throw new BadRequestException("Next run date must be a positive epoch-millis value.");
+                throw new BadRequestException(Msg.RECURRING_NEXT_RUN_INVALID);
             }
             r.setNextRunDate(req.getNextRunDate());
             r.setAnchorDay(dayOfMonth(req.getNextRunDate()));   // reschedule re-anchors the cycle
@@ -232,18 +233,18 @@ public class RecurringTransactionService {
      */
     private void validate(String userId, TransactionType type, String categoryId, long amount) {
         if (amount <= 0) {
-            throw new BadRequestException("Amount must be positive.");
+            throw new BadRequestException(Msg.AMOUNT_NOT_POSITIVE);
         }
         Category category = categoryRepository.findByIdAndUserIdAndStatus(categoryId, userId, CategoryStatus.ACTIVE)
-                .orElseThrow(() -> new NotFoundException("Category not found"));
+                .orElseThrow(() -> new NotFoundException(Msg.CATEGORY_NOT_FOUND));
         CategoryKind expected = type == TransactionType.INCOME ? CategoryKind.INCOME : CategoryKind.EXPENSE;
         if (category.getKind() != expected) {
-            throw new BadRequestException("Category kind must match the transaction type.");
+            throw new BadRequestException(Msg.CATEGORY_KIND_MISMATCH);
         }
     }
 
     private RecurringTransaction requireOwned(String id, String userId) {
         return recurringRepository.findByIdAndUserId(id, userId)
-                .orElseThrow(() -> new NotFoundException("Recurring template not found"));
+                .orElseThrow(() -> new NotFoundException(Msg.RECURRING_NOT_FOUND));
     }
 }

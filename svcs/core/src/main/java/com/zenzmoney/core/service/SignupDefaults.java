@@ -8,7 +8,9 @@ import java.util.Locale;
 /**
  * Provisional preferences derived from what the client reports about itself at
  * signup (F-1.27), so a user who never opens the onboarding screen still lands in
- * a sane currency and language.
+ * a sane currency and timezone. Language is seeded the same way, from
+ * {@link com.zenzmoney.core.util.SupportedLanguages} — it needs the configured allowlist, which
+ * this static utility has no way to reach.
  *
  * <p>Deliberately lenient, and that leniency is the whole difference between this
  * and the parsing in {@link OnboardingService}. There the user picked the value and
@@ -17,9 +19,6 @@ import java.util.Locale;
  * unrecognised degrades to "no opinion" and leaves onboarding to ask properly.
  */
 public final class SignupDefaults {
-
-    /** The default until the user says otherwise; onboarding also offers ta and si (F-1.26). */
-    public static final String LANGUAGE = "en";
 
     private SignupDefaults() {
     }

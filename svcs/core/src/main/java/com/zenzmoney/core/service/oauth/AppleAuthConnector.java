@@ -3,6 +3,7 @@ package com.zenzmoney.core.service.oauth;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zenzmoney.common.exception.ServiceException;
 import com.zenzmoney.common.exception.UnauthorizedException;
+import com.zenzmoney.common.i18n.Msg;
 import com.zenzmoney.common.status.ServiceCodes;
 import com.zenzmoney.core.web.dto.AppleAuthRequest;
 import io.jsonwebtoken.Claims;
@@ -88,14 +89,14 @@ public class AppleAuthConnector {
         if (privateKey == null) {
             log.error("Apple sign-in is not configured — EC private key is missing");
             throw new ServiceException(ServiceCodes.SC_PROVIDER_NOT_CONFIGURED
-                    .with("Apple sign-in is not available right now."));
+                    .with(Msg.OAUTH_UNAVAILABLE, "Apple"));
         }
         String clientId = req.isMobileApp() ? clientIdMobile : clientIdWeb;
         if (clientId == null || clientId.isBlank()) {
             log.error("Apple sign-in is not configured — client id is missing (mobile={})",
                     req.isMobileApp());
             throw new ServiceException(ServiceCodes.SC_PROVIDER_NOT_CONFIGURED
-                    .with("Apple sign-in is not available right now."));
+                    .with(Msg.OAUTH_UNAVAILABLE, "Apple"));
         }
         long startedAt = System.currentTimeMillis();
         try {

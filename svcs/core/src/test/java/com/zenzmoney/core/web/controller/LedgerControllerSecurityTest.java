@@ -51,6 +51,23 @@ class LedgerControllerSecurityTest {
                 .andExpect(status().isForbidden());
     }
 
+    /**
+     * The picker lists are gated exactly like the screen that uses them — a new @GetMapping on a
+     * class-level @RolesAllowed controller inherits the gate, and this is what proves it stayed
+     * inherited rather than being quietly opened by the method annotation.
+     */
+    @Test
+    void anonymousCannotListTheLanguagePicker() throws Exception {
+        mockMvc.perform(get("/api/v1/onboarding/languages"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void anonymousCannotListTheCurrencyPicker() throws Exception {
+        mockMvc.perform(get("/api/v1/onboarding/currencies"))
+                .andExpect(status().isForbidden());
+    }
+
     @Test
     void anonymousCannotWriteToTheLedger() throws Exception {
         mockMvc.perform(post("/api/v1/transactions")

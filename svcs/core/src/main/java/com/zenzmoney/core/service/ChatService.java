@@ -9,6 +9,7 @@ import com.zenzmoney.common.domain.TransactionType;
 import com.zenzmoney.common.exception.BadRequestException;
 import com.zenzmoney.common.exception.NotFoundException;
 import com.zenzmoney.common.exception.TooManyRequestsException;
+import com.zenzmoney.common.i18n.Msg;
 import com.zenzmoney.common.status.ServiceCodes;
 import com.zenzmoney.core.entity.Category;
 import com.zenzmoney.core.entity.ChatMessage;
@@ -157,8 +158,7 @@ public class ChatService {
 
         RateLimitResult limit = rateLimitService.tryConsumeOrDeny("chat:" + user.getId(), CHAT_POLICY);
         if (!limit.allowed()) {
-            throw new TooManyRequestsException(ServiceCodes.SC_CHAT_RATE_LIMIT_EXCEEDED.with(
-                    "Too many chat messages. Please wait a moment before trying again."),
+            throw new TooManyRequestsException(ServiceCodes.SC_CHAT_RATE_LIMIT_EXCEEDED.with(Msg.CHAT_RATE_LIMITED),
                     limit.retryAfterSeconds());
         }
 
@@ -240,14 +240,14 @@ public class ChatService {
         User user = currentUser.requireUser();
         ChatMessage turn = requireOwned(request.getMessageId(), user.getId());
         if (turn.getStatus() == ChatMessageStatus.CONFIRMED) {
-            throw new BadRequestException("That draft is already in your ledger and cannot be changed.");
+            throw new BadRequestException(Msg.CHAT_DRAFT_COMMITTED);
         }
         if (!LIVE.contains(turn.getStatus())) {
-            throw new BadRequestException("That draft is no longer open for changes.");
+            throw new BadRequestException(Msg.CHAT_DRAFT_CLOSED);
         }
         ParsedIntent draft = turn.getParsedIntent();
         if (draft == null || draft.getIntent() != IntentType.CREATE_TRANSACTION) {
-            throw new BadRequestException("That message has no transaction draft to change.");
+            throw new BadRequestException(Msg.CHAT_NO_DRAFT_TO_CHANGE);
         }
 
         apply(user, draft, request);
@@ -281,17 +281,17 @@ public class ChatService {
     public TransactionResponse confirm(String messageId) {
         ChatMessage turn = requireOwned(messageId, currentUser.requireUserId());
         if (turn.getStatus() == ChatMessageStatus.CONFIRMED) {
-            throw new BadRequestException("That draft has already been added to your ledger.");
+            throw new BadRequestException(Msg.CHAT_DRAFT_ADDED);
         }
         if (turn.getStatus() == ChatMessageStatus.SUPERSEDED) {
-            throw new BadRequestException("That draft was replaced by a newer one.");
+            throw new BadRequestException(Msg.CHAT_DRAFT_SUPERSEDED);
         }
         if (turn.getStatus() != ChatMessageStatus.PARSED) {
-            throw new BadRequestException("That message has no draft to confirm.");
+            throw new BadRequestException(Msg.CHAT_NO_DRAFT_TO_CONFIRM);
         }
         ParsedIntent draft = turn.getParsedIntent();
         if (draft == null || !draft.isComplete() || draft.getAmountMinor() == null) {
-            throw new BadRequestException("That draft is incomplete and cannot be added.");
+            throw new BadRequestException(Msg.CHAT_DRAFT_INCOMPLETE);
         }
 
         CreateTransactionRequest request = new CreateTransactionRequest();
@@ -318,10 +318,10 @@ public class ChatService {
     public void reject(String messageId) {
         ChatMessage turn = requireOwned(messageId, currentUser.requireUserId());
         if (turn.getStatus() == ChatMessageStatus.CONFIRMED) {
-            throw new BadRequestException("That draft is already in your ledger and cannot be rejected.");
+            throw new BadRequestException(Msg.CHAT_DRAFT_COMMITTED_REJECT);
         }
         if (!LIVE.contains(turn.getStatus())) {
-            throw new BadRequestException("That draft is no longer open to discard.");
+            throw new BadRequestException(Msg.CHAT_DRAFT_CLOSED_DISCARD);
         }
         turn.setStatus(ChatMessageStatus.REJECTED);
         chatMessageRepository.save(turn);
@@ -388,9 +388,7 @@ public class ChatService {
             RateLimitResult limit = rateLimitService.tryConsumeOrDeny(
                     "chat-insight:" + user.getId(), INSIGHT_POLICY);
             if (!limit.allowed()) {
-                throw new TooManyRequestsException(ServiceCodes.SC_CHAT_RATE_LIMIT_EXCEEDED.with(
-                        "I can only work through your figures a few times a minute. "
-                                + "Please try again shortly."),
+                throw new TooManyRequestsException(ServiceCodes.SC_CHAT_RATE_LIMIT_EXCEEDED.with(Msg.CHAT_INSIGHT_RATE_LIMITED),
                         limit.retryAfterSeconds());
             }
             String answer = adviceClient.answer(question, snapshot);
@@ -473,14 +471,14 @@ public class ChatService {
         if (categoryId != null) {
             Category category = categoryRepository
                     .findByIdAndUserIdAndStatus(categoryId, userId, CategoryStatus.ACTIVE)
-                    .orElseThrow(() -> new NotFoundException("Category not found"));
+                    .orElseThrow(() -> new NotFoundException(Msg.CATEGORY_NOT_FOUND));
             if (draft.getTxnType() == null) {
                 draft.setTxnType(category.getKind() == CategoryKind.INCOME
                         ? TransactionType.INCOME
                         : TransactionType.EXPENSE);
             }
             if (category.getKind() != kindFor(draft.getTxnType())) {
-                throw new BadRequestException("Category kind must match the transaction type.");
+                throw new BadRequestException(Msg.CATEGORY_KIND_MISMATCH);
             }
             draft.setCategoryId(category.getId());
             draft.setCategoryName(category.getName());
@@ -560,7 +558,7 @@ public class ChatService {
 
     private ChatMessage requireOwned(String messageId, String userId) {
         return chatMessageRepository.findByIdAndUserId(messageId, userId)
-                .orElseThrow(() -> new NotFoundException("Chat message not found"));
+                .orElseThrow(() -> new NotFoundException(Msg.CHAT_MESSAGE_NOT_FOUND));
     }
 
     private static CategoryKind kindFor(TransactionType type) {

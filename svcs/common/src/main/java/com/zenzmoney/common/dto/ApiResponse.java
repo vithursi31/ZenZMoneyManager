@@ -21,14 +21,22 @@ public class ApiResponse<T> {
     }
 
     /**
-     * The only way to build an error body: the code comes from the registry, never from a literal.
-     * Use {@link StatusCode#with(String)} for a call-site message.
+     * An error body in English. The code comes from the registry, never from a literal.
+     * Prefer {@link #error(StatusCode, String)} anywhere a caller's language is known.
      */
     public static <T> ApiResponse<T> error(StatusCode statusCode) {
+        return error(statusCode, statusCode.description());
+    }
+
+    /**
+     * An error body carrying an already-rendered message. <b>Boundary code only</b> — the message
+     * is resolved from the caller's language there, and nowhere else knows the locale.
+     */
+    public static <T> ApiResponse<T> error(StatusCode statusCode, String message) {
         ApiResponse<T> resp = new ApiResponse<>();
         resp.status = "error";
         resp.errorCode = statusCode.code();
-        resp.message = statusCode.description();
+        resp.message = message;
         return resp;
     }
 }

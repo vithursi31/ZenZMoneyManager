@@ -3,6 +3,7 @@ package com.zenzmoney.core.service;
 import com.zenzmoney.common.domain.UserStatus;
 import com.zenzmoney.common.exception.TooManyRequestsException;
 import com.zenzmoney.common.exception.UnauthorizedException;
+import com.zenzmoney.common.i18n.Msg;
 import com.zenzmoney.common.status.ServiceCodes;
 import com.zenzmoney.core.entity.User;
 import com.zenzmoney.core.logging.AppLog;
@@ -82,9 +83,7 @@ public class LoginService {
                 provider = Character.toUpperCase(provider.charAt(0)) + provider.substring(1);
             }
             audit.info("Login denied for {} — account uses {} login", email, user.getAuthMode());
-            throw new UnauthorizedException(ServiceCodes.SC_ACCOUNT_USES_SOCIAL_LOGIN.with(
-                    "This account was created using " + provider
-                            + " login. Please use 'Login with " + provider + "'."));
+            throw new UnauthorizedException(ServiceCodes.SC_ACCOUNT_USES_SOCIAL_LOGIN.with(Msg.SOCIAL_LOGIN_ONLY, provider));
         }
 
         if (user.getStatus() != UserStatus.ACTIVE) {
@@ -107,9 +106,7 @@ public class LoginService {
             userRepository.save(user);
             audit.warn("Account {} locked — wrong-password attempts exceeded the rate limit, retry after {}s",
                     email, rl.retryAfterSeconds());
-            throw new TooManyRequestsException(ServiceCodes.SC_LOGIN_RATE_LIMIT_EXCEEDED.with(
-                    "Too many failed login attempts. Your account has been locked; "
-                            + "reset your password to regain access."),
+            throw new TooManyRequestsException(ServiceCodes.SC_LOGIN_RATE_LIMIT_EXCEEDED.with(Msg.LOGIN_RATE_LIMITED),
                     rl.retryAfterSeconds());
         }
 

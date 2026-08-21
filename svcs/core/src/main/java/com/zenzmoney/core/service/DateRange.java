@@ -3,6 +3,7 @@ package com.zenzmoney.core.service;
 import com.zenzmoney.common.domain.TimeUtils;
 import com.zenzmoney.common.exception.BadRequestException;
 
+import com.zenzmoney.common.i18n.Msg;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.format.DateTimeParseException;
@@ -21,7 +22,7 @@ public record DateRange(Long from, Long to) {
         LocalDate start = parse(startDate, "startDate");
         LocalDate end = parse(endDate, "endDate");
         if (start != null && end != null && start.isAfter(end)) {
-            throw new BadRequestException("startDate must not be after endDate.");
+            throw new BadRequestException(Msg.DATE_RANGE_INVERTED);
         }
         // An inclusive endDate becomes the start of the following day, so the window
         // matches the monthly position's [month start, next month start) rule (§1.10).
@@ -33,7 +34,7 @@ public record DateRange(Long from, Long to) {
     /** The same window, but with both bounds required — a report is always over a period. */
     public static DateRange required(String startDate, String endDate, ZoneId zone) {
         if (startDate == null || startDate.isBlank() || endDate == null || endDate.isBlank()) {
-            throw new BadRequestException("startDate and endDate are both required.");
+            throw new BadRequestException(Msg.DATE_RANGE_REQUIRED);
         }
         return of(startDate, endDate, zone);
     }

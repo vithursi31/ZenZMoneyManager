@@ -1,11 +1,13 @@
 package com.zenzmoney.common.status;
 
+import com.zenzmoney.common.i18n.Msg;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Field;
 import java.util.HashMap;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -57,11 +59,53 @@ class ServiceCodesTest {
     /** {@code with()} is a message override, not a new code — equality stays on the code. */
     @Test
     void withKeepsTheCodeAndStatus() {
-        StatusCode overridden = ServiceCodes.SC_NOT_FOUND.with("Transaction not found");
+        StatusCode overridden = ServiceCodes.SC_NOT_FOUND.with("no transaction with id 9f3c");
 
         assertEquals(ServiceCodes.SC_NOT_FOUND.code(), overridden.code());
         assertEquals(ServiceCodes.SC_NOT_FOUND.httpStatus(), overridden.httpStatus());
-        assertEquals("Transaction not found", overridden.description());
         assertEquals(ServiceCodes.SC_NOT_FOUND, overridden);
+    }
+
+    /**
+     * {@code with(String)} is a <em>diagnostic</em>: it lands on {@code detail()} for the log and
+     * leaves {@code description()} — the registry's own English default — untouched, so nothing a
+     * call site scribbles can end up in a response body. The user-facing text comes from a key.
+     */
+    @Test
+    void aStringOverrideIsADiagnostic_andDoesNotBecomeTheDescription() {
+        StatusCode overridden = ServiceCodes.SC_NOT_FOUND.with("no transaction with id 9f3c");
+
+        assertEquals("no transaction with id 9f3c", overridden.detail());
+        assertEquals(ServiceCodes.SC_NOT_FOUND.description(), overridden.description());
+        assertNull(ServiceCodes.SC_NOT_FOUND.detail(), "the registry constant itself carries none");
+    }
+
+    /** A key override carries the key and its arguments, and still is not a new code. */
+    @Test
+    void aKeyOverrideCarriesTheKeyAndItsArguments() {
+        StatusCode overridden = ServiceCodes.SC_BAD_REQUEST.with(Msg.CATEGORY_DUPLICATE, "Groceries");
+
+        assertEquals(Msg.CATEGORY_DUPLICATE, overridden.messageKey());
+        assertArrayEquals(new Object[] {"Groceries"}, overridden.args());
+        assertEquals(ServiceCodes.SC_BAD_REQUEST, overridden);
+        assertNull(overridden.detail());
+    }
+
+    /** The two are independent: a rejection can be readable to the user and detailed in the log. */
+    @Test
+    void aKeyAndADiagnosticCoexist() {
+        StatusCode both = ServiceCodes.SC_BAD_REQUEST
+                .with(Msg.CATEGORY_DUPLICATE, "Groceries")
+                .with("uq_category_name_per_kind violated");
+
+        assertEquals(Msg.CATEGORY_DUPLICATE, both.messageKey());
+        assertEquals("uq_category_name_per_kind violated", both.detail());
+        assertEquals("uq_category_name_per_kind violated", both.logMessage());
+    }
+
+    /** With no diagnostic, the log falls back to the registry's English default. */
+    @Test
+    void logMessageFallsBackToTheDescription() {
+        assertEquals(ServiceCodes.SC_NOT_FOUND.description(), ServiceCodes.SC_NOT_FOUND.logMessage());
     }
 }

@@ -2,6 +2,7 @@ package com.zenzmoney.core.web.filter;
 
 import com.zenzmoney.common.exception.UnauthorizedException;
 import com.zenzmoney.common.status.ServiceCodes;
+import com.zenzmoney.core.i18n.TestMessages;
 import com.zenzmoney.core.service.JwtTokenService;
 import io.jsonwebtoken.Claims;
 import jakarta.servlet.FilterChain;
@@ -40,7 +41,7 @@ class JwtAuthenticationFilterTest {
     @Mock Claims claims;
 
     private JwtAuthenticationFilter filter() {
-        return new JwtAuthenticationFilter(jwtTokenService, userDetailsService);
+        return new JwtAuthenticationFilter(jwtTokenService, userDetailsService, TestMessages.resolver());
     }
 
     private MockHttpServletRequest authenticated() {

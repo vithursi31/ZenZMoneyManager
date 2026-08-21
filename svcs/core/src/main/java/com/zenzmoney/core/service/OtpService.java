@@ -2,6 +2,7 @@ package com.zenzmoney.core.service;
 
 import com.zenzmoney.common.exception.BadRequestException;
 import com.zenzmoney.common.exception.TooManyRequestsException;
+import com.zenzmoney.common.i18n.Msg;
 import com.zenzmoney.common.status.ServiceCodes;
 import com.zenzmoney.core.entity.Verification;
 import com.zenzmoney.core.entity.Verification.Purpose;
@@ -81,9 +82,7 @@ public class OtpService {
             log.warn("OTP request rate-limit exceeded for {} (purpose={})", email, purpose);
             audit.warn("OTP issuance denied for {} (purpose={}) — rate limit exceeded, retry after {}s",
                     email, purpose, rl.retryAfterSeconds());
-            throw new TooManyRequestsException(ServiceCodes.SC_OTP_RATE_LIMIT_EXCEEDED.with(
-                    "Too many verification code requests. You can request up to 3 codes per 10 minutes, "
-                            + "5 per hour, and 10 per day. Please wait before trying again."),
+            throw new TooManyRequestsException(ServiceCodes.SC_OTP_RATE_LIMIT_EXCEEDED.with(Msg.OTP_RATE_LIMITED),
                     rl.retryAfterSeconds());
         }
 
@@ -112,7 +111,7 @@ public class OtpService {
     @Transactional
     public void verify(String email, String purposeCode, Purpose purpose) {
         if (purposeCode == null || purposeCode.isBlank()) {
-            throw new BadRequestException("Verification code is required");
+            throw new BadRequestException(Msg.OTP_REQUIRED);
         }
 
         Verification v = verificationRepository
@@ -120,18 +119,18 @@ public class OtpService {
                         email, purpose.name(), Status.PENDING.name())
                 .orElseThrow(() -> {
                     audit.info("OTP verification failed for {} (purpose={}) — no pending code", email, purpose);
-                    return new BadRequestException("No pending verification code. Request a new one.");
+                    return new BadRequestException(Msg.OTP_NONE_PENDING);
                 });
 
         if (v.getExpiresAt() < System.currentTimeMillis()) {
             audit.info("OTP verification failed for {} (purpose={}) — code expired", email, purpose);
-            throw new BadRequestException("Verification code has expired. Request a new one.");
+            throw new BadRequestException(Msg.OTP_EXPIRED);
         }
 
         if (v.getAttempts() >= MAX_ATTEMPTS) {
             audit.warn("OTP verification failed for {} (purpose={}) — attempt cap of {} reached",
                     email, purpose, MAX_ATTEMPTS);
-            throw new BadRequestException("Too many incorrect attempts. Request a new code.");
+            throw new BadRequestException(Msg.OTP_TOO_MANY_ATTEMPTS);
         }
 
         if (!v.getCode().equals(purposeCode.trim())) {
@@ -139,7 +138,7 @@ public class OtpService {
             verificationRepository.save(v);
             audit.warn("OTP verification failed for {} (purpose={}) — wrong code (attempt {} of {})",
                     email, purpose, v.getAttempts(), MAX_ATTEMPTS);
-            throw new BadRequestException("Incorrect verification code");
+            throw new BadRequestException(Msg.OTP_INCORRECT);
         }
 
         v.setStatus(Status.UTILIZED.name());

@@ -3,6 +3,7 @@ package com.zenzmoney.core.service;
 import com.zenzmoney.common.domain.TimeUtils;
 import com.zenzmoney.common.domain.TransactionType;
 import com.zenzmoney.common.exception.BadRequestException;
+import com.zenzmoney.common.i18n.Msg;
 import com.zenzmoney.core.entity.User;
 import com.zenzmoney.core.repository.TransactionRepository;
 import com.zenzmoney.core.web.dto.MonthlySummaryResponse;
@@ -78,7 +79,7 @@ public class MonthlySummaryService {
         try {
             return YearMonth.parse(month.trim());
         } catch (DateTimeParseException e) {
-            throw new BadRequestException("Month must be in yyyy-MM format, e.g. 2026-08.");
+            throw new BadRequestException(Msg.MONTH_FORMAT);
         }
     }
 

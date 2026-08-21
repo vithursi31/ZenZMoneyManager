@@ -2,6 +2,7 @@ package com.zenzmoney.core.service.oauth;
 
 import com.zenzmoney.common.exception.ServiceException;
 import com.zenzmoney.common.exception.UnauthorizedException;
+import com.zenzmoney.common.i18n.Msg;
 import com.zenzmoney.common.status.ServiceCodes;
 import com.zenzmoney.core.web.dto.GoogleAuthRequest;
 import jakarta.annotation.PostConstruct;
@@ -89,7 +90,7 @@ public class GoogleAuthConnector {
         if (appId.isBlank() || appSecret.isBlank() || redirectUrl.isBlank()) {
             log.error("Google sign-in is not configured — app id or secret is missing");
             throw new ServiceException(ServiceCodes.SC_PROVIDER_NOT_CONFIGURED
-                    .with("Google sign-in is not available right now."));
+                    .with(Msg.OAUTH_UNAVAILABLE, "Google"));
         }
         MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
         form.add("code", code);

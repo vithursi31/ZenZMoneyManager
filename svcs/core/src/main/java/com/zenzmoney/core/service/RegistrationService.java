@@ -3,6 +3,7 @@ package com.zenzmoney.core.service;
 import com.zenzmoney.common.domain.Role;
 import com.zenzmoney.common.domain.UserStatus;
 import com.zenzmoney.common.exception.BadRequestException;
+import com.zenzmoney.common.i18n.Msg;
 import com.zenzmoney.core.entity.User;
 import com.zenzmoney.core.entity.Verification.Purpose;
 import com.zenzmoney.core.logging.AppLog;
@@ -10,6 +11,7 @@ import com.zenzmoney.core.repository.UserRepository;
 import com.zenzmoney.core.util.DisposableDomainValidator;
 import com.zenzmoney.core.util.EmailValidator;
 import com.zenzmoney.core.util.PasswordValidator;
+import com.zenzmoney.core.util.SupportedLanguages;
 import com.zenzmoney.core.web.dto.AuthenticationResponse;
 import com.zenzmoney.core.web.dto.RegisterRequest;
 import com.zenzmoney.core.web.dto.RegisterResponse;
@@ -31,17 +33,20 @@ public class RegistrationService {
     private final JwtTokenService jwtTokenService;
     private final EmailSender emailSender;
     private final OtpService otpService;
+    private final SupportedLanguages supportedLanguages;
 
     public RegistrationService(UserRepository userRepository,
                                PasswordEncoder passwordEncoder,
                                JwtTokenService jwtTokenService,
                                EmailSender emailSender,
-                               OtpService otpService) {
+                               OtpService otpService,
+                               SupportedLanguages supportedLanguages) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtTokenService = jwtTokenService;
         this.emailSender = emailSender;
         this.otpService = otpService;
+        this.supportedLanguages = supportedLanguages;
     }
 
     @Transactional
@@ -51,13 +56,13 @@ public class RegistrationService {
         EmailValidator.validate(email)
                 .ifPresent(m -> { throw new BadRequestException(m); });
         if (DisposableDomainValidator.isDisposableDomain(email)) {
-            throw new BadRequestException("Disposable email addresses are not permitted");
+            throw new BadRequestException(Msg.EMAIL_DISPOSABLE);
         }
         PasswordValidator.validate(req.getPassword())
                 .ifPresent(m -> { throw new BadRequestException(m); });
 
         if (userRepository.existsByEmail(email)) {
-            throw new BadRequestException("Email already in use");
+            throw new BadRequestException(Msg.EMAIL_IN_USE);
         }
 
         User user = new User();
@@ -73,7 +78,7 @@ public class RegistrationService {
         // (F-1.27). Unconfirmed until they say so, which is what lets onboarding
         // replace the currency later.
         user.setActiveCurrency(SignupDefaults.currencyFor(req.getLocale()));
-        user.setLanguage(SignupDefaults.LANGUAGE);
+        user.setLanguage(supportedLanguages.resolveOrDefault(req.getLocale()).toLanguageTag());
         String zone = SignupDefaults.timezoneFor(req.getTimezone());
         if (zone != null) {
             user.setTimezone(zone);
@@ -87,7 +92,7 @@ public class RegistrationService {
                 user.getActiveCurrency(), user.getLanguage(), user.getTimezone());
 
         String code = otpService.issue(email, Purpose.VERIFY_EMAIL);
-        emailSender.sendVerificationCode(email, code);
+        emailSender.sendVerificationCode(email, code, supportedLanguages.resolveOrDefault(user.getLanguage()));
 
         return new RegisterResponse(user.getId(), email, "Verification code sent");
     }
@@ -104,7 +109,7 @@ public class RegistrationService {
                 .ifPresent(m -> { throw new BadRequestException(m); });
 
         User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new BadRequestException("No account found for that email"));
+                .orElseThrow(() -> new BadRequestException(Msg.EMAIL_UNKNOWN));
 
         otpService.verify(email, code, Purpose.VERIFY_EMAIL);
 

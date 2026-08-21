@@ -6,6 +6,7 @@ import com.zenzmoney.common.domain.TimeUtils;
 import com.zenzmoney.common.domain.TransactionType;
 import com.zenzmoney.common.exception.BadRequestException;
 import com.zenzmoney.common.exception.NotFoundException;
+import com.zenzmoney.common.i18n.Msg;
 import com.zenzmoney.core.entity.Category;
 import com.zenzmoney.core.entity.RecurringTransaction;
 import com.zenzmoney.core.entity.Transaction;
@@ -172,14 +173,14 @@ public class TransactionService {
     private void apply(Transaction txn, User user, TransactionType type, String categoryId,
                        long amount, Long txnDate, String payeeName, String note, List<String> tags) {
         if (amount <= 0) {
-            throw new BadRequestException("Amount must be positive.");
+            throw new BadRequestException(Msg.AMOUNT_NOT_POSITIVE);
         }
         String userId = user.getId();
         Category category = categoryRepository.findByIdAndUserIdAndStatus(categoryId, userId, CategoryStatus.ACTIVE)
-                .orElseThrow(() -> new NotFoundException("Category not found"));
+                .orElseThrow(() -> new NotFoundException(Msg.CATEGORY_NOT_FOUND));
         CategoryKind expected = type == TransactionType.INCOME ? CategoryKind.INCOME : CategoryKind.EXPENSE;
         if (category.getKind() != expected) {
-            throw new BadRequestException("Category kind must match the transaction type.");
+            throw new BadRequestException(Msg.CATEGORY_KIND_MISMATCH);
         }
 
         txn.setUserId(userId);
@@ -198,7 +199,7 @@ public class TransactionService {
 
     private Transaction requireOwned(String id, String userId) {
         return transactionRepository.findByIdAndUserId(id, userId)
-                .orElseThrow(() -> new NotFoundException("Transaction not found"));
+                .orElseThrow(() -> new NotFoundException(Msg.TRANSACTION_NOT_FOUND));
     }
 
     /** A bad filter value fails at the seam with a clear message, not a silent empty-list result. */
@@ -209,7 +210,7 @@ public class TransactionService {
         try {
             return TransactionType.valueOf(raw.trim().toUpperCase());
         } catch (IllegalArgumentException e) {
-            throw new BadRequestException("Unknown transaction type: " + raw);
+            throw new BadRequestException(Msg.TRANSACTION_UNKNOWN_TYPE, raw);
         }
     }
 }

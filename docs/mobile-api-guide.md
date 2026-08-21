@@ -79,8 +79,57 @@ On failure `status` is `"error"`, `data` is `null`, and `message`/`errorCode` ar
 ```
 
 `errorCode` is the stable half of the contract and `message` is not: branch on the code, and treat
-`message` as display text that may be reworded or localised. Every code the API can answer with is
-listed below — there are no others, and one code always means one thing.
+`message` as display text that may be reworded. Every code the API can answer with is listed below
+— there are no others, and one code always means one thing.
+
+### `message` is localised; `errorCode` is not (F-1.26)
+
+**`message` comes back in the caller's language.** Nothing else about the response changes: the
+HTTP status, the `errorCode`, and every field name and enum value are identical in every language.
+A client that branches on `errorCode` needs no changes at all.
+
+The language is chosen server-side, in this order:
+
+1. **The signed-in user's stored `language`** (set at [onboarding](#8-complete-onboarding), changed
+   later via [Update Profile](#6-update-profile)). This wins — it is the language the user picked.
+2. **The `Accept-Language` request header**, for anything with no signed-in user: register, login,
+   verify-email, forgot-password, and any request whose token was rejected.
+3. **English.**
+
+Supported today, 12 bundles:
+
+| Tag | Language | | Tag | Language | | Tag | Language |
+|---|---|---|---|---|---|---|---|
+| `en` | English | | `pt` | Portuguese | | `ru` | Russian |
+| `zh-CN` | Chinese (Simplified) | | `de` | German | | `ja` | Japanese |
+| `zh-TW` | Chinese (Traditional) | | `it` | Italian | | `ko` | Korean |
+| `fr` | French | | `si` | Sinhala | | | |
+| `es` | Spanish | | | | | | |
+
+**Region is ignored; script is not.** `fr-CA`, `pt-BR`, `es-MX` and `si-LK` all resolve to their
+language, so there is nothing regional to send. Chinese is the exception, because the script changes
+the text rather than the formatting:
+
+| You send | You get |
+|---|---|
+| `zh-TW`, `zh-HK`, `zh-MO`, `zh-Hant`, `zh-Hant-TW` | **Traditional** (`zh-TW`) |
+| `zh-CN`, `zh-SG`, `zh-Hans`, or a bare `zh` | **Simplified** (`zh-CN`) |
+
+A tag outside the set falls back to English rather than being an error, and `Accept-Language` is
+honoured with its q-values, so `nl;q=1.0, zh-TW;q=0.8` gets Traditional Chinese. Sending
+`Accept-Language` on every request is harmless and is the right default: it is what the user sees
+before they have signed in.
+
+> **Translations other than English are machine-assisted and not yet reviewed by native speakers.**
+> Treat the wording as provisional; the `errorCode` is not.
+
+Two things stay English on purpose:
+
+- **Bean-validation field names** in an `E1015` message (`amount: must be greater than 0`). The
+  field name is a contract identifier you branch on; your own form label is yours to translate.
+  Only the reason after the colon is localised.
+- **Server logs.** Unrelated to the response, but it is why a support conversation quoting
+  `X-Correlation-Id` still finds an English line at the other end.
 
 ### Generic outcomes
 
@@ -179,7 +228,7 @@ Creates a user in `PENDING` status and emails a 6-digit OTP for verification. Re
 |---|---|---|---|
 | `email` | string | yes | Lowercased/trimmed server-side. Disposable-domain addresses are rejected. |
 | `password` | string | yes | 8–128 chars, must contain a letter, a digit, a special character, and no whitespace. |
-| `locale` | string | no | BCP-47, e.g. `si-LK`. Seeds a provisional currency; ignored if unparseable. |
+| `locale` | string | no | BCP-47, e.g. `si-LK`. Seeds a provisional currency **and** the preferred language; ignored if unparseable. The language it seeds is the language the verification email is written in, so send it — this is the one message that goes out before the user has seen a picker. Send the full tag for Chinese (`zh-TW` vs `zh-CN`); the region matters for nothing else. Falls back to `en` when the locale names a language the server cannot answer in. |
 | `timezone` | string | no | IANA zone, e.g. `Asia/Colombo`. Seeds where the user's calendar months start; ignored if unparseable. |
 
 ```json
@@ -375,7 +424,7 @@ PUT /api/v1/me
 ```
 **Auth:** required (`Bearer <accessToken>`)
 
-Updates the caller's own name. Either field may be omitted/blank to leave the existing value unchanged — this is a partial update, not a full replace.
+Updates the caller's own name and preferred language. Any field may be omitted/blank to leave the existing value unchanged — this is a partial update, not a full replace.
 
 ### Request body
 
@@ -383,13 +432,18 @@ Updates the caller's own name. Either field may be omitted/blank to leave the ex
 |---|---|---|---|
 | `firstName` | string | no | Max 120 chars. |
 | `lastName` | string | no | Max 120 chars. |
+| `language` | string | no | BCP-47 tag. Must be one the server can answer in (see the [supported list](#message-is-localised-errorcode-is-not-f-126)); anything else is rejected rather than stored. The value is stored canonically, so `pt-BR` is stored as `pt` and `zh-HK` as `zh-TW`. This is the **only** way to change the language after onboarding. |
 
 ```json
 {
   "firstName": "Ada",
-  "lastName": "Lovelace"
+  "lastName": "Lovelace",
+  "language": "si"
 }
 ```
+
+Changing `language` takes effect on the **next** response — the one confirming the change is still
+rendered in the old language, because the message is resolved before the new preference is saved.
 
 ### Response `data`
 
@@ -410,7 +464,8 @@ Returns the full updated `MeResponse` (same shape as [Get Current User](#4-get-c
 
 ### Errors
 
-- `400 E1015` — a field exceeds 120 chars.
+- `400 E1013` — `language` is not one the server supports.
+- `400 E1015` — a field exceeds its maximum length.
 - `401` — missing/invalid access token.
 
 ---
@@ -445,6 +500,44 @@ Sorted alphabetically by `code`. Pseudo-currencies (precious metals, "no currenc
 
 ---
 
+## 7b. Get Available Languages
+
+```
+GET /api/v1/onboarding/languages
+```
+**Auth:** required (`Bearer <accessToken>`)
+
+The language picker's options — **the same allowlist** `POST /onboarding` and
+[Update Profile](#6-update-profile) validate against, so a client that populates its picker from
+here can never offer a language the server would then refuse. Order is the server's configured
+order, English first.
+
+### Response `data`
+
+```json
+[
+  { "tag": "en",    "name": "English",               "nativeName": "English" },
+  { "tag": "zh-CN", "name": "Chinese (Simplified)",  "nativeName": "中文 (简体)" },
+  { "tag": "zh-TW", "name": "Chinese (Traditional)", "nativeName": "中文 (繁體)" },
+  { "tag": "fr",    "name": "French",                "nativeName": "Français" }
+]
+```
+
+| Field | Notes |
+|---|---|
+| `tag` | What to send back as `language`, and what `GET /me` returns. Send it verbatim. |
+| `name` | The language's name **in English** — for a fallback UI, or a picker that stays in one language. |
+| `nativeName` | The name in the language itself. **Show this in the picker**: it is the one screen a user reads *before* the app speaks their language, and "Deutsch" is findable to someone who cannot read "German". |
+
+Chinese is named by **script, not region** — "Chinese (Simplified)", not "Chinese (China)" — because
+the script is what the two entries actually differ by.
+
+### Errors
+
+- `401` — missing/invalid access token.
+
+---
+
 ## 8. Complete Onboarding
 
 ```
@@ -464,7 +557,7 @@ duplicate categories.
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `currency` | string | yes | ISO-4217, exactly 3 chars, e.g. `LKR`. Must be one of the codes from [Get Available Currencies](#7-get-available-currencies) — anything else is rejected. |
-| `language` | string | no | BCP-47, e.g. `en`. Max 10 chars. Omit to leave the existing value unchanged. |
+| `language` | string | no | BCP-47, e.g. `en`. Max 10 chars. Must be one the server can answer in (see the [supported list](#message-is-localised-errorcode-is-not-f-126)); anything else is rejected. Stored canonically (`pt-BR` → `pt`, `zh-HK` → `zh-TW`). Omit to leave the existing value unchanged. |
 | `timezone` | string | no | IANA zone, e.g. `Asia/Colombo`. Max 50 chars. Decides where the user's calendar months start. Omit to leave the existing value unchanged. |
 
 ```json
@@ -494,7 +587,7 @@ duplicate categories.
 
 ### Errors
 
-- `400 E1013` — currency code isn't on the supported list, timezone isn't a valid IANA zone, or the caller already completed onboarding with a **different** currency (changing a confirmed currency isn't supported yet — re-submitting the *same* currency is fine and just updates language/timezone).
+- `400 E1013` — currency code isn't on the supported list, `language` isn't one the server supports, timezone isn't a valid IANA zone, or the caller already completed onboarding with a **different** currency (changing a confirmed currency isn't supported yet — re-submitting the *same* currency is fine and just updates language/timezone).
 - `400 E1015` — currency isn't exactly 3 characters, or language/timezone exceed their max length.
 - `401` — missing/invalid access token.
 

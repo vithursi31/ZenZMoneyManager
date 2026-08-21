@@ -112,11 +112,58 @@ Beyond the existing auth columns, the domain adds these user-level fields:
 | Field | Type | Notes | Introduced by |
 |---|---|---|---|
 | `activeCurrency` | `String(3)` | ISO-4217; the user's single active currency. | [§0.3](#03-one-active-currency-per-user) |
-| `language` | `String(10)` | BCP-47 preferred language (e.g. `en`, `ta`, `si`). | F-1.26 |
+| `language` | `String(10)` | BCP-47 preferred language. **Constrained to what the server has a message bundle for** (12 today: `en` `zh-CN` `zh-TW` `fr` `es` `pt` `de` `it` `ru` `ja` `ko` `si`) and stored in that canonical form — `pt-BR` is written as `pt`, `zh-HK` as `zh-TW`. Seeded from the signup locale hint, corrected at onboarding, and changeable afterwards only via `PUT /me`. It is the first thing consulted when rendering a user-facing message ([§0.5](#05-user-facing-messages-are-localised)). | F-1.26 |
 | `timezone` | `String(50)` | IANA zone, default `UTC`. **Defines the calendar-month boundary** for the monthly position ([§1.10](#110-monthly-position-invariant)). | F-1.2 |
 | `appLockEnabled` | `boolean` | Default `false`. | [§4.2](#42-app-lock-client-side) |
 | `appLockTimeoutSeconds` | `int` | Auto-lock delay. Default `60`. | [§4.2](#42-app-lock-client-side) |
 | `biometricEnabled` | `boolean` | Whether biometric unlock is allowed. Default `false`. | [§4.2](#42-app-lock-client-side) |
+
+## 0.5 User-facing messages are localised
+
+Every sentence the API returns to a human is resolved from a **message bundle**, in the caller's
+language (F-1.26). The invariant is a separation of two things that look alike:
+
+- **`errorCode` is the contract, and it is not localised.** Coarse, stable, one meaning each, and
+  the only thing a client branches on ([`ServiceCodes`](../../svcs/common/src/main/java/com/zenzmoney/common/status/ServiceCodes.java)).
+- **A message key is the sentence's identity, and it is not a code.** Fine-grained — one per
+  rejection ([`Msg`](../../svcs/common/src/main/java/com/zenzmoney/common/i18n/Msg.java)). Many keys
+  ride on one code, which is why localising did not force ~76 rejections to be promoted to `E11xx`
+  before they earned it.
+
+Three rules follow, and they are what keep the layers honest:
+
+1. **A service throws a key and arguments, never text and never a `Locale`.** Deciding what a
+   rejection reads like is a presentation concern, and services also run off the request thread
+   (the scheduler), where there is no caller to have a language.
+2. **Rendering happens once, at the boundary** — `GlobalExceptionHandler` and `AccessDeniedAdvice`,
+   plus the two places that write a response body before the dispatcher runs
+   (`JwtAuthenticationFilter`, the access-denied handler in `SecurityConfig`). Same "translate once
+   at the edge" rule the status codes follow.
+3. **Logs stay English.** One exception yields two strings: the caller's language on the wire,
+   English in `debug.log` and `audit.log`. Audit is kept a year and is read with grep.
+
+Language is resolved **stored preference first, `Accept-Language` second, English last** — the
+picker is a promise, and the header is only what we have before a user exists. The stored value is
+read lazily on the error path, so a successful request never pays for a message it does not render.
+
+**The set of languages is configuration, not code** — `zenzmoney.i18n.available-languages` in
+[`application.properties`](../../svcs/core/src/main/resources/application.properties). It is
+simultaneously the `Accept-Language` allowlist and the set of values `app_user.language` may hold,
+which is why a tag outside it is refused on write rather than stored. A configured language with no
+bundle on the classpath is dropped at startup with an ERROR, so "offerable" and "translated" cannot
+drift apart on a running server.
+
+**A caller's tag is matched on language plus script**, not on the whole tag: region is ignored, so
+`fr-CA` and `pt-BR` need no bundles of their own. Script is not ignored, because Chinese is the one
+language here where it changes the text rather than the formatting — `zh-TW`, `zh-HK` and `zh-Hant`
+resolve to Traditional, `zh-CN`, `zh-SG`, `zh-Hans` and a bare `zh` to Simplified.
+
+A bare string on a `StatusCode` (`SC_TOKEN_INVALID.with("Missing subject")`) is a **diagnostic**:
+English, for the log, and it never reaches the client. That is what stopped provider and JWT-library
+internals being echoed back to callers.
+
+**Money, dates and numbers are still formatted by the client** ([§0.2](#02-money-representation)) —
+so a message never embeds an amount.
 
 ---
 

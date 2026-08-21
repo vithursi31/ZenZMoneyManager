@@ -2,6 +2,7 @@ package com.zenzmoney.core.service.oauth;
 
 import com.zenzmoney.common.exception.ServiceException;
 import com.zenzmoney.common.exception.UnauthorizedException;
+import com.zenzmoney.common.i18n.Msg;
 import com.zenzmoney.common.status.ServiceCodes;
 import com.zenzmoney.core.web.dto.FacebookAuthRequest;
 import org.springframework.beans.factory.annotation.Value;
@@ -71,7 +72,7 @@ public class FacebookAuthConnector {
         if (appId.isBlank() || appSecret.isBlank()) {
             log.error("Facebook sign-in is not configured — app id or secret is missing");
             throw new ServiceException(ServiceCodes.SC_PROVIDER_NOT_CONFIGURED
-                    .with("Facebook sign-in is not available right now."));
+                    .with(Msg.OAUTH_UNAVAILABLE, "Facebook"));
         }
     }
 
@@ -82,7 +83,7 @@ public class FacebookAuthConnector {
         if (redirect == null || redirect.isBlank()) {
             log.error("Facebook sign-in is not configured — redirect URI is missing");
             throw new ServiceException(ServiceCodes.SC_PROVIDER_NOT_CONFIGURED
-                    .with("Facebook sign-in is not available right now."));
+                    .with(Msg.OAUTH_UNAVAILABLE, "Facebook"));
         }
 
         Map<String, Object> resp = webClient.get()

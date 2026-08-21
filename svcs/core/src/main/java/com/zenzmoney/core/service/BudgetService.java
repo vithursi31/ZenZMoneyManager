@@ -9,6 +9,7 @@ import com.zenzmoney.common.domain.TimeUtils;
 import com.zenzmoney.common.domain.TransactionType;
 import com.zenzmoney.common.exception.BadRequestException;
 import com.zenzmoney.common.exception.NotFoundException;
+import com.zenzmoney.common.i18n.Msg;
 import com.zenzmoney.core.entity.Account;
 import com.zenzmoney.core.entity.Budget;
 import com.zenzmoney.core.entity.Category;
@@ -65,17 +66,17 @@ public class BudgetService {
         String userId = user.getId();
 
         Account account = accountRepository.findByIdAndUserId(req.getAccountId(), userId)
-                .orElseThrow(() -> new NotFoundException("Account not found"));
+                .orElseThrow(() -> new NotFoundException(Msg.ACCOUNT_NOT_FOUND));
         if (account.getStatus() == AccountStatus.DELETED) {
-            throw new BadRequestException("Cannot create a budget for a deleted account.");
+            throw new BadRequestException(Msg.BUDGET_ACCOUNT_DELETED);
         }
 
         String categoryId = normalizeId(req.getCategoryId());
         if (categoryId != null) {
             Category category = categoryRepository.findByIdAndUserIdAndStatus(categoryId, userId, CategoryStatus.ACTIVE)
-                    .orElseThrow(() -> new NotFoundException("Category not found"));
+                    .orElseThrow(() -> new NotFoundException(Msg.CATEGORY_NOT_FOUND));
             if (category.getKind() != CategoryKind.EXPENSE) {
-                throw new BadRequestException("A budget category must be an EXPENSE category.");
+                throw new BadRequestException(Msg.BUDGET_CATEGORY_NOT_EXPENSE);
             }
         }
         String periodKey = normalizePeriodKey(req.getPeriod(), req.getPeriodKey());
@@ -158,7 +159,7 @@ public class BudgetService {
         Budget budget = requireLive(id, user.getId());
         if (req.getAmountLimit() != null) {
             if (req.getAmountLimit() <= 0) {
-                throw new BadRequestException("Amount limit must be positive.");
+                throw new BadRequestException(Msg.BUDGET_LIMIT_NOT_POSITIVE);
             }
             budget.setAmountLimit(req.getAmountLimit());
         }
@@ -191,7 +192,7 @@ public class BudgetService {
         String userId = currentUser.requireUserId();
         Budget budget = requireOwned(id, userId);
         if (budget.getStatus() == BudgetStatus.DELETED) {
-            throw new BadRequestException("Budget already deleted.");
+            throw new BadRequestException(Msg.BUDGET_ALREADY_DELETED);
         }
         budget.setStatus(BudgetStatus.DELETED);
         budgetRepository.save(budget);
@@ -204,14 +205,14 @@ public class BudgetService {
 
     private Budget requireOwned(String id, String userId) {
         return budgetRepository.findByIdAndUserId(id, userId)
-                .orElseThrow(() -> new NotFoundException("Budget not found"));
+                .orElseThrow(() -> new NotFoundException(Msg.BUDGET_NOT_FOUND));
     }
 
     /** Owned and still editable — a deleted budget is readable history, not a live plan. */
     private Budget requireLive(String id, String userId) {
         Budget budget = requireOwned(id, userId);
         if (budget.getStatus() == BudgetStatus.DELETED) {
-            throw new BadRequestException("Budget is deleted.");
+            throw new BadRequestException(Msg.BUDGET_DELETED);
         }
         return budget;
     }
@@ -235,15 +236,14 @@ public class BudgetService {
                 .stream()
                 .anyMatch(b -> Objects.equals(b.getCategoryId(), categoryId));
         if (clash) {
-            throw new BadRequestException(
-                    "An active budget already exists for this account, category and period.");
+            throw new BadRequestException(Msg.BUDGET_DUPLICATE_SLOT);
         }
     }
 
     private BudgetResponse toResponse(Budget b, ZoneId zone) {
         String currency = accountRepository.findByIdAndUserId(b.getAccountId(), b.getUserId())
                 .map(Account::getCurrency)
-                .orElseThrow(() -> new NotFoundException("Account not found"));
+                .orElseThrow(() -> new NotFoundException(Msg.ACCOUNT_NOT_FOUND));
         return toResponse(b, zone, currency);
     }
 
@@ -321,7 +321,7 @@ public class BudgetService {
         try {
             return YearMonth.parse(month.trim());
         } catch (DateTimeParseException e) {
-            throw new BadRequestException("Month must be in yyyy-MM format, e.g. 2026-08.");
+            throw new BadRequestException(Msg.MONTH_FORMAT);
         }
     }
 

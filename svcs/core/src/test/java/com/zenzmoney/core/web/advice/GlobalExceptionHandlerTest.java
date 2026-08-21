@@ -7,7 +7,9 @@ import com.zenzmoney.common.exception.NotFoundException;
 import com.zenzmoney.common.exception.ServiceException;
 import com.zenzmoney.common.exception.TooManyRequestsException;
 import com.zenzmoney.common.exception.UnauthorizedException;
+import com.zenzmoney.common.i18n.Msg;
 import com.zenzmoney.common.status.ServiceCodes;
+import com.zenzmoney.core.i18n.TestMessages;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -15,8 +17,11 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
+import java.util.Locale;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 /**
  * Every failure answers with the status and the code carried by its {@code StatusCode} — the handler
@@ -27,10 +32,19 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
  * <p>An unknown path is the live example: {@code /api/v1/service-status} is listed in the filter's
  * PUBLIC_PATHS but has no controller, so it is a 404 route. A blanket
  * {@code @ExceptionHandler(Exception.class)} answered it {@code 500}, which reads as an outage.
+ *
+ * <p>They also pin the message rule (F-1.26): the body carries the caller's language, and a
+ * call-site diagnostic never reaches it.
  */
 class GlobalExceptionHandlerTest {
 
-    private final GlobalExceptionHandler handler = new GlobalExceptionHandler();
+    private static final Locale SINHALA = Locale.forLanguageTag("si");
+
+    private final GlobalExceptionHandler handler = handlerFor(Locale.ENGLISH);
+
+    private static GlobalExceptionHandler handlerFor(Locale locale) {
+        return new GlobalExceptionHandler(TestMessages.resolver(), TestMessages.fixedLocale(locale));
+    }
 
     @Test
     void unknownPath_keeps404_notReportedAsServerError() {
@@ -63,23 +77,59 @@ class GlobalExceptionHandlerTest {
                 "internal detail must not reach the client");
     }
 
+    /**
+     * A bare string is a <em>diagnostic</em>, for the log. It is English and can name internals, so
+     * the client gets the code's own generic message instead.
+     */
     @Test
-    void notFound_is404_withTheNotFoundCode_andKeepsTheCallSiteMessage() {
+    void notFound_withADiagnostic_answersTheGenericMessage_notTheDiagnostic() {
         ResponseEntity<ApiResponse<Void>> response =
-                handler.handleNotFound(new NotFoundException("No transaction with that id"));
+                handler.handleNotFound(new NotFoundException("No transaction with id 9f3c-…"));
 
         assertEquals(404, response.getStatusCode().value());
         assertEquals("E1010", response.getBody().getErrorCode());
-        assertEquals("No transaction with that id", response.getBody().getMessage());
+        assertEquals("Not found", response.getBody().getMessage());
     }
 
     @Test
-    void badRequest_is400_withTheBadRequestCode() {
+    void badRequest_withAMessageKey_answersThatKeysText() {
         ResponseEntity<ApiResponse<Void>> response =
-                handler.handleBadRequest(new BadRequestException("Email already in use"));
+                handler.handleBadRequest(new BadRequestException(Msg.EMAIL_IN_USE));
 
         assertEquals(400, response.getStatusCode().value());
         assertEquals("E1013", response.getBody().getErrorCode());
+        assertEquals("Email already in use", response.getBody().getMessage());
+    }
+
+    /** The placeholder is a MessageFormat pattern, so a stray apostrophe in the bundle shows up here. */
+    @Test
+    void messageArguments_areInterpolated_withTheQuotesIntact() {
+        ResponseEntity<ApiResponse<Void>> response =
+                handler.handleBadRequest(new BadRequestException(Msg.CATEGORY_DUPLICATE, "Groceries"));
+
+        assertEquals("A category named 'Groceries' already exists.", response.getBody().getMessage());
+    }
+
+    /** The code is the contract and does not move; only the sentence does. */
+    @Test
+    void sameRejection_inSinhala_keepsTheCode_andChangesTheMessage() {
+        ResponseEntity<ApiResponse<Void>> english =
+                handler.handleBadRequest(new BadRequestException(Msg.EMAIL_IN_USE));
+        ResponseEntity<ApiResponse<Void>> sinhala = handlerFor(SINHALA)
+                .handleBadRequest(new BadRequestException(Msg.EMAIL_IN_USE));
+
+        assertEquals(english.getBody().getErrorCode(), sinhala.getBody().getErrorCode());
+        assertNotEquals(english.getBody().getMessage(), sinhala.getBody().getMessage(),
+                "the Sinhala bundle must actually carry this key");
+    }
+
+    /** A language with no bundle of its own falls back to English, never to a raw key. */
+    @Test
+    void unsupportedLanguage_fallsBackToEnglish() {
+        // Dutch: deliberately a language the app ships no bundle for.
+        ResponseEntity<ApiResponse<Void>> response = handlerFor(Locale.forLanguageTag("nl"))
+                .handleBadRequest(new BadRequestException(Msg.EMAIL_IN_USE));
+
         assertEquals("Email already in use", response.getBody().getMessage());
     }
 
