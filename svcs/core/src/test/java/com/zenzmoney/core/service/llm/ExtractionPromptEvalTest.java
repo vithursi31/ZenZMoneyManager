@@ -163,15 +163,21 @@ class ExtractionPromptEvalTest {
         System.out.printf("%-6s %-48s %-8s %-9s %s%n", "lang", "message", "type", "amount", "category");
 
         for (Fixture f : FIXTURES) {
-            LlmExtraction got = client.extract(f.message(), CATEGORIES, null);
+            LlmExtractionBatch batch = client.extract(f.message(), CATEGORIES, null);
+            LlmExtraction got = batch.first();
             int[] tally = score.computeIfAbsent(f.lang(), k -> new int[3]);
             tally[2]++;
 
             // --- contract: must hold whatever the model thinks the message means ---
-            if (got.isFailed()) {
+            if (batch.isFailed() || batch.isEmpty()) {
                 breaches.add(f.message() + " — no parseable extraction");
                 System.out.printf("%-6s %-48s %s%n", f.lang(), f.message(), "FAILED");
                 continue;
+            }
+            // Every fixture names exactly one amount, so splitting it is a contract break in
+            // the other direction — the same rule that makes the three-amount message three.
+            if (batch.getItems().size() != 1) {
+                breaches.add(f.message() + " — one amount read as " + batch.getItems().size() + " entries");
             }
             if (got.getAmountRaw() != null
                     && IntentResolver.toMinorUnits(got.getAmountRaw(), "USD") == null) {
@@ -221,7 +227,7 @@ class ExtractionPromptEvalTest {
                 .build();
         return new OllamaExtractionClient(webClient, new ObjectMapper(),
                 new ExtractionPrompt(new ClassPathResource("prompts/extraction-system.md")),
-                MODEL, 0.1d);
+                MODEL, 0.1d, "30m", false);
     }
 
     /** Cheap liveness probe so a missing model skips the eval instead of failing it. */

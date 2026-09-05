@@ -2,6 +2,7 @@ package com.zenzmoney.core.entity;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.zenzmoney.common.domain.IntentType;
+import com.zenzmoney.common.domain.RecurringCadence;
 import com.zenzmoney.common.domain.TransactionType;
 import lombok.Getter;
 import lombok.Setter;
@@ -28,6 +29,12 @@ public class ParsedIntent {
     private String categoryGuess;
 
     private Long txnDate;
+
+    private RecurringCadence cadence;
+
+    private String targetTransactionId;
+
+    private boolean duplicateSuspected;
 
     private String payeeName;
 

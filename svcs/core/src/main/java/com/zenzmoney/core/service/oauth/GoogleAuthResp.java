@@ -6,6 +6,7 @@ import lombok.Setter;
 @Getter
 @Setter
 public class GoogleAuthResp {
+    private String subject;
     private String email;
     private String firstName;
     private String lastName;

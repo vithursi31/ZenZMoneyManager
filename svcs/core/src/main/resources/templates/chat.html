@@ -24,16 +24,15 @@
         <section id="conversation" hidden>
             <ol class="transcript" id="transcript" aria-live="polite"></ol>
 
-            <!-- The answers to the assistant's question. Filled by the reply's prompt. -->
-            <div class="chips" id="chips" hidden></div>
-
             <!-- The figures behind an answered question, so the prose can be checked. -->
             <section class="insight" id="insight" hidden aria-labelledby="insight-title">
                 <h2 id="insight-title">Where your money went</h2>
                 <div id="insight-months"></div>
             </section>
 
-            <!-- The draft. Nothing reaches the ledger until Create is pressed. -->
+            <!-- The draft the model was too unsure to write on its own. The ordinary
+                 path never shows this: a complete, confident message is already recorded,
+                 and the transcript card carries its Undo. -->
             <section class="preview" id="preview" hidden aria-labelledby="preview-title">
                 <h2 id="preview-title">Draft</h2>
                 <dl class="preview-fields">
@@ -42,6 +41,7 @@
                     <dt>Category</dt><dd id="p-category">—</dd>
                     <dt>Description</dt><dd id="p-note">—</dd>
                     <dt>Date</dt><dd id="p-date">—</dd>
+                    <dt id="p-cadence-label" hidden>Repeats</dt><dd id="p-cadence" hidden>—</dd>
                 </dl>
 
                 <form class="edit" id="edit" hidden>
@@ -55,6 +55,15 @@
                     <label>Category <select id="e-category"></select></label>
                     <label>Description <input type="text" id="e-note" maxlength="500"></label>
                     <label>Date <input type="date" id="e-date"></label>
+                    <label id="e-cadence-row" hidden>Repeats
+                        <select id="e-cadence">
+                            <option value="">Not set</option>
+                            <option value="DAILY">Daily</option>
+                            <option value="WEEKLY">Weekly</option>
+                            <option value="MONTHLY">Monthly</option>
+                            <option value="YEARLY">Yearly</option>
+                        </select>
+                    </label>
                     <div class="preview-actions">
                         <button type="submit">Save changes</button>
                         <button type="button" id="edit-cancel">Discard changes</button>

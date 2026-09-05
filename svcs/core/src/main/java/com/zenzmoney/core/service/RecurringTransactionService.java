@@ -194,6 +194,33 @@ public class RecurringTransactionService {
      * are left untouched (their {@code recurringId} becomes a dangling historical label).
      * To stop future generation without deleting, set {@code active = false} instead.
      */
+    /**
+     * Stops a template generating, whether or not it already had.
+     *
+     * <p><b>What undoing a chat-created subscription does</b> — deliberately not
+     * {@link #delete}. Chat may create a repeating payment unasked, so it must be able
+     * to take back the harm (every future charge) without being able to destroy a row
+     * the user may have come to rely on. Deactivating does exactly that: the scheduler
+     * skips it ({@code findByActiveTrueAndNextRunDateLessThanEqual}) and {@link #list}
+     * hides it, but it is still there to inspect or re-enable.
+     *
+     * @return true if this call is what stopped it.
+     */
+    @Transactional
+    public boolean deactivateIfActive(String id) {
+        String userId = currentUser.requireUserId();
+        RecurringTransaction r = recurringRepository.findByIdAndUserId(id, userId).orElse(null);
+        if (r == null || !r.isActive()) {
+            log.debug("Recurring template {} is already gone or inactive; nothing to stop (user {})", id, userId);
+            return false;
+        }
+        r.setActive(false);
+        recurringRepository.save(r);
+        log.info("Recurring template deactivated: {} {} {} (template {}, user {})",
+                r.getType(), r.getAmount(), r.getCadence(), id, userId);
+        return true;
+    }
+
     @Transactional
     public void delete(String id) {
         User user = currentUser.requireUser();

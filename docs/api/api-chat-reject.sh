@@ -2,8 +2,9 @@
 # POST /api/v1/chat/reject — discard a draft (USER/ADMIN). Writes nothing to the
 # ledger; the turn stays in history marked REJECTED.
 # Pass the assistant turn's id as arg 1 or set MESSAGE_ID.
-# 400 once the draft is already confirmed — a ledger row is undone by deleting the
-# transaction, not by rejecting the chat turn.
+# 400 once the draft has been written — a written entry is taken back with
+# api-chat-undo.sh, not by rejecting the chat turn.
+# Returns an empty success envelope: {"status":"success","data":null}.
 source define-envars.sh;
 
 MESSAGE_ID="${1:-${MESSAGE_ID:-}}"

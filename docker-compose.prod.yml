@@ -102,26 +102,32 @@ services:
       GOOGLE_ANDROID_APP_ID: ${GOOGLE_ANDROID_APP_ID:-}
       APPLE_CLIENT_ID: ${APPLE_CLIENT_ID:-}
       APPLE_CLIENT_ID_WEB: ${APPLE_CLIENT_ID_WEB:-}
-      APPLE_TEAM_ID: ${APPLE_TEAM_ID:-}
-      APPLE_KEY_ID: ${APPLE_KEY_ID:-}
-      APPLE_PRIVATE_KEY: ${APPLE_PRIVATE_KEY:-}
       FACEBOOK_APP_ID: ${FACEBOOK_APP_ID:-}
       FACEBOOK_APP_SECRET: ${FACEBOOK_APP_SECRET:-}
       FACEBOOK_REDIRECT_URL: ${FACEBOOK_REDIRECT_URL:-}
       FACEBOOK_GRAPH_VERSION: ${FACEBOOK_GRAPH_VERSION:-v19.0}
+      OAUTH_CONNECT_TIMEOUT_MS: ${OAUTH_CONNECT_TIMEOUT_MS:-3000}
+      OAUTH_TIMEOUT_MS: ${OAUTH_TIMEOUT_MS:-8000}
       # Self-hosted LLM — reached by service name "ollama" when that profile is up.
+      # Which model serves chat: ollama (self-hosted, default) or gemini (hosted API).
+      # Under gemini the user's own chat text leaves this host — see domain §3.7.
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash-lite}
       LLM_BASE_URL: ${LLM_BASE_URL:-http://ollama:11434}
-      LLM_MODEL: ${LLM_MODEL:-qwen2.5:1.5b-instruct}
-      LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS:-20000}
+      LLM_MODEL: ${LLM_MODEL:-qwen3:1.7b}
+      LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS:-45000}
     ports:
       - "8080:8080"
     # Logs on the host, not in the container's writable layer. Without this bind mount
     # every `up -d --build` recreates the container and takes debug.log, error.log and the
     # whole archived/ history with it — including audit.log, the file an incident is
-    # reconstructed from. Also what makes off-host archiving runnable at all: ./logs/archived/*.gz
+    # reconstructed from. Also what makes off-host archiving runnable at all:
+    # ./logs/ZenZMoneyManager/archived/*.gz
     # is reachable from the host shell (see CLAUDE.md, Checking Logs).
-    # DEPLOYMENT_DIRECTORY is unset in the image, so ${DEPLOYMENT_DIRECTORY:-.}/logs in
-    # logback-spring.xml resolves against WORKDIR /app.
+    # DEPLOYMENT_DIRECTORY is unset in the image, so ${DEPLOYMENT_DIRECTORY:-.}/logs/ZenZMoneyManager
+    # in logback-spring.xml resolves against WORKDIR /app — the files land in the
+    # ZenZMoneyManager/ subdirectory of this mount, which Logback creates on first write.
     #
     # ONE-TIME SETUP on the server, before the first `up`: a bind mount keeps the HOST
     # directory's ownership and overrides the image's chown, and the container runs as

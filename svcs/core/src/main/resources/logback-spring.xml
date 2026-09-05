@@ -29,7 +29,7 @@
   its log file even under the test profile that never references it.
 -->
 <configuration>
-    <property name="LOG_DIR" value="${DEPLOYMENT_DIRECTORY:-.}/logs"/>
+    <property name="LOG_DIR" value="${DEPLOYMENT_DIRECTORY:-.}/logs/ZenZMoneyManager"/>
     <property name="ARCHIVE_DIR" value="${LOG_DIR}/archived"/>
     <property name="LOG_PATTERN"
               value="%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %X{cid} - %X{user} - %msg%n"/>
@@ -158,7 +158,7 @@
 
         <!-- Local: console plus files, so the same `grep debug.log` workflow that the
              mindmapai services rely on also works here. ${DEPLOYMENT_DIRECTORY:-.}
-             resolves to ./logs in the working directory. -->
+             resolves to ./logs/ZenZMoneyManager in the working directory. -->
         <springProfile name="loc">
             <root level="INFO">
                 <appender-ref ref="CONSOLE"/>

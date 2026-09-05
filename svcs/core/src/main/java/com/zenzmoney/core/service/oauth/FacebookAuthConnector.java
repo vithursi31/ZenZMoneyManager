@@ -5,6 +5,7 @@ import com.zenzmoney.common.exception.UnauthorizedException;
 import com.zenzmoney.common.i18n.Msg;
 import com.zenzmoney.common.status.ServiceCodes;
 import com.zenzmoney.core.web.dto.FacebookAuthRequest;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.MediaType;
@@ -33,12 +34,23 @@ public class FacebookAuthConnector {
     private static final ParameterizedTypeReference<Map<String, Object>> MAP_TYPE =
             new ParameterizedTypeReference<>() {};
 
-    @Value("${zenzmoney.facebook.app-id:}")            private String appId;
-    @Value("${zenzmoney.facebook.app-secret:}")        private String appSecret;
-    @Value("${zenzmoney.facebook.app-redirect-url:}")  private String defaultRedirectUrl;
-    @Value("${zenzmoney.facebook.graph-version:v19.0}") private String graphVersion;
+    private final WebClient webClient;
+    private final String appId;
+    private final String appSecret;
+    private final String defaultRedirectUrl;
+    private final String graphVersion;
 
-    private final WebClient webClient = WebClient.builder().build();
+    public FacebookAuthConnector(@Qualifier("oauthWebClient") WebClient webClient,
+                                 @Value("${zenzmoney.facebook.app-id:}") String appId,
+                                 @Value("${zenzmoney.facebook.app-secret:}") String appSecret,
+                                 @Value("${zenzmoney.facebook.app-redirect-url:}") String defaultRedirectUrl,
+                                 @Value("${zenzmoney.facebook.graph-version:v19.0}") String graphVersion) {
+        this.webClient = webClient;
+        this.appId = appId;
+        this.appSecret = appSecret;
+        this.defaultRedirectUrl = defaultRedirectUrl;
+        this.graphVersion = graphVersion;
+    }
 
     public FacebookAuthResp verifyAuth(FacebookAuthRequest req) {
         if (req.getType() == null) {
@@ -86,7 +98,7 @@ public class FacebookAuthConnector {
                     .with(Msg.OAUTH_UNAVAILABLE, "Facebook"));
         }
 
-        Map<String, Object> resp = webClient.get()
+        Map<String, Object> resp = ProviderCall.await(() -> webClient.get()
                 .uri(b -> b.scheme("https").host(GRAPH_HOST)
                         .path("/" + graphVersion + "/oauth/access_token")
                         .queryParam("client_id", appId)
@@ -97,7 +109,7 @@ public class FacebookAuthConnector {
                 .accept(MediaType.APPLICATION_JSON)
                 .retrieve()
                 .bodyToMono(MAP_TYPE)
-                .block();
+                .block(), ServiceCodes.SC_FACEBOOK_CONNECTOR_ERROR, "Facebook token exchange");
 
         if (resp == null || resp.get("access_token") == null) {
             throw new ServiceException(ServiceCodes.SC_FACEBOOK_CONNECTOR_ERROR
@@ -110,7 +122,7 @@ public class FacebookAuthConnector {
     private void verifyAccessToken(String userAccessToken) {
         String appAccessToken = appId + "|" + appSecret;
 
-        Map<String, Object> resp = webClient.get()
+        Map<String, Object> resp = ProviderCall.await(() -> webClient.get()
                 .uri(b -> b.scheme("https").host(GRAPH_HOST)
                         .path("/debug_token")
                         .queryParam("input_token", userAccessToken)
@@ -119,7 +131,7 @@ public class FacebookAuthConnector {
                 .accept(MediaType.APPLICATION_JSON)
                 .retrieve()
                 .bodyToMono(MAP_TYPE)
-                .block();
+                .block(), ServiceCodes.SC_FACEBOOK_CONNECTOR_ERROR, "Facebook debug_token");
 
         if (resp == null || !(resp.get("data") instanceof Map<?, ?> dataMap)) {
             throw new ServiceException(ServiceCodes.SC_FACEBOOK_CONNECTOR_ERROR
@@ -140,7 +152,7 @@ public class FacebookAuthConnector {
     }
 
     private FacebookAuthResp fetchProfile(String userAccessToken) {
-        Map<String, Object> me = webClient.get()
+        Map<String, Object> me = ProviderCall.await(() -> webClient.get()
                 .uri(b -> b.scheme("https").host(GRAPH_HOST)
                         .path("/" + graphVersion + "/me")
                         .queryParam("fields", "id,email,first_name,last_name")
@@ -149,7 +161,7 @@ public class FacebookAuthConnector {
                 .accept(MediaType.APPLICATION_JSON)
                 .retrieve()
                 .bodyToMono(MAP_TYPE)
-                .block();
+                .block(), ServiceCodes.SC_FACEBOOK_CONNECTOR_ERROR, "Facebook /me");
 
         if (me == null) {
             throw new ServiceException(ServiceCodes.SC_FACEBOOK_CONNECTOR_ERROR.with("Facebook /me returned empty"));
@@ -162,6 +174,7 @@ public class FacebookAuthConnector {
         }
 
         FacebookAuthResp r = new FacebookAuthResp();
+        r.setSubject(me.get("id") == null ? null : me.get("id").toString());
         r.setEmail(email);
         r.setFirstName((String) me.get("first_name"));
         r.setLastName((String) me.get("last_name"));

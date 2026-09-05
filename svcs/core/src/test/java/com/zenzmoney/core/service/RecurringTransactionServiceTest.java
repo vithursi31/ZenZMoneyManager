@@ -453,16 +453,19 @@ class RecurringTransactionServiceTest {
     @Test
     void upcoming_keepsAnOccurrenceThatIsDueButNotYetPosted() {
         User u = user();
+        long overdue = System.currentTimeMillis() - 2 * DAY;
         when(currentUser.requireUser()).thenReturn(u);
         when(accountRepository.findByUserId("u1")).thenReturn(List.of(account("a1", "USD")));
         when(recurringRepository.findByUserIdAndActiveTrue("u1"))
-                .thenReturn(List.of(template("r1", RecurringCadence.MONTHLY,
-                        System.currentTimeMillis() - 2 * DAY, 1)));
+                .thenReturn(List.of(template("r1", RecurringCadence.MONTHLY, overdue, 1)));
 
         List<UpcomingOccurrenceResponse> out = service.upcoming(3);
 
-        assertEquals(1, out.size());
-        assertTrue(out.get(0).isDue());
+        // Asserted by identity, not by count: run this on the 1st and the template's own
+        // anchor day puts a *second*, legitimately upcoming occurrence inside the same
+        // three-day window. What this test is about is that the overdue one survives.
+        assertTrue(out.stream().anyMatch(o -> o.getDueDate() == overdue && o.isDue()),
+                () -> "the unposted overdue occurrence is missing from " + out.size() + " results");
     }
 
     @Test

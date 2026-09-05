@@ -2,6 +2,7 @@ package com.zenzmoney.core.config;
 
 import io.netty.channel.ChannelOption;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
@@ -11,7 +12,8 @@ import reactor.netty.http.client.HttpClient;
 import java.time.Duration;
 
 /**
- * HTTP transport for the self-hosted extraction model (chat entry plan §8). Kept
+ * HTTP transport for the self-hosted model, used unless
+ * {@code zenzmoney.llm.provider} says otherwise (F-1.11). Kept
  * out of {@code OllamaExtractionClient} so the client stays pure request/response
  * shaping and can be unit-tested against a stub {@link WebClient}.
  *
@@ -22,6 +24,7 @@ import java.time.Duration;
  * thinking forever".
  */
 @Configuration
+@ConditionalOnProperty(name = "zenzmoney.llm.provider", havingValue = "ollama", matchIfMissing = true)
 public class LlmConfig {
 
     @Bean

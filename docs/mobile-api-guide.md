@@ -1,9 +1,10 @@
-# Mobile API Guide — Onboarding, Account, Transactions, Recurring, Budgets & Categories
+# Mobile API Guide — Onboarding, Account, Transactions, Recurring, Budgets, Categories & Chat
 
 Scope: the sign-up-to-first-screen flow, the account endpoints those screens
 depend on, the transaction ledger the app is built around, the recurring
 commitments and subscriptions that post into it, the budgets planned against it,
-and the categories everything is filed under. Roughly in call order:
+the categories everything is filed under, and the chat capture that writes to all
+of them in plain language. Roughly in call order:
 
 1. [Register](#1-register)
 2. [Verify email](#2-verify-email)
@@ -45,8 +46,14 @@ and the categories everything is filed under. Roughly in call order:
 38. [Get one recurring template](#39-get-one-recurring-template)
 39. [Update recurring template](#40-update-recurring-template)
 40. [Delete recurring template](#41-delete-recurring-template)
+41. [Send a chat message](#42-send-a-chat-message)
+42. [Edit a chat draft](#43-edit-a-chat-draft)
+43. [Confirm a chat draft](#44-confirm-a-chat-draft)
+44. [Reject a chat draft](#45-reject-a-chat-draft)
+45. [Undo a chat write](#46-undo-a-chat-write)
+46. [Conversation history](#47-conversation-history)
 
-Other endpoints (goals, chat) exist but are out of scope for this document.
+Savings-goal endpoints exist but are out of scope for this document.
 
 > **Categories are last but needed first.** Every transaction carries a `categoryId`
 > ([§16](#16-create-transaction)), so a client cannot record anything without one — but
@@ -1043,8 +1050,20 @@ DELETE /api/v1/transactions/{id}
 ```
 **Auth:** required (`Bearer <accessToken>`)
 
-> **A hard delete** — unlike accounts ([§15](#15-delete-account)), the row is removed
-> outright. There is no undo and no `DELETED` status to restore from, so confirm in
+> **A soft delete** *(changed 2026-09-01)* — like accounts
+> ([§15](#15-delete-account)) and categories ([§34](#34-delete-category)), the row is
+> kept and its status flips to `DELETED`.
+>
+> **Nothing about the wire contract changes.** The transaction object has no `status`
+> field: a deleted row simply stops appearing in [List transactions](#17-list-transactions),
+> answers `404` from [Get one](#18-get-one-transaction), and is counted by no total —
+> [Monthly summary](#21-monthly-summary), [Category breakdown](#22-category-breakdown)
+> and every budget's `spent` all exclude it. Treat it as gone.
+>
+> **There is no restore endpoint.** The row survives so that a chat turn
+> ([§46](#46-undo-a-chat-write)) and a savings-goal contribution keep resolving to
+> something, not to give the user a trash bin. The only way back is undoing the chat
+> turn that removed it — so for a delete the *user* performed here, still confirm in
 > the UI before calling.
 
 ### Response `data`
@@ -1055,7 +1074,8 @@ DELETE /api/v1/transactions/{id}
 
 ### Errors
 
-- `404 E1010` — no transaction with that id owned by the caller.
+- `404 E1010` — no transaction with that id owned by the caller, **or it is already
+  deleted**. Deleting twice is a `404`, not a `500`.
 - `401` — missing/invalid access token.
 
 ---
@@ -2144,6 +2164,327 @@ Prefer `active: false` ([§40](#40-update-recurring-template)) unless the user m
 
 ---
 
+## Chat — what the app must know first
+
+The chat screen records income, expenses and subscriptions from plain language, and
+answers questions about the user's own figures. One endpoint does the reading
+([§42](#42-send-a-chat-message)); the rest are the ways back from it.
+
+**Four facts decide how the screen is built.**
+
+**1. Sending a message can write to the ledger.** There is no approve step in front of
+it. When the model reads a message completely and confidently, the entry exists by the
+time the response arrives — `status` is `CREATED` and `transactionId` names the row.
+Refresh the ledger, the monthly summary and any budget on screen after **every** chat
+send, exactly as you would after [Create transaction](#16-create-transaction).
+
+**2. What makes that safe is undo, not confirmation.** Every written entry can be taken
+back with [§46](#46-undo-a-chat-write), and the write is soft — undo is a status flip,
+never a destructive delete. Render an **Undo** affordance on every `CREATED` result.
+
+**3. One message can produce several entries.** *"I spent 28 on coffee, 350 on groceries
+and 120 on fuel"* is three. `results[]` is the whole answer, **one entry per amount** —
+render one bubble per result. The scalar fields beside it (`messageId`, `status`,
+`draft`, `prompt`) describe the **last** result, and exist so a client written against a
+single-entry shape keeps working.
+
+**4. Money and dates are never in the text.** `reply` is a finished sentence in the
+user's language and deliberately carries no amount and no date. Format
+`draft.amountMinor` with `draft.currency`, and `draft.txnDate` as epoch millis, exactly
+as everywhere else in this guide.
+
+### Result statuses
+
+Each entry in `results[]` carries its own `status`:
+
+| Status | Meaning | What the client shows |
+|---|---|---|
+| `CREATED` | Written to the ledger. `transactionId` and/or `recurringId` are set | The entry, with **Undo** |
+| `PARSED` | Complete, but deliberately held back to ask — it looks like a duplicate, or it is a delete awaiting confirmation | A draft card with **Create** / **Edit** / **Cancel** |
+| `NEEDS_CLARIFICATION` | Something is missing. `prompt.field` says what | The question; the answer is typed as a normal message |
+| `ANSWERED` | The message was a question, answered from the user's own figures. `insight` carries them, `results` is empty | The prose, and optionally the breakdown |
+| `REMOVED` | This turn removed a transaction the user already had | Confirmation, with **Undo** |
+| `UNDONE` | A previous write or removal has been taken back | The struck-through entry |
+| `FAILED` | The model was unreachable or unreadable. **Nothing was stored** | "Try again" — never an error dialog |
+| `SUPERSEDED` | A later turn now carries this draft | Nothing; it is history |
+
+**At most one result is ever left open** (`PARSED` or `NEEDS_CLARIFICATION`) — a
+conversation has one slot for an unanswered question. A message that leaves two entries
+short asks about the first and reports the rest as unread.
+
+### The draft object
+
+Present on any result that carries one; `null` on `ANSWERED` and `FAILED`.
+
+| Field | Type | Notes |
+|---|---|---|
+| `intent` | enum | `CREATE_TRANSACTION`, `CREATE_RECURRING`, `DELETE_TRANSACTION`, … |
+| `txnType` | enum | `EXPENSE` / `INCOME`, or `null` if not yet known |
+| `amountMinor` | integer | Minor units. `null` until known |
+| `currency` | string | ISO-4217, the user's active currency |
+| `categoryId` / `categoryName` | string | Resolved against the user's own categories |
+| `txnDate` | integer | Epoch millis |
+| `payeeName` / `note` | string | Optional |
+| `cadence` | enum | `DAILY`/`WEEKLY`/`MONTHLY`/`YEARLY`. Recurring drafts only |
+| `targetTransactionId` | string | The row a delete request is asking about |
+| `duplicateSuspected` | boolean | True when a near-identical live row already exists |
+| `missingFields` | string[] | What is still open |
+| `complete` | boolean | |
+
+### What chat will not do
+
+- **Change an existing transaction.** Declined with a message pointing at the
+  transactions list.
+- **Delete a recurring template.** Declined on purpose: removing one changes every
+  future month, and identifying the right template from language is too risky. Undo on
+  a chat-created template only **deactivates** it — use
+  [§41](#41-delete-recurring-template) to remove one properly.
+- **Split a bill, or read a receipt.** Not implemented.
+
+### When the model is down
+
+Every message answers `200` with `status: FAILED` and a "couldn't read that" reply.
+This is a deliberate degrade, not an error: **do not show a failure dialog**, and leave
+any draft already in progress alone — it is still live.
+
+---
+
+## 42. Send a chat message
+
+```
+POST /api/v1/chat
+```
+**Auth:** required (`Bearer <accessToken>`)
+
+> **This writes.** See [Chat — what the app must know first](#chat--what-the-app-must-know-first).
+
+### Request body
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `message` | string | yes | Max 500 chars, non-blank |
+| `sessionId` | string | no | Omit to start a conversation; pass it back to continue one |
+
+```json
+{ "message": "lunch at Pizza Hut, 48.86", "sessionId": null }
+```
+
+### Response `data`
+
+```json
+{
+  "messageId": "20953...", "sessionId": "6edb5742-...",
+  "status": "CREATED", "reply": "Added to your ledger.",
+  "draft": { "intent": "CREATE_TRANSACTION", "txnType": "EXPENSE",
+             "amountMinor": 4886, "currency": "USD",
+             "categoryId": "c-food", "categoryName": "Food & Drinks",
+             "txnDate": 1772409600000, "payeeName": "Pizza Hut", "note": "lunch",
+             "cadence": null, "duplicateSuspected": false,
+             "missingFields": [], "complete": true },
+  "prompt": null,
+  "results": [ { "messageId": "20953...", "status": "CREATED",
+                 "reply": "Added to your ledger.",
+                 "transactionId": "t1", "recurringId": null,
+                 "draft": { }, "prompt": null } ],
+  "insight": null
+}
+```
+
+When something is missing, `prompt` carries the one open field:
+
+```json
+{ "status": "NEEDS_CLARIFICATION",
+  "reply": "Sure, I can add that expense. How much did you spend?",
+  "prompt": { "field": "amount",
+              "question": "Sure, I can add that expense. How much did you spend?" } }
+```
+
+`prompt.field` is one of `amount`, `type`, `category`, `cadence`. There are no
+tappable options — the answer is sent as a normal message on the same `sessionId`,
+which is also the only path a voice client could take.
+
+### Errors
+
+- `400 E1015` — blank message, or longer than 500 chars.
+- `429 E1052` — chat is rate limited per user (10/min, 100/hour, 500/day) and **fails
+  closed**, so this also happens when the rate-limiter backend is down. Honour
+  `Retry-After`. Answering a question has its own tighter budget on top (5/min).
+- `401` — missing/invalid access token.
+
+---
+
+## 43. Edit a chat draft
+
+```
+POST /api/v1/chat/draft
+```
+**Auth:** required (`Bearer <accessToken>`)
+
+> **Does not write**, even when the edit completes the draft — the preview ends at its
+> own Create button ([§44](#44-confirm-a-chat-draft)). Costs no model call and is not
+> rate limited.
+
+### Request body
+
+`messageId` is required; every other field is optional and only what you send is
+applied.
+
+| Field | Type | Notes |
+|---|---|---|
+| `messageId` | string | The assistant turn holding the draft |
+| `txnType` | enum | `EXPENSE` / `INCOME` |
+| `amountMinor` | integer | Positive, minor units |
+| `categoryId` | string | Must be the caller's own, of the kind matching `txnType` |
+| `txnDate` | integer | Epoch millis |
+| `cadence` | enum | Recurring drafts only |
+| `note` / `payeeName` | string | |
+
+### Response `data`
+
+The same shape as [§42](#42-send-a-chat-message), with the draft refined and the next
+question if one remains.
+
+### Errors
+
+- `400 E1013` — the draft is already written, closed, or the turn has no draft.
+- `400 E1013` — the category's kind does not match the direction.
+- `404 E1010` — no such message owned by the caller, or the category does not exist.
+
+---
+
+## 44. Confirm a chat draft
+
+```
+POST /api/v1/chat/confirm
+```
+**Auth:** required (`Bearer <accessToken>`)
+
+> **Not the ordinary path.** A complete, confident message is already written by the
+> time [§42](#42-send-a-chat-message) returns. This is for a `PARSED` draft — one the
+> model doubted, or one flagged `duplicateSuspected` — and for confirming a
+> `DELETE_TRANSACTION` proposal.
+
+### Request body
+
+```json
+{ "messageId": "20953..." }
+```
+
+### Response `data`
+
+The same shape as [§42](#42-send-a-chat-message). `results[0].transactionId` /
+`recurringId` name what was written; for a delete proposal the status becomes
+`REMOVED`.
+
+### Errors
+
+- `400 E1013` — already written, superseded, not a confirmable draft, or incomplete.
+- `404 E1010` — no such message owned by the caller.
+
+---
+
+## 45. Reject a chat draft
+
+```
+POST /api/v1/chat/reject
+```
+**Auth:** required (`Bearer <accessToken>`)
+
+> Discards a draft that was **never written**. A draft that has been written is taken
+> back with [§46](#46-undo-a-chat-write) instead.
+
+### Request body
+
+```json
+{ "messageId": "20953..." }
+```
+
+### Response `data`
+
+```json
+null
+```
+
+### Errors
+
+- `400 E1013` — the draft is already in the ledger, or no longer open to discard.
+- `404 E1010` — no such message owned by the caller.
+
+---
+
+## 46. Undo a chat write
+
+```
+POST /api/v1/chat/undo
+```
+**Auth:** required (`Bearer <accessToken>`)
+
+> **The way back that makes writing without asking safe.** Nothing here is destructive:
+> a transaction is retired to `DELETED` ([§20](#20-delete-transaction)), a recurring
+> template is **deactivated** rather than removed, and a removal is **restored**. Every
+> step is idempotent, so a row the user already deleted by hand cannot leave undo half
+> applied.
+
+### Request body
+
+```json
+{ "messageId": "20953..." }
+```
+
+### Response `data`
+
+```json
+null
+```
+
+The turn's status becomes `UNDONE`. A template that was already due posted its first
+occurrence on creation — undo deals with both: the occurrence is retired and the
+template stopped.
+
+### Errors
+
+- `400 E1013` — the turn never wrote anything, or was already undone.
+- `404 E1010` — no such message owned by the caller.
+
+---
+
+## 47. Conversation history
+
+```
+GET /api/v1/chat?sessionId={sessionId}
+```
+**Auth:** required (`Bearer <accessToken>`)
+
+Replays one conversation, oldest turn first. Only the still-open turn carries its
+`prompt` — every earlier question has been answered.
+
+### Response `data`
+
+```json
+[ { "id": "20953...", "role": "USER", "content": "lunch at Pizza Hut, 48.86",
+    "status": "RECEIVED", "createdTime": 1772409600000,
+    "transactionId": null, "recurringId": null, "draft": null, "prompt": null },
+  { "id": "20954...", "role": "ASSISTANT", "content": "Added to your ledger.",
+    "status": "CREATED", "createdTime": 1772409601000,
+    "transactionId": "t1", "recurringId": null, "draft": { }, "prompt": null } ]
+```
+
+> **`content` is rendered in the reader's language now, not the language it was
+> written in.** Assistant turns are stored as message keys, so a user who switches
+> language sees their own history in the new one. The user's own messages, and prose
+> the model wrote when answering a question, pass through unchanged.
+
+> **A turn keeps its `transactionId` even after that row is deleted elsewhere.** The
+> transcript is a record of what happened, not a live view of the ledger — so do not
+> assume a `CREATED` turn in replayed history still has a live row behind it. Offer
+> **Undo** on the turn the user just made, not on replayed history.
+
+### Errors
+
+- `401` — missing/invalid access token. An unknown `sessionId` returns an empty list.
+
+---
+
 ## Suggested client flow
 
 ```
@@ -2184,6 +2525,12 @@ Managing categories (§§29–34) is settings-time work like accounts: the seede
 covers first run, and [List categories](#30-list-categories) is what every category
 picker reads. Refresh that list after a create, rename or delete, since all three
 change what the picker may offer.
+
+The chat screen (§§42–47) is a **third way into the same ledger**, not a separate
+feature: [Send a chat message](#42-send-a-chat-message) can create a transaction or a
+recurring template in one call, so refresh the feed, the monthly summary and any budget
+on screen after every send — the same refresh you do after a manual write. Render one
+bubble per entry in `results[]`, and an **Undo** on each `CREATED` one.
 
 The entry screen writes to one of two endpoints depending on its Billing Cycle field:
 *One-time* goes to [Create transaction](#16-create-transaction), anything else to

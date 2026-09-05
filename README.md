@@ -20,9 +20,7 @@ by phase per the roadmap. What's in place today:
   password reset.
 
 The `app_user` / `user_roles` schema and auth code are the only domain currently
-present. A portable, framework-free walkthrough of how the auth flow is wired
-lives in [`svcs/AUTH_FLOW_PORTABLE.md`](svcs/AUTH_FLOW_PORTABLE.md) — a reference
-guide for re-implementing or extending it.
+present.
 
 ---
 
@@ -334,8 +332,9 @@ The `dev` and `prd` profiles read configuration from env vars. At minimum:
 | `APP_BASE_URL` | Public base URL, used in verification / reset-password links |
 | `MAIL_HOST` / `MAIL_PORT` / `MAIL_USERNAME` / `MAIL_PASSWORD` / `MAIL_FROM` | SMTP for transactional email |
 | `GOOGLE_APP_ID` / `GOOGLE_APP_SECRET` / `GOOGLE_REDIRECT_URL` / `GOOGLE_IOS_APP_ID` / `GOOGLE_ANDROID_APP_ID` | Google OAuth |
-| `APPLE_CLIENT_ID` / `APPLE_CLIENT_ID_WEB` / `APPLE_TEAM_ID` / `APPLE_KEY_ID` / `APPLE_PRIVATE_KEY` | Sign in with Apple |
+| `APPLE_CLIENT_ID` / `APPLE_CLIENT_ID_WEB` | Sign in with Apple — the mobile and web client ids. No team id, key id, or private key: the identity token is verified against Apple's public keys, and nothing exchanges an authorization code. |
 | `FACEBOOK_APP_ID` / `FACEBOOK_APP_SECRET` / `FACEBOOK_REDIRECT_URL` / `FACEBOOK_GRAPH_VERSION` | Facebook OAuth |
+| `OAUTH_CONNECT_TIMEOUT_MS` / `OAUTH_TIMEOUT_MS` | Outbound timeouts for all three sign-in providers (default 3000 / 8000) |
 
 See `svcs/core/src/main/resources/application.properties` (shared base) and `svcs/core/src/main/profile/<env>/resources/application-<env>.properties` (per-environment overrides) for the full list and defaults.
 
@@ -349,7 +348,6 @@ Schema is managed by Flyway. Migrations live in `svcs/core/src/main/resources/db
 
 ```
 svcs/
-├── AUTH_FLOW_PORTABLE.md   # portable reference guide for the auth flow
 ├── common/          # shared domain (BaseEntity, Role), DTOs, exceptions, utils (com.zenzmoney.common)
 └── core/            # Spring Boot app — web, security, persistence (com.zenzmoney.core)
     ├── src/main/java/com/zenzmoney/core/CoreApplication.java       # main class

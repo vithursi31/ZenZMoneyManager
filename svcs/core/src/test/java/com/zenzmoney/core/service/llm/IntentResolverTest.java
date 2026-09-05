@@ -3,6 +3,7 @@ package com.zenzmoney.core.service.llm;
 import com.zenzmoney.common.domain.CategoryStatus;
 import com.zenzmoney.common.domain.CategoryKind;
 import com.zenzmoney.common.domain.IntentType;
+import com.zenzmoney.common.domain.RecurringCadence;
 import com.zenzmoney.common.domain.TransactionType;
 import com.zenzmoney.core.entity.Category;
 import com.zenzmoney.core.entity.ParsedIntent;
@@ -83,7 +84,6 @@ class IntentResolverTest {
     @Test
     void amount_rejectsAnythingThatIsNotAPlainNumber() {
         assertNull(IntentResolver.toMinorUnits("$5", "USD"), "a currency symbol is the model ignoring the prompt");
-        assertNull(IntentResolver.toMinorUnits("1,000", "USD"));
         assertNull(IntentResolver.toMinorUnits("five", "USD"));
         assertNull(IntentResolver.toMinorUnits("", "USD"));
         assertNull(IntentResolver.toMinorUnits(null, "USD"));
@@ -380,12 +380,15 @@ class IntentResolverTest {
      * safe outcome: the amount goes missing and the user is asked, rather than 15,50
      * being read as 1550 or 15. (The model normally converts it to "15.50" itself —
      * this covers the run where it echoes the user's form instead.)
+     *
+     * <p>A <em>grouped</em> comma is a different case and is now accepted — see
+     * {@link #readsAThousandsSeparatedAmount}. What stays refused is everything the
+     * three-digit grouping cannot vouch for.
      */
     @Test
     void amount_rejectsADecimalCommaRatherThanGuessingWhatItMeant() {
         assertNull(IntentResolver.toMinorUnits("15,50", "EUR"));
         assertNull(IntentResolver.toMinorUnits("1 500", "EUR"), "a space thousands separator is not a number");
-        assertNull(IntentResolver.toMinorUnits("1,500", "USD"), "a comma thousands separator is not a number");
     }
 
     /**
@@ -750,6 +753,205 @@ class IntentResolverTest {
 
         assertEquals(List.of("type"), draft.getMissingFields(),
                 "which half of the category list to offer depends on the answer");
+    }
+
+    // --- an amount the message never contained ---
+
+    /**
+     * Observed live, and the reason this guard exists: qwen2.5:1.5b read "me and my
+     * friend went to the movie yesterday" as {@code amount: "20"} and — with no
+     * confidence gate left to stop it — that invented figure was written to the ledger.
+     */
+    @Test
+    void refusesAnAmountWhenTheMessageCarriesNoDigit() {
+        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE))
+                .thenReturn(List.of(category("c-fun", "Entertainment", CategoryKind.EXPENSE)));
+        LlmExtraction invented = extraction(IntentType.CREATE_TRANSACTION, TransactionType.EXPENSE,
+                "20", "Entertainment", "yesterday", null, "movie", 0.95);
+
+        ParsedIntent draft = resolver.resolve(user("u1", "USD", "UTC"),
+                "me and my friend went to the movie yesterday", invented);
+
+        assertNull(draft.getAmountMinor(), "the message names no number, so neither may the draft");
+        assertTrue(draft.getMissingFields().contains("amount"),
+                "which turns a fabricated row into the question it should have been");
+    }
+
+    @Test
+    void stillReadsAnAmountTheMessageDoesCarry() {
+        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE))
+                .thenReturn(List.of(category("c-fun", "Entertainment", CategoryKind.EXPENSE)));
+        LlmExtraction read = extraction(IntentType.CREATE_TRANSACTION, TransactionType.EXPENSE,
+                "20", "Entertainment", "yesterday", null, "movie", 0.95);
+
+        ParsedIntent draft = resolver.resolve(user("u1", "USD", "UTC"),
+                "we went to the movie yesterday, 20 for tickets", read);
+
+        assertEquals(2000L, draft.getAmountMinor());
+    }
+
+    /** An answer carries the amount forward even when this turn names no number. */
+    @Test
+    void keepsACarriedAmountFromAnEarlierTurn() {
+        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE))
+                .thenReturn(List.of(category("c-fun", "Entertainment", CategoryKind.EXPENSE)));
+        ParsedIntent pending = pending(TransactionType.EXPENSE, 2000L, "c-fun", 0.9);
+        LlmExtraction read = extraction(IntentType.CREATE_TRANSACTION, TransactionType.EXPENSE,
+                null, "Entertainment", "yesterday", null, "movie", 0.9);
+
+        ParsedIntent draft = resolver.resolve(user("u1", "USD", "UTC"), "it was entertainment", read, pending);
+
+        assertEquals(2000L, draft.getAmountMinor(), "the earlier turn established it; this one need not repeat it");
+    }
+
+    // --- amount shapes people actually type ---
+
+    @Test
+    void readsAThousandsSeparatedAmount() {
+        assertEquals(250_000L, IntentResolver.toMinorUnits("2,500", "USD"),
+                "the prompt forbids the comma, but a 1.5B model writes it anyway");
+        assertEquals(123_456L, IntentResolver.toMinorUnits("1,234.56", "USD"));
+    }
+
+    /**
+     * The one that matters most. In French and Spanish "2,50" is two-fifty; stripping
+     * that comma would record 250 — a hundredfold error on someone's money. Refusing it
+     * turns a silent wrong row into a question.
+     */
+    @Test
+    void refusesACommaThatIsNotAThousandsSeparator() {
+        assertNull(IntentResolver.toMinorUnits("2,50", "USD"));
+        assertNull(IntentResolver.toMinorUnits("2,5", "USD"));
+        assertNull(IntentResolver.toMinorUnits("1,23,456", "USD"),
+                "not the grouping this rule recognises — better asked than guessed");
+    }
+
+    @Test
+    void expandsMagnitudeShorthand() {
+        assertEquals(25_000_000L, IntentResolver.toMinorUnits("250k", "USD"));
+        assertEquals(250_000L, IntentResolver.toMinorUnits("2.5k", "USD"));
+        assertEquals(10_000_000L, IntentResolver.toMinorUnits("1 lakh", "USD"));
+        assertEquals(1_000_000_000L, IntentResolver.toMinorUnits("1crore", "USD"));
+        assertEquals(150_000_000L, IntentResolver.toMinorUnits("1.5m", "USD"));
+    }
+
+    /** Shorthand is text arithmetic, never a float — 2.5k has to be exactly 2500. */
+    @Test
+    void expandsShorthandWithoutLosingPrecision() {
+        assertEquals("2500", IntentResolver.normalizeAmount("2.5k"));
+        assertEquals("1250", IntentResolver.normalizeAmount("1.25k"));
+        assertEquals("1234.5", IntentResolver.normalizeAmount("1.2345k"));
+    }
+
+    @Test
+    void stillRefusesSomethingThatIsNotAnAmount() {
+        assertNull(IntentResolver.toMinorUnits("a lot", "USD"));
+        assertNull(IntentResolver.toMinorUnits("", "USD"));
+        assertNull(IntentResolver.toMinorUnits("k", "USD"), "a bare suffix names no number");
+        assertNull(IntentResolver.toMinorUnits("$5", "USD"), "a symbol is still the model ignoring the prompt");
+        assertNull(IntentResolver.toMinorUnits("1 500", "USD"), "a space separator is still ambiguous");
+    }
+
+    // --- recurring: a rule, not a record ---
+
+    @Test
+    void readsARepeatPhraseAsATemplateEvenWhenTheModelSaidTransaction() {
+        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE))
+                .thenReturn(List.of(category("c-subs", "Subscriptions", CategoryKind.EXPENSE)));
+        LlmExtraction read = extraction(IntentType.CREATE_TRANSACTION, TransactionType.EXPENSE,
+                "15", "Subscriptions", "today", "Netflix", "Netflix", 0.94);
+
+        ParsedIntent draft = resolver.resolve(user("u1", "USD", "UTC"), "Netflix 15 every month", read);
+
+        assertEquals(IntentType.CREATE_RECURRING, draft.getIntent(),
+                "a repeat captured as a one-off is the error that compounds every month");
+        assertEquals(RecurringCadence.MONTHLY, draft.getCadence());
+        assertTrue(draft.isComplete());
+    }
+
+    @Test
+    void neverDemotesATemplateTheModelRead() {
+        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE))
+                .thenReturn(List.of(category("c-subs", "Subscriptions", CategoryKind.EXPENSE)));
+        LlmExtraction read = extraction(IntentType.CREATE_RECURRING, TransactionType.EXPENSE,
+                "15", "Subscriptions", "today", "Spotify", "Spotify", 0.9);
+        read.setCadence(RecurringCadence.MONTHLY);
+
+        ParsedIntent draft = resolver.resolve(user("u1", "USD", "UTC"), "my Spotify subscription is 15", read);
+
+        assertEquals(IntentType.CREATE_RECURRING, draft.getIntent(),
+                "the model saw the whole sentence; the backend only ever promotes");
+        assertEquals(RecurringCadence.MONTHLY, draft.getCadence());
+    }
+
+    @Test
+    void leavesAnAdjectiveAloneRatherThanBillingTheUserForever() {
+        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE))
+                .thenReturn(List.of(category("c-transport", "Transport", CategoryKind.EXPENSE)));
+        LlmExtraction read = extraction(IntentType.CREATE_TRANSACTION, TransactionType.EXPENSE,
+                "50", "Transport", "today", null, "monthly bus pass", 0.9);
+
+        ParsedIntent draft = resolver.resolve(user("u1", "USD", "UTC"), "I paid 50 for a monthly bus pass", read);
+
+        assertEquals(IntentType.CREATE_TRANSACTION, draft.getIntent(),
+                "\"monthly\" here describes the pass, not the payment — reading it in context is the model's job");
+    }
+
+    @Test
+    void resolveCadence_prefersAPhraseTheUserTypedOverTheModelsField() {
+        assertEquals(RecurringCadence.WEEKLY,
+                IntentResolver.resolveCadence(RecurringCadence.MONTHLY, "the gym, every week"),
+                "the same precedence as the direction, and for the same reason");
+    }
+
+    @Test
+    void resolveCadence_fallsBackToTheModelWhenTheMessageNamesNoPeriod() {
+        assertEquals(RecurringCadence.YEARLY,
+                IntentResolver.resolveCadence(RecurringCadence.YEARLY, "my insurance renewal"));
+    }
+
+    @Test
+    void resolveCadence_answersNullWhenNeitherSourceNamesOne() {
+        assertNull(IntentResolver.resolveCadence(null, "my Spotify subscription"),
+                "monthly would be a rule the user never stated");
+    }
+
+    @Test
+    void resolveCadence_mapsEveryPeriodItAdvertises() {
+        assertEquals(RecurringCadence.DAILY, IntentResolver.resolveCadence(null, "coffee every day"));
+        assertEquals(RecurringCadence.WEEKLY, IntentResolver.resolveCadence(null, "cleaner, weekly"));
+        assertEquals(RecurringCadence.MONTHLY, IntentResolver.resolveCadence(null, "rent every month"));
+        assertEquals(RecurringCadence.YEARLY, IntentResolver.resolveCadence(null, "domain renewal annually"));
+    }
+
+    @Test
+    void looksRecurring_ignoresABareAdverb() {
+        assertTrue(IntentResolver.looksRecurring("Netflix 15 every month"));
+        assertFalse(IntentResolver.looksRecurring("I bought a monthly bus pass"),
+                "only the every|each forms are unambiguous enough to promote on");
+    }
+
+    @Test
+    void revalidate_asksHowOftenARecurringDraftRepeats() {
+        ParsedIntent draft = pending(TransactionType.EXPENSE, 1500L, "c-subs", 0.9);
+        draft.setIntent(IntentType.CREATE_RECURRING);
+
+        resolver.revalidate(draft);
+
+        assertEquals(List.of("cadence"), draft.getMissingFields());
+
+        draft.setCadence(RecurringCadence.MONTHLY);
+        resolver.revalidate(draft);
+        assertTrue(draft.isComplete());
+    }
+
+    @Test
+    void revalidate_doesNotAskACadenceOfAOneOff() {
+        ParsedIntent draft = pending(TransactionType.EXPENSE, 1500L, "c-food", 0.9);
+
+        resolver.revalidate(draft);
+
+        assertTrue(draft.isComplete(), "a transaction has no frequency to ask about");
     }
 
     // --- fixtures ---

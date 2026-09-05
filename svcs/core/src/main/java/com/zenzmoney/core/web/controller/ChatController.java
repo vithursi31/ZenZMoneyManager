@@ -1,12 +1,12 @@
 package com.zenzmoney.core.web.controller;
 
 import com.zenzmoney.common.dto.ApiResponse;
+import com.zenzmoney.core.i18n.ChatText;
 import com.zenzmoney.core.service.ChatService;
 import com.zenzmoney.core.web.dto.ChatActionRequest;
 import com.zenzmoney.core.web.dto.ChatMessageResponse;
 import com.zenzmoney.core.web.dto.ChatReplyResponse;
 import com.zenzmoney.core.web.dto.ChatRequest;
-import com.zenzmoney.core.web.dto.TransactionResponse;
 import com.zenzmoney.core.web.dto.UpdateChatDraftRequest;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.validation.Valid;
@@ -19,13 +19,19 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
-import java.util.Map;
+import java.util.function.UnaryOperator;
 
 /**
- * Chat-based transaction entry (F-1.11). Two steps on purpose: posting a message
- * only ever returns a draft, and a separate confirm writes it to the ledger. A
- * reply that still needs something comes back with the question and the answers to
- * offer for it; {@code /draft} takes the answer, whether it was tapped or edited.
+ * Chat-based transaction entry (F-1.11).
+ *
+ * <p>Posting a message records everything in it the model read completely and
+ * confidently, and asks about at most one thing it did not. Nothing needs approving
+ * first; {@code /undo} is the way back from a write, and {@code /confirm} exists only
+ * for the drafts the model was too unsure to write on its own.
+ *
+ * <p><b>This is where chat copy becomes text.</b> The service deals in message keys;
+ * {@link ChatText} renders them in the caller's language here, which keeps a
+ * {@code Locale} out of the service exactly as the exception handler does (§0.5).
  */
 @RestController
 @RequestMapping("/api/v1/chat")
@@ -33,43 +39,60 @@ import java.util.Map;
 public class ChatController {
 
     private final ChatService chatService;
+    private final ChatText chatText;
 
-    public ChatController(ChatService chatService) {
+    public ChatController(ChatService chatService, ChatText chatText) {
         this.chatService = chatService;
+        this.chatText = chatText;
     }
 
-    /** Reads a message into a draft. Never writes to the ledger. */
+    /** Reads a message, records what is complete, and asks about what is not. */
     @PostMapping
     public ResponseEntity<ApiResponse<ChatReplyResponse>> send(@Valid @RequestBody ChatRequest request) {
-        return ResponseEntity.ok(ApiResponse.success(chatService.handle(request)));
+        return ResponseEntity.ok(ApiResponse.success(localized(chatService.handle(request))));
     }
 
     /**
-     * Answers a suggestion, or edits the draft in the preview. Still no ledger write:
-     * it returns the same draft, refined, and the next question if one remains.
+     * Edits the draft in the preview. Deliberately does not write, even when the edit
+     * completes the draft — the preview ends at its own Create button.
      */
     @PostMapping("/draft")
     public ResponseEntity<ApiResponse<ChatReplyResponse>> amendDraft(
             @Valid @RequestBody UpdateChatDraftRequest request) {
-        return ResponseEntity.ok(ApiResponse.success(chatService.amendDraft(request)));
+        return ResponseEntity.ok(ApiResponse.success(localized(chatService.amendDraft(request))));
     }
 
-    /** Commits a draft — the only path from chat to the ledger. */
+    /** Writes a draft the model was not confident enough to write on its own. */
     @PostMapping("/confirm")
-    public ResponseEntity<ApiResponse<TransactionResponse>> confirm(@Valid @RequestBody ChatActionRequest request) {
-        return ResponseEntity.ok(ApiResponse.success(chatService.confirm(request.getMessageId())));
+    public ResponseEntity<ApiResponse<ChatReplyResponse>> confirm(@Valid @RequestBody ChatActionRequest request) {
+        return ResponseEntity.ok(ApiResponse.success(localized(chatService.confirm(request.getMessageId()))));
     }
 
+    /** Deletes what a chat turn wrote — the way back that makes writing unasked safe. */
+    @PostMapping("/undo")
+    public ResponseEntity<ApiResponse<Void>> undo(@Valid @RequestBody ChatActionRequest request) {
+        chatService.undo(request.getMessageId());
+        return ResponseEntity.ok(ApiResponse.success(null));
+    }
+
+    /** Discards a draft that was never written. */
     @PostMapping("/reject")
-    public ResponseEntity<ApiResponse<Map<String, String>>> reject(@Valid @RequestBody ChatActionRequest request) {
+    public ResponseEntity<ApiResponse<Void>> reject(@Valid @RequestBody ChatActionRequest request) {
         chatService.reject(request.getMessageId());
-        return ResponseEntity.ok(ApiResponse.success(Map.of("message", "Draft discarded")));
+        return ResponseEntity.ok(ApiResponse.success(null));
     }
 
     /** Replays one conversation, oldest turn first. */
     @GetMapping
     public ResponseEntity<ApiResponse<List<ChatMessageResponse>>> history(
             @RequestParam(name = "sessionId", required = false) String sessionId) {
-        return ResponseEntity.ok(ApiResponse.success(chatService.history(sessionId)));
+        UnaryOperator<String> text = chatText.forCaller();
+        return ResponseEntity.ok(ApiResponse.success(chatService.history(sessionId).stream()
+                .map(turn -> turn.localized(text))
+                .toList()));
+    }
+
+    private ChatReplyResponse localized(ChatReplyResponse reply) {
+        return reply.localized(chatText.forCaller());
     }
 }

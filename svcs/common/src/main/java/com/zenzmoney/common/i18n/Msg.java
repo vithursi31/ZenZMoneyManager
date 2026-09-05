@@ -135,4 +135,39 @@ public interface Msg {
     MessageKey CHAT_DRAFT_CLOSED_DISCARD = of("error.chat.draft-closed-discard");
     MessageKey CHAT_RATE_LIMITED       = of("error.chat.rate-limited");
     MessageKey CHAT_INSIGHT_RATE_LIMITED = of("error.chat.insight-rate-limited");
+    MessageKey CHAT_NOTHING_TO_UNDO    = of("error.chat.nothing-to-undo");
+    MessageKey CHAT_ALREADY_UNDONE     = of("error.chat.already-undone");
+
+    // ── chat replies ────────────────────────────────────────────────────────────
+    // Not errors: what the assistant says back. Stored as the key in
+    // chat_message.content and rendered at the boundary like every other message,
+    // so replaying a conversation answers in whatever language the reader now uses.
+    MessageKey CHAT_ASK_AMOUNT         = of("chat.ask.amount");
+    MessageKey CHAT_ASK_AMOUNT_EXPENSE = of("chat.ask.amount-expense");
+    MessageKey CHAT_ASK_AMOUNT_INCOME  = of("chat.ask.amount-income");
+    MessageKey CHAT_ASK_TYPE           = of("chat.ask.type");
+    MessageKey CHAT_ASK_CATEGORY_EXPENSE = of("chat.ask.category-expense");
+    MessageKey CHAT_ASK_CATEGORY_INCOME  = of("chat.ask.category-income");
+    MessageKey CHAT_ASK_CADENCE        = of("chat.ask.cadence");
+    MessageKey CHAT_ADDED              = of("chat.added");
+    MessageKey CHAT_ADDED_RECURRING    = of("chat.added-recurring");
+    MessageKey CHAT_DRAFT_READY        = of("chat.draft-ready");
+    MessageKey CHAT_UNREADABLE         = of("chat.unreadable");
+    MessageKey CHAT_UPDATE_UNSUPPORTED = of("chat.update-unsupported");
+    MessageKey CHAT_NOTHING_TO_RECORD  = of("chat.nothing-to-record");
+    MessageKey CHAT_CURRENCY_UNSET     = of("chat.currency-unset");
+    MessageKey CHAT_LOW_CONFIDENCE     = of("chat.low-confidence");
+    MessageKey CHAT_REST_UNREAD        = of("chat.rest-unread");
+    MessageKey CHAT_NO_SPENDING_YET    = of("chat.no-spending-yet");
+    MessageKey CHAT_ANSWER_FAILED      = of("chat.answer-failed");
+    MessageKey CHAT_UNDONE             = of("chat.undone");
+    MessageKey CHAT_UNDONE_RECURRING   = of("chat.undone-recurring");
+    MessageKey CHAT_RECURRING_DELETE_UNSUPPORTED = of("chat.recurring-delete-unsupported");
+    MessageKey CHAT_DELETE_CONFIRM     = of("chat.delete.confirm");
+    MessageKey CHAT_DELETE_NOT_FOUND   = of("chat.delete.not-found");
+    MessageKey CHAT_DELETE_MANY        = of("chat.delete.many");
+    MessageKey CHAT_DELETE_DONE        = of("chat.delete.done");
+    MessageKey CHAT_DELETE_ALREADY_GONE = of("chat.delete.already-gone");
+    MessageKey CHAT_RESTORED           = of("chat.restored");
+    MessageKey CHAT_DUPLICATE_SUSPECTED = of("chat.duplicate-suspected");
 }

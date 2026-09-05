@@ -3,6 +3,7 @@ package com.zenzmoney.core.service.llm;
 import com.zenzmoney.common.domain.CategoryKind;
 import com.zenzmoney.common.domain.CategoryStatus;
 import com.zenzmoney.common.domain.IntentType;
+import com.zenzmoney.common.domain.RecurringCadence;
 import com.zenzmoney.common.domain.TimeUtils;
 import com.zenzmoney.common.domain.TransactionType;
 import com.zenzmoney.core.entity.Category;
@@ -19,16 +20,19 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Currency;
+import java.util.EnumSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
  * Turns the model's reading of a message into a draft the ledger could accept
- * (chat entry plan §5.4). Everything here is deterministic: the same extraction
+ * (F-1.11). Everything here is deterministic: the same extraction
  * plus the same user state always produces the same draft.
  *
  * <p>That determinism is the point of the split. The model is good at reading
@@ -45,6 +49,20 @@ public class IntentResolver {
     private static final Pattern AMOUNT = Pattern.compile("^\\d{1,15}(\\.\\d{1,6})?$");
 
     private static final Pattern DAYS_AGO = Pattern.compile("(\\d{1,3})\\s+days?\\s+ago");
+
+    /**
+     * Commas that can only be thousands separators: groups of exactly three digits.
+     * "2,500" matches and "2,50" does not, which is what keeps a French decimal comma
+     * from being read as a hundredfold larger number.
+     */
+    private static final Pattern THOUSANDS_GROUPED =
+            Pattern.compile("^\\d{1,3}(,\\d{3})+(\\.\\d+)?$");
+
+    /**
+     * Magnitude shorthand people actually type, longest first so "cr" cannot shadow
+     * "crore". Lakh and crore are here because the app's users write them.
+     */
+    private static final Map<String, Integer> AMOUNT_SUFFIXES = amountSuffixes();
 
     /** A whole message that is only an amount, with or without a symbol: "20", "$20", "rs 1500.50". */
     private static final Pattern BARE_AMOUNT =
@@ -135,6 +153,38 @@ public class IntentResolver {
             // es
             "recibí", "recibi", "gané", "gane", "sueldo", "salario", "ingreso", "reembolso");
 
+    /**
+     * The two intents that produce a draft. Everything else is declined, and
+     * {@link #revalidate} marks it incomplete so nothing can write it.
+     */
+    private static final Set<IntentType> CAPTURE =
+            EnumSet.of(IntentType.CREATE_TRANSACTION, IntentType.CREATE_RECURRING);
+
+    /**
+     * Repeat phrasing to cadence, used once something has already decided the draft
+     * repeats. Insertion-ordered so the two-word forms are tested before the bare
+     * adverbs they contain.
+     */
+    private static final Map<String, RecurringCadence> CADENCE_WORDS = cadenceWords();
+
+    /**
+     * The phrases that on their own make a message a rule rather than a record.
+     *
+     * <p><b>Deliberately narrower than {@link #CADENCE_WORDS}.</b> Only the
+     * {@code every|each <period>} forms are here, because a bare adverb is just as
+     * often an adjective on a noun — "a monthly bus pass" is one purchase, and
+     * promoting it to a template would bill the user every month forever. Reading
+     * "monthly" in context is the model's job (prompt Golden Rule #7); this list is
+     * the safety net for the wordings it demonstrably misses, and a repeat captured
+     * as a one-off is the error that compounds.
+     */
+    private static final List<String> RECURRENCE_PHRASES = List.of(
+            "every day", "each day", "every week", "each week", "every month",
+            "each month", "every year", "each year",
+            // fr / es — the same guard is only useful in the language the user typed
+            "chaque jour", "chaque semaine", "chaque mois", "chaque année", "chaque annee",
+            "cada día", "cada dia", "cada semana", "cada mes", "cada año", "cada ano");
+
     private final CategoryRepository categoryRepository;
 
     public IntentResolver(CategoryRepository categoryRepository) {
@@ -175,6 +225,15 @@ public class IntentResolver {
      *                capture.
      */
     public ParsedIntent resolve(User user, String message, LlmExtraction extraction, ParsedIntent pending) {
+        return resolve(user, message, extraction, pending, false);
+    }
+
+    /**
+     * @param sharedMessage true when this reading is one of several the same message
+     *                      produced — see {@link #matchCategory}.
+     */
+    public ParsedIntent resolve(User user, String message, LlmExtraction extraction,
+                                ParsedIntent pending, boolean sharedMessage) {
         ParsedIntent carried = continuationOf(pending);
         ParsedIntent draft = new ParsedIntent();
         draft.setIntent(resolveIntent(extraction, message, carried));
@@ -191,10 +250,15 @@ public class IntentResolver {
                 ? extraction.getConfidence()
                 : Math.max(extraction.getConfidence(), carried.getConfidence()));
 
-        if (draft.getIntent() != IntentType.CREATE_TRANSACTION) {
+        if (!CAPTURE.contains(draft.getIntent())) {
             // Not a capture. revalidate marks it incomplete so nothing can confirm it.
             revalidate(draft);
             return draft;
+        }
+
+        if (draft.getIntent() == IntentType.CREATE_RECURRING) {
+            draft.setCadence(firstNonNull(resolveCadence(extraction.getCadence(), message),
+                    carried == null ? null : carried.getCadence()));
         }
 
         // The account is provisioned on confirm (§1.4), so the draft records only the
@@ -219,7 +283,7 @@ public class IntentResolver {
 
         if (type != null) {
             Category category = firstNonNull(
-                    matchCategory(categories, type, draft.getCategoryGuess(), message),
+                    matchCategory(categories, type, draft.getCategoryGuess(), message, sharedMessage),
                     carriedCategory(categories, type, carried));
             if (category != null) {
                 draft.setCategoryId(category.getId());
@@ -238,7 +302,7 @@ public class IntentResolver {
     public void revalidate(ParsedIntent draft) {
         List<String> missing = draft.getMissingFields();
         missing.clear();
-        if (draft.getIntent() != IntentType.CREATE_TRANSACTION) {
+        if (!CAPTURE.contains(draft.getIntent())) {
             missing.add("intent");
             return;
         }
@@ -255,13 +319,19 @@ public class IntentResolver {
         } else if (trimToNull(draft.getCategoryId()) == null) {
             missing.add("category");
         }
+        // Last, because it is the least blocking and only a template has it: a user
+        // who said "my Spotify subscription" named no frequency, and assuming monthly
+        // would write a rule they never stated.
+        if (draft.getIntent() == IntentType.CREATE_RECURRING && draft.getCadence() == null) {
+            missing.add("cadence");
+        }
     }
 
     // --- continuation ---
 
     /** The pending draft, but only when it is one this turn could actually be answering. */
     private static ParsedIntent continuationOf(ParsedIntent pending) {
-        return pending != null && pending.getIntent() == IntentType.CREATE_TRANSACTION ? pending : null;
+        return pending != null && CAPTURE.contains(pending.getIntent()) ? pending : null;
     }
 
     /**
@@ -277,16 +347,106 @@ public class IntentResolver {
     private static IntentType resolveIntent(LlmExtraction extraction, String message, ParsedIntent carried) {
         IntentType read = extraction.getIntent();
         if (read != IntentType.UNKNOWN) {
-            return read;
+            // Promote, never demote. A one-off read as a template is one wrong row the
+            // user sees straight away; a template read as a one-off is a rule that was
+            // never created, and its absence is invisible until months later.
+            return read == IntentType.CREATE_TRANSACTION && looksRecurring(message)
+                    ? IntentType.CREATE_RECURRING
+                    : read;
         }
         if (extraction.isFailed()) {
             // Nothing was read at all; the flow answers "try again" rather than guessing.
             return IntentType.UNKNOWN;
         }
-        if (carried != null || looksFinancial(message)) {
-            return IntentType.CREATE_TRANSACTION;
+        if (carried != null) {
+            // An answer inside an open capture keeps whatever that capture already is.
+            return carried.getIntent();
+        }
+        if (looksFinancial(message)) {
+            return looksRecurring(message)
+                    ? IntentType.CREATE_RECURRING
+                    : IntentType.CREATE_TRANSACTION;
         }
         return IntentType.UNKNOWN;
+    }
+
+    // --- cadence ---
+
+    /**
+     * True when the message itself states a repeat, using only the wordings that
+     * cannot be read as an adjective (see {@link #RECURRENCE_PHRASES}).
+     */
+    static boolean looksRecurring(String message) {
+        String text = normalize(message);
+        return !text.isEmpty() && RECURRENCE_PHRASES.stream().anyMatch(p -> containsWord(text, p));
+    }
+
+    /**
+     * How often it repeats, preferring a phrase the user typed over the model's
+     * {@code cadence} — the same precedence, and for the same reason, as
+     * {@link #resolveType}: a 1.5B model is less stable on an enum field than a regex
+     * is on words that are actually there.
+     *
+     * @return the cadence, or null when neither source names one — which becomes a
+     *         question rather than an assumed month.
+     */
+    static RecurringCadence resolveCadence(RecurringCadence modelCadence, String message) {
+        String text = normalize(message);
+        for (Map.Entry<String, RecurringCadence> entry : CADENCE_WORDS.entrySet()) {
+            if (containsWord(text, entry.getKey())) {
+                return entry.getValue();
+            }
+        }
+        return modelCadence;
+    }
+
+    private static Map<String, Integer> amountSuffixes() {
+        Map<String, Integer> suffixes = new LinkedHashMap<>();
+        suffixes.put("crore", 7);
+        suffixes.put("cr", 7);
+        suffixes.put("lakh", 5);
+        suffixes.put("lac", 5);
+        suffixes.put("million", 6);
+        suffixes.put("m", 6);
+        suffixes.put("k", 3);
+        return suffixes;
+    }
+
+    /** Insertion-ordered so "every month" is tested before "month". */
+    private static Map<String, RecurringCadence> cadenceWords() {
+        Map<String, RecurringCadence> words = new LinkedHashMap<>();
+        words.put("every day", RecurringCadence.DAILY);
+        words.put("each day", RecurringCadence.DAILY);
+        words.put("daily", RecurringCadence.DAILY);
+        words.put("every week", RecurringCadence.WEEKLY);
+        words.put("each week", RecurringCadence.WEEKLY);
+        words.put("weekly", RecurringCadence.WEEKLY);
+        words.put("every month", RecurringCadence.MONTHLY);
+        words.put("each month", RecurringCadence.MONTHLY);
+        words.put("per month", RecurringCadence.MONTHLY);
+        words.put("a month", RecurringCadence.MONTHLY);
+        words.put("monthly", RecurringCadence.MONTHLY);
+        words.put("every year", RecurringCadence.YEARLY);
+        words.put("each year", RecurringCadence.YEARLY);
+        words.put("per year", RecurringCadence.YEARLY);
+        words.put("a year", RecurringCadence.YEARLY);
+        words.put("yearly", RecurringCadence.YEARLY);
+        words.put("annually", RecurringCadence.YEARLY);
+        // fr / es, matching the reach of EXPENSE_WORDS
+        words.put("chaque jour", RecurringCadence.DAILY);
+        words.put("chaque semaine", RecurringCadence.WEEKLY);
+        words.put("chaque mois", RecurringCadence.MONTHLY);
+        words.put("mensuel", RecurringCadence.MONTHLY);
+        words.put("chaque année", RecurringCadence.YEARLY);
+        words.put("chaque annee", RecurringCadence.YEARLY);
+        words.put("cada día", RecurringCadence.DAILY);
+        words.put("cada dia", RecurringCadence.DAILY);
+        words.put("cada semana", RecurringCadence.WEEKLY);
+        words.put("cada mes", RecurringCadence.MONTHLY);
+        words.put("mensual", RecurringCadence.MONTHLY);
+        words.put("cada año", RecurringCadence.YEARLY);
+        words.put("cada ano", RecurringCadence.YEARLY);
+        return words;
     }
 
     /**
@@ -309,11 +469,28 @@ public class IntentResolver {
 
     // --- slot filling ---
 
+    /**
+     * The amount, but only when the message could actually have contained one.
+     *
+     * <p><b>An amount the message does not support is refused.</b> Golden Rule #4 tells
+     * the model never to invent a value, and it does anyway: "me and my friend went to
+     * the movie yesterday" came back with {@code amount: "20"} and, with nothing left to
+     * gate it, that fabricated figure went straight into someone's ledger. So the
+     * message has to carry a digit before a model-read amount is believed — the model
+     * reads language, and a number is data.
+     *
+     * <p>The cost is a spelled-out amount ("spent fifty on lunch") becoming a question
+     * instead of a capture. That is the right trade: an extra question is a second of
+     * the user's time, an invented amount is a wrong row they have to notice first.
+     */
     private static Long resolveAmount(String amountRaw, String message, String currency, ParsedIntent carried) {
         if (currency == null) {
             return null;
         }
-        Long amount = firstNonNull(toMinorUnits(amountRaw, currency), bareAmount(message, currency));
+        Long read = DIGITS.matcher(message == null ? "" : message).find()
+                ? toMinorUnits(amountRaw, currency)
+                : null;
+        Long amount = firstNonNull(read, bareAmount(message, currency));
         if (amount == null && carried != null) {
             amount = carried.getAmountMinor();
         }
@@ -422,8 +599,8 @@ public class IntentResolver {
         if (rawAmount == null) {
             return null;
         }
-        String value = rawAmount.trim();
-        if (!AMOUNT.matcher(value).matches()) {
+        String value = normalizeAmount(rawAmount);
+        if (value == null) {
             return null;
         }
         int digits = fractionDigits(currencyCode);
@@ -442,6 +619,74 @@ public class IntentResolver {
 
         long minor = Long.parseLong(whole) * pow10(digits) + (kept.isEmpty() ? 0L : Long.parseLong(kept));
         return roundUp ? minor + 1 : minor;
+    }
+
+    /**
+     * The amount as digits and at most one dot, or null when it is not an amount at all.
+     *
+     * <p><b>The prompt forbids separators and shorthand; this is the net under it.</b> A
+     * 1.5B model given "I spent 2,500 on groceries" writes {@code "2,500"} often enough
+     * to matter, and a rejected amount turns a message that plainly stated one into
+     * "how much did you spend?". People also type {@code 250k}, which no prompt rule
+     * will stop.
+     *
+     * <p><b>A comma is only stripped when it can only be a thousands separator</b> —
+     * groups of exactly three digits. This is the whole safety of the method: in French
+     * and Spanish {@code 2,50} means two-fifty, and stripping that comma would record
+     * 250 instead of 2.50, a hundredfold error on someone's money. {@code 2,50} does not
+     * match the grouping shape, so it is refused and the user is asked — which is the
+     * right answer for something genuinely ambiguous.
+     *
+     * <p>This <em>narrows</em> an earlier decision to refuse every comma outright. The
+     * reason given then was that nothing could tell {@code 15,50} from {@code 1,500};
+     * the grouping shape can, so only the genuinely ambiguous half is still refused.
+     * {@code 1 500} and {@code $5} remain refused as they were — a space separator is
+     * as ambiguous as a decimal comma, and a symbol is the model ignoring the prompt.
+     */
+    static String normalizeAmount(String rawAmount) {
+        if (rawAmount == null) {
+            return null;
+        }
+        String value = rawAmount.trim().toLowerCase(Locale.ROOT);
+        if (value.isEmpty()) {
+            return null;
+        }
+
+        // A currency symbol, a space separator and a bare decimal comma stay refused —
+        // each is either the model ignoring the prompt or genuinely ambiguous, and the
+        // user being asked is the right outcome for both.
+        int shift = 0;
+        for (Map.Entry<String, Integer> suffix : AMOUNT_SUFFIXES.entrySet()) {
+            if (value.length() > suffix.getKey().length() && value.endsWith(suffix.getKey())) {
+                shift = suffix.getValue();
+                value = value.substring(0, value.length() - suffix.getKey().length()).trim();
+                break;
+            }
+        }
+
+        if (THOUSANDS_GROUPED.matcher(value).matches()) {
+            value = value.replace(",", "");
+        }
+        if (!AMOUNT.matcher(value).matches()) {
+            return null;
+        }
+        return shift == 0 ? value : shiftDecimal(value, shift);
+    }
+
+    /**
+     * Moves the decimal point right, on the text. Never through a double: {@code 2.5k}
+     * has to become exactly {@code 2500}, and a binary float cannot promise that.
+     */
+    private static String shiftDecimal(String value, int places) {
+        int dot = value.indexOf('.');
+        String whole = dot < 0 ? value : value.substring(0, dot);
+        StringBuilder fraction = new StringBuilder(dot < 0 ? "" : value.substring(dot + 1));
+        while (fraction.length() < places) {
+            fraction.append('0');
+        }
+        String moved = whole + fraction.substring(0, places);
+        String rest = fraction.substring(places);
+        return rest.isEmpty() ? moved : moved + "." + rest;
     }
 
     private static int fractionDigits(String currencyCode) {
@@ -561,6 +806,16 @@ public class IntentResolver {
 
     /** The matched row rather than its id, so the draft can carry the name it will display. */
     static Category matchCategory(List<Category> categories, TransactionType type, String guess, String message) {
+        return matchCategory(categories, type, guess, message, false);
+    }
+
+    /**
+     * @param sharedMessage true when this reading is one of several from the same message.
+     *                      The message text then belongs to <em>all</em> of them and cannot
+     *                      tell them apart, so the naming scan below is skipped — see there.
+     */
+    static Category matchCategory(List<Category> categories, TransactionType type, String guess,
+                                  String message, boolean sharedMessage) {
         CategoryKind kind = kindFor(type);
         List<Category> candidates = categories.stream()
                 .filter(c -> c.getKind() == kind)
@@ -570,13 +825,19 @@ public class IntentResolver {
         }
 
         String text = normalize(message);
-        // 1. The user named a category outright.
-        Optional<Category> named = candidates.stream()
-                .filter(c -> normalize(c.getName()).length() >= 3)
-                .filter(c -> containsWord(text, normalize(c.getName())))
-                .findFirst();
-        if (named.isPresent()) {
-            return named.get();
+        // 1. The user named a category outright — but only when this message describes one
+        // event. "28 on coffee, 350 on groceries and 120 on fuel" contains the word
+        // "groceries", and scanning the whole message for every item filed all three under
+        // Groceries while the model had read them correctly. When a message yields several
+        // items, its text is shared and only the per-item guess can discriminate.
+        if (!sharedMessage) {
+            Optional<Category> named = candidates.stream()
+                    .filter(c -> normalize(c.getName()).length() >= 3)
+                    .filter(c -> containsWord(text, normalize(c.getName())))
+                    .findFirst();
+            if (named.isPresent()) {
+                return named.get();
+            }
         }
 
         String label = normalize(guess);

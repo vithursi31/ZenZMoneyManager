@@ -1,5 +1,6 @@
 package com.zenzmoney.core.service;
 
+import com.zenzmoney.common.domain.TransactionStatus;
 import com.zenzmoney.common.exception.BadRequestException;
 import com.zenzmoney.common.exception.NotFoundException;
 import com.zenzmoney.common.i18n.Msg;
@@ -134,7 +135,10 @@ public class PayeeService {
     @Transactional
     public void delete(String id) {
         Payee payee = requireOwned(id, currentUser.requireUserId());
-        if (transactionRepository.existsByPayeeId(id) || recurringRepository.existsByPayeeId(id)) {
+        // Only a live transaction keeps a payee in use — if every one that named it has
+        // been deleted, the payee is free to go too.
+        if (transactionRepository.existsByPayeeIdAndStatus(id, TransactionStatus.ACTIVE)
+                || recurringRepository.existsByPayeeId(id)) {
             throw new BadRequestException(Msg.PAYEE_IN_USE);
         }
         payeeRepository.delete(payee);

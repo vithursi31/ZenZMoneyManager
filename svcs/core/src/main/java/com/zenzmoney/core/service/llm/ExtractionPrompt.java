@@ -10,7 +10,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 /**
- * The extraction contract sent to the model (chat entry plan §6). The wording lives
+ * The extraction contract sent to the model (F-1.11). The wording lives
  * in {@code resources/prompts/extraction-system.md}, not in this class: the prompt is
  * <em>content</em> that gets tuned against the eval fixtures, and a markdown file is
  * both readable in a diff and structured the way instruct models follow best.
@@ -32,14 +32,14 @@ class ExtractionPrompt {
     /** What the template's "set categoryGuess to null" rule keys off. */
     private static final String NO_CATEGORIES = "(none)";
 
-    /** Where the question the assistant just asked is substituted in. */
-    private static final String FOLLOW_UP_TOKEN = "{{followUp}}";
+    /** Where the last two exchanges of the conversation are substituted in. */
+    private static final String CONVERSATION_TOKEN = "{{conversation}}";
 
     private final String template;
 
     ExtractionPrompt(@Value("classpath:prompts/extraction-system.md") Resource promptFile) {
         this.template = read(promptFile);
-        for (String token : List.of(CATEGORIES_TOKEN, FOLLOW_UP_TOKEN)) {
+        for (String token : List.of(CATEGORIES_TOKEN, CONVERSATION_TOKEN)) {
             if (!this.template.contains(token)) {
                 throw new IllegalStateException(
                         promptFile.getDescription() + " is missing the " + token + " placeholder");
@@ -52,32 +52,41 @@ class ExtractionPrompt {
      * The list is a closed set: the model copies a name from it or answers null, so
      * the resolver matches against real rows instead of invented labels.
      */
-    String system(List<String> categoryNames, String pendingQuestion) {
+    String system(List<String> categoryNames, String conversation) {
         return template
                 .replace(CATEGORIES_TOKEN, categoryBlock(categoryNames))
-                .replace(FOLLOW_UP_TOKEN, followUpBlock(pendingQuestion));
+                .replace(CONVERSATION_TOKEN, conversationBlock(conversation));
     }
 
     /**
-     * Tells the model the message it is about to read is an answer, not an opening.
-     * Without it a reply of "20" reads as nothing at all; the backend still owns the
-     * merge, so the worst a bad reading costs here is one more question.
+     * Gives the model what was already said, so a follow-up reads as one. Without it a
+     * reply of "20" carries no signal at all; the backend still owns the merge, so the
+     * worst a bad reading costs here is one more question.
      */
-    private static String followUpBlock(String pendingQuestion) {
-        if (pendingQuestion == null || pendingQuestion.isBlank()) {
+    private static String conversationBlock(String conversation) {
+        if (conversation == null || conversation.isBlank()) {
             return "";
         }
         return """
 
-                ## Follow-up
+                ## 6. Conversation So Far
 
-                You already asked the user: "%s"
-                Their message is most likely the answer to that question: read
-                whatever it gives you and leave every other field null, because the
-                rest is already known. But if it is plainly something else — a
-                question about their money, or a different transaction — classify it
-                for what it is instead."""
-                .formatted(pendingQuestion.trim());
+                The last exchanges of this conversation, oldest first:
+
+                ```
+                %s
+                ```
+
+                The message you are about to read is the next `user:` line. Read it in
+                that context: an answer to the question you just asked ("20", "one
+                ticket 50 for snacks 10") only makes sense against it. Carry forward
+                what those turns already established — the direction, what it was for,
+                the merchant — and leave a field null when the answer does not change it.
+
+                Classify the new message for what it is, not for what the last one was:
+                a user who changes the subject, asks about their money, or records
+                something unrelated has done exactly that."""
+                .formatted(conversation.strip());
     }
 
     private static String categoryBlock(List<String> categoryNames) {

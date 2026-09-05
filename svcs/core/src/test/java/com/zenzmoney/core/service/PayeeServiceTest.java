@@ -1,5 +1,6 @@
 package com.zenzmoney.core.service;
 
+import com.zenzmoney.common.domain.TransactionStatus;
 import com.zenzmoney.common.exception.BadRequestException;
 import com.zenzmoney.common.exception.NotFoundException;
 import com.zenzmoney.core.entity.Payee;
@@ -84,7 +85,7 @@ class PayeeServiceTest {
         when(currentUser.requireUserId()).thenReturn("u1");
         when(payeeRepository.findByIdAndUserId("p1", "u1"))
                 .thenReturn(Optional.of(payee("p1", "u1", "Keells", "keells")));
-        when(transactionRepository.existsByPayeeId("p1")).thenReturn(true);
+        when(transactionRepository.existsByPayeeIdAndStatus("p1", TransactionStatus.ACTIVE)).thenReturn(true);
 
         assertThrows(BadRequestException.class, () -> payeeService.delete("p1"));
         verify(payeeRepository, never()).delete(any());
@@ -95,7 +96,7 @@ class PayeeServiceTest {
         Payee p = payee("p1", "u1", "Keells", "keells");
         when(currentUser.requireUserId()).thenReturn("u1");
         when(payeeRepository.findByIdAndUserId("p1", "u1")).thenReturn(Optional.of(p));
-        when(transactionRepository.existsByPayeeId("p1")).thenReturn(false);
+        when(transactionRepository.existsByPayeeIdAndStatus("p1", TransactionStatus.ACTIVE)).thenReturn(false);
         when(recurringRepository.existsByPayeeId("p1")).thenReturn(false);
 
         payeeService.delete("p1");

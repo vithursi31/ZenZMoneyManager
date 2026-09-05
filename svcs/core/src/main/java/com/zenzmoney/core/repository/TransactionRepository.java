@@ -1,5 +1,6 @@
 package com.zenzmoney.core.repository;
 
+import com.zenzmoney.common.domain.TransactionStatus;
 import com.zenzmoney.common.domain.TransactionType;
 import com.zenzmoney.core.entity.Transaction;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -13,22 +14,51 @@ import java.util.Optional;
 /**
  * QuerydslPredicateExecutor is extended so the search/filter feature (F-1.9)
  * can build dynamic predicates over date range, category, amount, payee, etc.
+ *
+ * <p><b>Every total here filters {@code status = ACTIVE}, and any new one must too.</b>
+ * Deleting is soft (§1.6), so a deleted row is still in the table and a sum that forgets
+ * the filter keeps counting money the user removed — silently, and in the monthly
+ * position (§1.10), which is the figure the whole app is built around. The same applies
+ * to any predicate F-1.9 adds: a QueryDSL search without the status term will surface
+ * deleted rows.
  */
 public interface TransactionRepository
         extends JpaRepository<Transaction, String>, QuerydslPredicateExecutor<Transaction> {
 
+    /**
+     * Any row the user owns, <b>deleted ones included</b>. For the paths that must reach
+     * a deleted row on purpose — undoing a chat write, and resolving the transaction a
+     * chat turn or goal contribution points at.
+     */
     Optional<Transaction> findByIdAndUserId(String id, String userId);
 
-    List<Transaction> findByUserId(String userId);
+    /** One live row. What every read, edit and delete goes through. */
+    Optional<Transaction> findByIdAndUserIdAndStatus(String id, String userId, TransactionStatus status);
 
-    /** True once the user has recorded anything — the test that freezes their currency (§0.3). */
+    List<Transaction> findByUserIdAndStatus(String userId, TransactionStatus status);
+
+    /**
+     * Live rows of exactly this amount, newest first — how a delete request from chat
+     * ("remove the 2,500 restaurant expense") finds what the user means. The amount is
+     * matched exactly because it is the one thing they always state precisely; anything
+     * looser would offer to delete a row they did not name.
+     */
+    List<Transaction> findByUserIdAndStatusAndAmountOrderByTxnDateDesc(
+            String userId, TransactionStatus status, long amount);
+
+    /**
+     * True once the user has recorded anything — the test that freezes their currency
+     * (§0.3). <b>Counts deleted rows on purpose:</b> those rows still carry the currency
+     * they were written in, so letting a user delete their last transaction and then
+     * switch currency would leave history that could never be restored coherently.
+     */
     boolean existsByUserId(String userId);
 
-    /** True if any transaction is classified under this category. */
-    boolean existsByCategoryId(String categoryId);
+    /** True if any <b>live</b> transaction is classified under this category. */
+    boolean existsByCategoryIdAndStatus(String categoryId, TransactionStatus status);
 
-    /** True if any transaction references this payee. */
-    boolean existsByPayeeId(String payeeId);
+    /** True if any <b>live</b> transaction references this payee. */
+    boolean existsByPayeeIdAndStatus(String payeeId, TransactionStatus status);
 
     // --- monthly position (§1.10) and budget spend (§1.7): sums over a [from, to) window ---
 
@@ -43,6 +73,7 @@ public interface TransactionRepository
      */
     @Query("SELECT COALESCE(SUM(t.amount), 0) FROM Transaction t "
             + "WHERE t.userId = :userId AND t.type = :type "
+            + "AND t.status = com.zenzmoney.common.domain.TransactionStatus.ACTIVE "
             + "AND t.txnDate >= :from AND t.txnDate < :to "
             + "AND (:accountId IS NULL OR t.accountId = :accountId)")
     long sumAmountByTypeInWindow(@Param("userId") String userId,
@@ -59,6 +90,7 @@ public interface TransactionRepository
      */
     @Query("SELECT COALESCE(SUM(t.amount), 0) FROM Transaction t "
             + "WHERE t.userId = :userId AND t.categoryId = :categoryId "
+            + "AND t.status = com.zenzmoney.common.domain.TransactionStatus.ACTIVE "
             + "AND t.type = com.zenzmoney.common.domain.TransactionType.EXPENSE "
             + "AND t.txnDate >= :from AND t.txnDate < :to "
             + "AND (:accountId IS NULL OR t.accountId = :accountId)")
@@ -81,6 +113,7 @@ public interface TransactionRepository
             + "c.id, c.name, c.parentId, c.color, c.icon, t.type, SUM(t.amount), COUNT(t)) "
             + "FROM Transaction t JOIN Category c ON c.id = t.categoryId "
             + "WHERE t.userId = :userId "
+            + "AND t.status = com.zenzmoney.common.domain.TransactionStatus.ACTIVE "
             + "AND t.txnDate >= :from AND t.txnDate < :to "
             + "AND (:accountId IS NULL OR t.accountId = :accountId) "
             + "GROUP BY c.id, c.name, c.parentId, c.color, c.icon, t.type "
@@ -93,6 +126,7 @@ public interface TransactionRepository
     /** Σ EXPENSE across all categories in the window (an overall budget), optionally one account. */
     @Query("SELECT COALESCE(SUM(t.amount), 0) FROM Transaction t "
             + "WHERE t.userId = :userId "
+            + "AND t.status = com.zenzmoney.common.domain.TransactionStatus.ACTIVE "
             + "AND t.type = com.zenzmoney.common.domain.TransactionType.EXPENSE "
             + "AND t.txnDate >= :from AND t.txnDate < :to "
             + "AND (:accountId IS NULL OR t.accountId = :accountId)")
@@ -112,6 +146,7 @@ public interface TransactionRepository
     @Query("SELECT new com.zenzmoney.core.repository.CategoryTotal(t.categoryId, SUM(t.amount)) "
             + "FROM Transaction t "
             + "WHERE t.userId = :userId "
+            + "AND t.status = com.zenzmoney.common.domain.TransactionStatus.ACTIVE "
             + "AND t.type = com.zenzmoney.common.domain.TransactionType.EXPENSE "
             + "AND t.txnDate >= :from AND t.txnDate < :to "
             + "GROUP BY t.categoryId "

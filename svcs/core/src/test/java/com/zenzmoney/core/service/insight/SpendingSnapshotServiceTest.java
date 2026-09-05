@@ -1,5 +1,6 @@
 package com.zenzmoney.core.service.insight;
 
+import com.zenzmoney.common.domain.TransactionStatus;
 import com.zenzmoney.common.domain.CategoryKind;
 import com.zenzmoney.common.domain.TransactionType;
 import com.zenzmoney.core.entity.Category;
@@ -156,7 +157,8 @@ class SpendingSnapshotServiceTest {
 
         service.snapshotFor(user("USD", "UTC"));
 
-        verify(transactionRepository, org.mockito.Mockito.never()).findByUserId(any());
+        verify(transactionRepository, org.mockito.Mockito.never())
+                .findByUserIdAndStatus(any(), any());
     }
 
     // --- fixtures ---

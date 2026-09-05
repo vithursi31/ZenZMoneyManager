@@ -2,6 +2,7 @@ package com.zenzmoney.core.entity;
 
 import com.zenzmoney.common.domain.BaseEntity;
 import com.zenzmoney.common.domain.PaymentMethod;
+import com.zenzmoney.common.domain.TransactionStatus;
 import com.zenzmoney.common.domain.TransactionType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -60,4 +61,8 @@ public class Transaction extends BaseEntity {
 
     @Column(name = "recurring_id", length = 36)
     private String recurringId;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 50)
+    private TransactionStatus status = TransactionStatus.ACTIVE;
 }

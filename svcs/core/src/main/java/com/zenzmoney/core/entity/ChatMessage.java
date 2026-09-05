@@ -43,6 +43,9 @@ public class ChatMessage extends BaseEntity {
     @Column(name = "transaction_id", length = 36)
     private String transactionId;
 
+    @Column(name = "recurring_id", length = 36)
+    private String recurringId;
+
     @Column(name = "session_id", length = 36)
     private String sessionId;
 }

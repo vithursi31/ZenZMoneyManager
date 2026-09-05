@@ -19,6 +19,7 @@ import com.zenzmoney.core.web.dto.RegisterResponse;
 import com.zenzmoney.core.web.dto.ResetPasswordRequest;
 import com.zenzmoney.core.web.dto.VerifyEmailRequest;
 import io.jsonwebtoken.Claims;
+import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -68,17 +69,17 @@ public class AuthController {
     }
 
     @PostMapping("/authenticate/google")
-    public ResponseEntity<ApiResponse<AuthenticationResponse>> google(@RequestBody GoogleAuthRequest req) {
+    public ResponseEntity<ApiResponse<AuthenticationResponse>> google(@Valid @RequestBody GoogleAuthRequest req) {
         return ResponseEntity.ok(ApiResponse.success(oauthLoginService.loginOrRegisterGoogle(req)));
     }
 
     @PostMapping("/authenticate/apple")
-    public ResponseEntity<ApiResponse<AuthenticationResponse>> apple(@RequestBody AppleAuthRequest req) {
+    public ResponseEntity<ApiResponse<AuthenticationResponse>> apple(@Valid @RequestBody AppleAuthRequest req) {
         return ResponseEntity.ok(ApiResponse.success(oauthLoginService.loginOrRegisterApple(req)));
     }
 
     @PostMapping("/authenticate/facebook")
-    public ResponseEntity<ApiResponse<AuthenticationResponse>> facebook(@RequestBody FacebookAuthRequest req) {
+    public ResponseEntity<ApiResponse<AuthenticationResponse>> facebook(@Valid @RequestBody FacebookAuthRequest req) {
         return ResponseEntity.ok(ApiResponse.success(oauthLoginService.loginOrRegisterFacebook(req)));
     }
 

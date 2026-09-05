@@ -422,6 +422,20 @@ on the transaction — so that payee is a **first-class filter/report dimension*
 
 ## 1.6 Transaction
 
+> **Deleting is soft** *(2026-09-01)*. `transaction.status` is `ACTIVE` or `DELETED`
+> (`V12`), and `TransactionService.delete` flips it rather than removing the row —
+> `Category` has worked this way since `V7`, and a transaction has a stronger reason:
+> a [`ChatMessage`](#34-chatmessage) records the transaction it created and a
+> `GoalContribution` records the one that funded it, so a removed row would leave both
+> pointing at nothing. **Every total filters `status = ACTIVE`** — the five aggregates
+> on `TransactionRepository` and any predicate F-1.9 adds. A deleted row is counted by
+> nothing, is invisible to every read path, and can be restored (`restoreIfDeleted`),
+> which is what lets chat offer an undo on a removal.
+>
+> **This is lifecycle, not settlement.** There is still no `PENDING`/`PAID` here and
+> there must never be — see [§1.10](#110-monthly-position-invariant).
+
+
 The core ledger record. Every movement of money is one transaction row.
 
 | Field | Type | Notes |
@@ -1041,7 +1055,12 @@ public enum InsightSeverity { INFO, WARNING, CRITICAL }
 
 ## 3.7 Privacy, safety & language
 
-- **User confirmation gate.** No AI/OCR/NLP channel writes to the ledger without explicit user confirmation of the draft. The model *proposes*; the user *commits*.
+- **Reversible write, not a confirmation gate** *(amended 2026-08-29, F-1.11)*. A chat message the model read **completely** is written straight to the ledger, and the turn keeps the row's id so `POST /api/v1/chat/undo` can delete it. What made the old two-step gate safe is preserved by making the write reversible rather than by making it conditional: a misread amount costs one tap to correct instead of being a wrong row nobody notices. **Short of a mandatory field, nothing is written** — the turn stops and the assistant asks about exactly one missing field. *(Amended 2026-09-03: the backend confidence threshold is gone. A reading the model doubts is one it should decline outright — the prompt has it answer `UNKNOWN` below 0.4 — and a second gate here only turned a usable capture into an extra tap. A draft now survives for exactly two cases where asking is the point: a suspected duplicate, and a delete awaiting confirmation.)* OCR and any future AI channel inherit this rule, not the old one.
+- **Undo is the seam, so every AI write must be undoable.** A channel that writes something it cannot delete does not get to write unasked. A recurring template created from chat also removes the occurrence it posted on creation — the ledger row first, since deleting a template does not cascade.
+- **Which model, and what leaves the machine** *(2026-09-05)*. `zenzmoney.llm.provider` selects the model behind chat, and it changes what this section can promise:
+  - **`ollama` (default)** — a model *we host*. Only the user's own **category names** leave the application, and only to our own process. This is the guarantee the rest of this section was written against.
+  - **`gemini`** — Google's hosted API. The user's **own message text** goes to a third party: their words, notes, payees and amounts. The category names go too. **This is a different privacy posture, not a smaller one**, and shipping it to real users is a product decision (consent, terms, data-residency) rather than a configuration one.
+  The default stays `ollama` so a deployment has to opt in deliberately, and the key is required at boot so the choice cannot be made by accident.
 - **Scoping.** Every entity here is scoped by `user_id` ([§1.12](#112-ownership--access-mvp)). No cross-user data reaches the model.
 - **Language.** Detected/selected language is stored on `ChatMessage` and honored when generating `AiInsight.content`.
 - **Provider independence.** `ocrResult` and `AiInsight.data` are normalized shapes so the underlying NLP/OCR/LLM provider can be replaced without touching the domain.

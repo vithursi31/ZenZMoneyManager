@@ -9,8 +9,7 @@ F-3.3 / F-3.5 / F-3.8. No new feature ID — this is transport in service of tho
 **Domain basis:** [§1.7 `Budget`](../domain/domain-documentation.md#17-budget),
 [§1.8 `RecurringTransaction`](../domain/domain-documentation.md#18-recurringtransaction),
 [Part 5 — sharing](../domain/domain-documentation.md#part-5--sharing--multi-user-phase-3).
-**Reads with:** [chat-transaction-entry-plan.md](chat-transaction-entry-plan.md) (the
-capture pipeline, which stays plain REST).
+**Reads with:** the chat capture pipeline (F-1.11), which stays plain REST.
 
 > **Supersedes the WebSocket/STOMP transport plan** (`chat-websocket-collaboration-plan.md`,
 > removed 2026-08-12 — never committed, so it is not recoverable from git history).

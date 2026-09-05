@@ -6,6 +6,7 @@ import com.zenzmoney.core.service.insight.SpendingSnapshot;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -31,6 +32,7 @@ import java.util.Map;
  * that is down should cost the user an apology, not a 5xx (§9).
  */
 @Service
+@ConditionalOnProperty(name = "zenzmoney.llm.provider", havingValue = "ollama", matchIfMissing = true)
 public class OllamaAdviceClient implements LlmAdviceClient {
 
     /** Routed to llm.log — this path costs the most compute of anything in the app. */

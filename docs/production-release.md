@@ -260,8 +260,8 @@ is the highest-severity thing this checklist can catch.
 
 ```bash
 docker compose -f docker-compose.prod.yml logs --tail=100 app   # console is attached in prd
-tail -50 logs/error.log                                          # must not be growing
-grep -c . logs/audit.log                                         # your smoke registration/login
+tail -50 logs/ZenZMoneyManager/error.log                         # must not be growing
+grep -c . logs/ZenZMoneyManager/audit.log                        # your smoke registration/login
 ```
 
 `debug.log` is the superset — start there. `audit.log` carries the security events and is **not**
@@ -271,7 +271,7 @@ request. See [CLAUDE.md](../CLAUDE.md) §Checking Logs.
 Confirm the OTP code did **not** land in a log file:
 
 ```bash
-grep -c 'DEV FALLBACK' logs/*.log     # must be 0 in prd
+grep -c 'DEV FALLBACK' logs/ZenZMoneyManager/*.log     # must be 0 in prd
 ```
 
 ---
@@ -392,5 +392,5 @@ Copy into the release notes and tick as you go.
 - [ ] register → verify-email → `/me` works against the API directly
 - [ ] `/api/v1/me` and `/api/v1/admin/ping` both `403` anonymously
 - [ ] `error.log` not growing; `audit.log` shows the smoke events
-- [ ] `grep -c 'DEV FALLBACK' logs/*.log` is 0
+- [ ] `grep -c 'DEV FALLBACK' logs/ZenZMoneyManager/*.log` is 0
 - [ ] Rollback path confirmed available (previous tag exists, dump retained)

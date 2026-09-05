@@ -1,6 +1,7 @@
 package com.zenzmoney.core.web.dto;
 
 import com.zenzmoney.common.domain.IntentType;
+import com.zenzmoney.common.domain.RecurringCadence;
 import com.zenzmoney.common.domain.TransactionType;
 import com.zenzmoney.core.entity.ParsedIntent;
 import lombok.Getter;
@@ -25,6 +26,12 @@ public class ParsedIntentView {
     private final String categoryName;
     private final String categoryGuess;
     private final Long txnDate;
+    /** How often it repeats. Null unless the draft is a recurring template. */
+    private final RecurringCadence cadence;
+    /** The row a delete request is asking about. Null on every other intent. */
+    private final String targetTransactionId;
+    /** True when a near-identical live row already exists — the user is asked before this is written. */
+    private final boolean duplicateSuspected;
     private final String payeeName;
     private final String note;
     private final double confidence;
@@ -40,6 +47,9 @@ public class ParsedIntentView {
         this.categoryName = intent.getCategoryName();
         this.categoryGuess = intent.getCategoryGuess();
         this.txnDate = intent.getTxnDate();
+        this.cadence = intent.getCadence();
+        this.targetTransactionId = intent.getTargetTransactionId();
+        this.duplicateSuspected = intent.isDuplicateSuspected();
         this.payeeName = intent.getPayeeName();
         this.note = intent.getNote();
         this.confidence = intent.getConfidence();

@@ -1,13 +1,15 @@
 package com.zenzmoney.core.service.llm;
 
 import com.zenzmoney.common.domain.IntentType;
+import com.zenzmoney.common.domain.RecurringCadence;
 import com.zenzmoney.common.domain.TransactionType;
 import lombok.Getter;
 import lombok.Setter;
 
 /**
- * The model's raw reading of one chat message — everything the model is allowed to
- * decide, and nothing more (chat entry plan §5.3 / §6).
+ * The model's raw reading of <b>one money event</b> — everything the model is allowed
+ * to decide about it, and nothing more (F-1.11 / §6). A message naming
+ * three amounts yields three of these, carried in an {@link LlmExtractionBatch}.
  *
  * <p>This is deliberately <em>pre-normalization</em>: no ids, no minor units, no
  * timestamps. {@code IntentResolver} turns it into a domain {@code ParsedIntent}
@@ -26,8 +28,22 @@ import lombok.Setter;
 @Setter
 public class LlmExtraction {
 
-    /** Never null — {@link IntentType#UNKNOWN} when the model gave nothing usable. */
+    /**
+     * Never null — {@link IntentType#UNKNOWN} when the model gave nothing usable.
+     * Copied down from the batch: the model classifies the <em>message</em>, and a
+     * per-item {@code kind} is what separates a one-off from a template within it.
+     */
     private IntentType intent = IntentType.UNKNOWN;
+
+    /**
+     * The repeat frequency, when the model read one. Null on a one-off, and also null
+     * on a repeat whose frequency the user never named ("my Spotify subscription") —
+     * which is a question to ask, not a monthly assumption to make.
+     */
+    private RecurringCadence cadence;
+
+    /** True when the model read this event as a rule that repeats rather than money that moved. */
+    private boolean recurring;
 
     /** Null when the model could not tell income from expense. */
     private TransactionType txnType;

@@ -1,49 +1,35 @@
 package com.zenzmoney.core.service;
 
-import com.zenzmoney.common.domain.CategoryStatus;
-import com.zenzmoney.common.domain.CategoryKind;
 import com.zenzmoney.common.domain.IntentType;
+import com.zenzmoney.common.domain.RecurringCadence;
 import com.zenzmoney.common.domain.TransactionType;
-import com.zenzmoney.core.entity.Category;
+import com.zenzmoney.common.i18n.Msg;
 import com.zenzmoney.core.entity.ParsedIntent;
-import com.zenzmoney.core.repository.CategoryRepository;
-import com.zenzmoney.core.web.dto.ChatOptionView;
 import com.zenzmoney.core.web.dto.ChatPromptView;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.mockito.junit.jupiter.MockitoSettings;
-import org.mockito.quality.Strictness;
 
-import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.Mockito.when;
 
 /**
- * The chips are the difference between a question the user has to type an answer to
- * and one they can tap. Two properties matter: only one thing is ever asked, and
- * every offered answer is one the ledger would accept — a chip that produces a 400
- * is worse than no chip.
+ * One question at a time, and always the most blocking one.
+ *
+ * <p>The question is a message key, not a sentence — the boundary renders it — so
+ * what is asserted here is which key, not which words. That is also the reason the
+ * class no longer touches the repository: with the tappable options gone there is no
+ * category list to build, only a sentence to choose.
  */
-@ExtendWith(MockitoExtension.class)
-@MockitoSettings(strictness = Strictness.LENIENT)
 class ChatSuggestionsTest {
 
-    @Mock CategoryRepository categoryRepository;
-    @InjectMocks ChatSuggestions suggestions;
+    private final ChatSuggestions suggestions = new ChatSuggestions();
 
     // --- nothing to ask ---
 
     @Test
     void asksNothingOfACompleteDraft() {
-        assertNull(suggestions.promptFor("u1", draft(TransactionType.EXPENSE, 2000L, "c-food")));
+        assertNull(suggestions.promptFor(draft(TransactionType.EXPENSE, 2000L, "c-food")));
     }
 
     @Test
@@ -52,7 +38,7 @@ class ChatSuggestionsTest {
         query.setIntent(IntentType.QUERY);
         query.getMissingFields().add("intent");
 
-        assertNull(suggestions.promptFor("u1", query));
+        assertNull(suggestions.promptFor(query));
     }
 
     @Test
@@ -61,80 +47,57 @@ class ChatSuggestionsTest {
         draft.setCurrency(null);
         draft.getMissingFields().addAll(List.of("currency", "amount"));
 
-        assertNull(suggestions.promptFor("u1", draft),
-                "no chip can set a currency — that is an onboarding step, not an answer");
+        assertNull(suggestions.promptFor(draft),
+                "no answer can set a currency — that is an onboarding step");
     }
 
     @Test
     void asksNothingOfANullDraft() {
-        assertNull(suggestions.promptFor("u1", null));
+        assertNull(suggestions.promptFor(null));
     }
 
     // --- amount ---
 
     @Test
-    void asksHowMuchWithARoundLadderInMinorUnits() {
+    void acknowledgesAnExpenseBeforeAskingHowMuch() {
         ParsedIntent draft = draft(TransactionType.EXPENSE, null, "c-food");
-        draft.setCategoryName("Food & Drinks");
         draft.getMissingFields().add("amount");
 
-        ChatPromptView prompt = suggestions.promptFor("u1", draft);
+        ChatPromptView prompt = suggestions.promptFor(draft);
 
         assertEquals("amount", prompt.getField());
-        assertEquals("How much did you spend on Food & Drinks?", prompt.getQuestion());
-        assertEquals(Arrays.asList(500L, 1000L, 2000L, null),
-                prompt.getOptions().stream().map(ChatOptionView::getAmountMinor).toList());
-        assertTrue(prompt.getOptions().stream().allMatch(o -> o.getLabel() == null || o.isFreeform()),
-                "an amount carries no label — the client formats it in the user's currency");
-    }
-
-    @Test
-    void asksHowMuchWithoutNamingACategoryItDoesNotHave() {
-        ParsedIntent draft = draft(TransactionType.EXPENSE, null, null);
-        draft.getMissingFields().addAll(List.of("amount", "category"));
-
-        assertEquals("How much was that?", suggestions.promptFor("u1", draft).getQuestion());
+        assertEquals(Msg.CHAT_ASK_AMOUNT_EXPENSE.key(), prompt.getQuestion(),
+                "naming the direction tells the user their message was understood");
     }
 
     @Test
     void wordsTheAmountQuestionForIncomeAsMoneyComingIn() {
         ParsedIntent draft = draft(TransactionType.INCOME, null, "c-salary");
-        draft.setCategoryName("Salary");
         draft.getMissingFields().add("amount");
 
-        assertEquals("How much did you receive from Salary?",
-                suggestions.promptFor("u1", draft).getQuestion());
+        assertEquals(Msg.CHAT_ASK_AMOUNT_INCOME.key(), suggestions.promptFor(draft).getQuestion());
     }
 
     @Test
-    void scalesTheLadderToACurrencyWithNoMinorUnit() {
-        ParsedIntent draft = draft(TransactionType.EXPENSE, null, "c-food");
-        draft.setCurrency("JPY");
-        draft.getMissingFields().add("amount");
+    void asksHowMuchNeutrallyWhenTheDirectionIsAlsoUnknown() {
+        ParsedIntent draft = draft(null, null, null);
+        draft.getMissingFields().addAll(List.of("amount", "type"));
 
-        assertEquals(Arrays.asList(5L, 10L, 20L, null),
-                suggestions.promptFor("u1", draft).getOptions().stream()
-                        .map(ChatOptionView::getAmountMinor).toList(),
-                "¥5 is 5 minor units, not 500");
+        assertEquals(Msg.CHAT_ASK_AMOUNT.key(), suggestions.promptFor(draft).getQuestion(),
+                "claiming it is an expense before knowing would be a guess in the copy");
     }
 
     // --- direction ---
 
     @Test
-    void asksTheDirectionWithBothAnswersAndNoWayToInventAThird() {
+    void asksTheDirection() {
         ParsedIntent draft = draft(null, 2000L, null);
         draft.getMissingFields().add("type");
 
-        ChatPromptView prompt = suggestions.promptFor("u1", draft);
+        ChatPromptView prompt = suggestions.promptFor(draft);
 
         assertEquals("type", prompt.getField());
-        assertEquals("Was that money going out, or coming in?", prompt.getQuestion());
-        assertEquals(List.of("Expense", "Income"),
-                prompt.getOptions().stream().map(ChatOptionView::getLabel).toList());
-        assertEquals(List.of("EXPENSE", "INCOME"),
-                prompt.getOptions().stream().map(ChatOptionView::getValue).toList());
-        assertFalse(prompt.getOptions().stream().anyMatch(ChatOptionView::isFreeform),
-                "money went out or came in; \"Other\" is not a third direction");
+        assertEquals(Msg.CHAT_ASK_TYPE.key(), prompt.getQuestion());
     }
 
     @Test
@@ -142,78 +105,70 @@ class ChatSuggestionsTest {
         ParsedIntent draft = draft(null, 2000L, null);
         draft.getMissingFields().addAll(List.of("type", "category"));
 
-        assertEquals("type", suggestions.promptFor("u1", draft).getField(),
-                "which half of the category list to offer depends on the answer");
+        assertEquals("type", suggestions.promptFor(draft).getField(),
+                "which half of the category list applies depends on the answer");
+    }
+
+    @Test
+    void asksTheAmountBeforeTheDirection() {
+        ParsedIntent draft = draft(null, null, null);
+        draft.getMissingFields().addAll(List.of("amount", "type", "category"));
+
+        assertEquals("amount", suggestions.promptFor(draft).getField());
     }
 
     // --- category ---
 
     @Test
-    void offersOnlyTheUsersOwnExpenseCategoriesForAnExpense() {
-        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE)).thenReturn(List.of(
-                category("c-salary", "Salary", CategoryKind.INCOME, 1),
-                category("c-fuel", "Fuel", CategoryKind.EXPENSE, 2),
-                category("c-food", "Food & Drinks", CategoryKind.EXPENSE, 1)));
+    void asksWhatAnExpenseWasSpentOn() {
         ParsedIntent draft = draft(TransactionType.EXPENSE, 2000L, null);
         draft.getMissingFields().add("category");
 
-        ChatPromptView prompt = suggestions.promptFor("u1", draft);
+        ChatPromptView prompt = suggestions.promptFor(draft);
 
         assertEquals("category", prompt.getField());
-        assertEquals("What did you spend it on?", prompt.getQuestion());
-        assertEquals(List.of("Food & Drinks", "Fuel", "Other"),
-                prompt.getOptions().stream().map(ChatOptionView::getLabel).toList(),
-                "an income category here would produce a write the ledger refuses");
-        assertEquals("c-food", prompt.getOptions().get(0).getValue());
+        assertEquals(Msg.CHAT_ASK_CATEGORY_EXPENSE.key(), prompt.getQuestion());
     }
 
     @Test
-    void offersOnlyIncomeCategoriesForIncomeAndWordsTheQuestionForIt() {
-        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE)).thenReturn(List.of(
-                category("c-salary", "Salary", CategoryKind.INCOME, 1),
-                category("c-food", "Food & Drinks", CategoryKind.EXPENSE, 1)));
+    void asksWhereIncomeCameFrom() {
         ParsedIntent draft = draft(TransactionType.INCOME, 50000L, null);
         draft.getMissingFields().add("category");
 
-        ChatPromptView prompt = suggestions.promptFor("u1", draft);
+        assertEquals(Msg.CHAT_ASK_CATEGORY_INCOME.key(), suggestions.promptFor(draft).getQuestion());
+    }
 
-        assertEquals("Where did that money come from?", prompt.getQuestion());
-        assertEquals(List.of("Salary", "Other"),
-                prompt.getOptions().stream().map(ChatOptionView::getLabel).toList());
+    // --- cadence ---
+
+    @Test
+    void asksHowOftenARecurringDraftRepeats() {
+        ParsedIntent draft = draft(TransactionType.EXPENSE, 1500L, "c-subs");
+        draft.setIntent(IntentType.CREATE_RECURRING);
+        draft.getMissingFields().add("cadence");
+
+        ChatPromptView prompt = suggestions.promptFor(draft);
+
+        assertEquals("cadence", prompt.getField());
+        assertEquals(Msg.CHAT_ASK_CADENCE.key(), prompt.getQuestion(),
+                "\"my Spotify subscription\" names no frequency, and monthly would be an assumption");
     }
 
     @Test
-    void capsTheCategoryListSoTheChipsStayScannable() {
-        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE)).thenReturn(List.of(
-                category("c1", "Food & Drinks", CategoryKind.EXPENSE, 1),
-                category("c2", "Groceries", CategoryKind.EXPENSE, 2),
-                category("c3", "Transport", CategoryKind.EXPENSE, 3),
-                category("c4", "Housing", CategoryKind.EXPENSE, 4),
-                category("c5", "Utilities", CategoryKind.EXPENSE, 5),
-                category("c6", "Shopping", CategoryKind.EXPENSE, 6),
-                category("c7", "Health", CategoryKind.EXPENSE, 7)));
-        ParsedIntent draft = draft(TransactionType.EXPENSE, 2000L, null);
-        draft.getMissingFields().add("category");
+    void asksTheCadenceLastBecauseItBlocksLeastOfAll() {
+        ParsedIntent draft = draft(TransactionType.EXPENSE, null, null);
+        draft.setIntent(IntentType.CREATE_RECURRING);
+        draft.getMissingFields().addAll(List.of("amount", "category", "cadence"));
 
-        ChatPromptView prompt = suggestions.promptFor("u1", draft);
-
-        assertEquals(6, prompt.getOptions().size(), "five categories plus the way out");
-        assertTrue(prompt.getOptions().get(5).isFreeform(),
-                "the rest of the list has to stay reachable through \"Other\"");
+        assertEquals("amount", suggestions.promptFor(draft).getField());
     }
 
     @Test
-    void stillAsksWhenTheUserHasNoCategoryOfThatKind() {
-        when(categoryRepository.findByUserIdAndStatus("u1", CategoryStatus.ACTIVE)).thenReturn(List.of(
-                category("c-food", "Food & Drinks", CategoryKind.EXPENSE, 1)));
-        ParsedIntent draft = draft(TransactionType.INCOME, 50000L, null);
-        draft.getMissingFields().add("category");
+    void asksNothingOfACompleteRecurringDraft() {
+        ParsedIntent draft = draft(TransactionType.EXPENSE, 1500L, "c-subs");
+        draft.setIntent(IntentType.CREATE_RECURRING);
+        draft.setCadence(RecurringCadence.MONTHLY);
 
-        ChatPromptView prompt = suggestions.promptFor("u1", draft);
-
-        assertEquals(List.of("Other"),
-                prompt.getOptions().stream().map(ChatOptionView::getLabel).toList(),
-                "an empty chip row would be a dead end; \"Other\" is the way through");
+        assertNull(suggestions.promptFor(draft));
     }
 
     // --- fixtures ---
@@ -227,14 +182,5 @@ class ChatSuggestionsTest {
         draft.setCategoryId(categoryId);
         draft.setConfidence(0.9);
         return draft;
-    }
-
-    private static Category category(String id, String name, CategoryKind kind, int sortOrder) {
-        Category c = new Category();
-        c.setId(id);
-        c.setName(name);
-        c.setKind(kind);
-        c.setSortOrder(sortOrder);
-        return c;
     }
 }

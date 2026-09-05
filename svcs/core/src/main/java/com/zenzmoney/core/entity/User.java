@@ -37,6 +37,9 @@ public class User extends BaseEntity {
     @Column(name = "auth_mode", nullable = false, length = 50)
     private String authMode = "password";
 
+    @Column(name = "oauth_subject", length = 255)
+    private String oauthSubject;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 50)
     private UserStatus status = UserStatus.PENDING;

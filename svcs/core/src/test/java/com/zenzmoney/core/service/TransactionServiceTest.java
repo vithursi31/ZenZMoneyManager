@@ -1,5 +1,6 @@
 package com.zenzmoney.core.service;
 
+import com.zenzmoney.common.domain.TransactionStatus;
 import com.zenzmoney.common.domain.CategoryStatus;
 import com.zenzmoney.common.domain.CategoryKind;
 import com.zenzmoney.common.domain.PaymentMethod;
@@ -25,6 +26,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -204,7 +207,8 @@ class TransactionServiceTest {
 
         when(currentUser.requireUser()).thenReturn(u);
         when(accountService.requireAccountId(u)).thenReturn("a1");
-        when(transactionRepository.findByIdAndUserId("t1", "u1")).thenReturn(Optional.of(txn));
+        when(transactionRepository.findByIdAndUserIdAndStatus("t1", "u1", TransactionStatus.ACTIVE))
+                .thenReturn(Optional.of(txn));
         when(categoryRepository.findByIdAndUserIdAndStatus("c1", "u1", CategoryStatus.ACTIVE))
                 .thenReturn(Optional.of(category("c1", CategoryKind.EXPENSE)));
         when(transactionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -220,20 +224,78 @@ class TransactionServiceTest {
         assertEquals(JAN_2026 + 40L * 24 * 60 * 60 * 1000, resp.getTxnDate());
     }
 
+    /**
+     * Deleting is a status change, never a row removal (§1.6). A chat turn and a goal
+     * contribution both record the transaction they refer to, so a row that vanished
+     * would leave them pointing at nothing.
+     */
     @Test
-    void delete_removesRow() {
+    void delete_retiresTheRowWithoutRemovingIt() {
+        Transaction txn = deletableTxn();
+        when(currentUser.requireUserId()).thenReturn("u1");
+        when(transactionRepository.findByIdAndUserIdAndStatus("t1", "u1", TransactionStatus.ACTIVE))
+                .thenReturn(Optional.of(txn));
+
+        transactionService.delete("t1");
+
+        verify(transactionRepository, never()).delete(any());
+        verify(transactionRepository).save(txn);
+        assertEquals(TransactionStatus.DELETED, txn.getStatus());
+    }
+
+    @Test
+    void deleteIfLive_isANoOpWhenTheRowIsAlreadyGone() {
+        when(currentUser.requireUserId()).thenReturn("u1");
+        when(transactionRepository.findByIdAndUserIdAndStatus("t1", "u1", TransactionStatus.ACTIVE))
+                .thenReturn(Optional.empty());
+
+        assertFalse(transactionService.deleteIfLive("t1"),
+                "undo must not fail on a row the user already removed by hand");
+        verify(transactionRepository, never()).save(any());
+    }
+
+    /** The payoff of deleting softly: an accidental removal is a status flip from being undone. */
+    @Test
+    void restoreIfDeleted_putsARetiredRowBack() {
+        Transaction txn = deletableTxn();
+        txn.setStatus(TransactionStatus.DELETED);
+        when(currentUser.requireUserId()).thenReturn("u1");
+        when(transactionRepository.findByIdAndUserIdAndStatus("t1", "u1", TransactionStatus.DELETED))
+                .thenReturn(Optional.of(txn));
+
+        assertTrue(transactionService.restoreIfDeleted("t1"));
+        assertEquals(TransactionStatus.ACTIVE, txn.getStatus());
+        verify(transactionRepository).save(txn);
+    }
+
+    @Test
+    void restoreIfDeleted_isANoOpForARowThatWasNeverDeleted() {
+        when(currentUser.requireUserId()).thenReturn("u1");
+        when(transactionRepository.findByIdAndUserIdAndStatus("t1", "u1", TransactionStatus.DELETED))
+                .thenReturn(Optional.empty());
+
+        assertFalse(transactionService.restoreIfDeleted("t1"));
+        verify(transactionRepository, never()).save(any());
+    }
+
+    /** A deleted row answers 404 exactly as a missing one does — it is gone as far as the API is concerned. */
+    @Test
+    void get_aDeletedRowIsNotFound() {
+        when(currentUser.requireUserId()).thenReturn("u1");
+        when(transactionRepository.findByIdAndUserIdAndStatus("t1", "u1", TransactionStatus.ACTIVE))
+                .thenReturn(Optional.empty());
+
+        assertThrows(NotFoundException.class, () -> transactionService.get("t1"));
+    }
+
+    private static Transaction deletableTxn() {
         Transaction txn = new Transaction();
         txn.setId("t1");
         txn.setUserId("u1");
         txn.setAccountId("a1");
         txn.setType(TransactionType.EXPENSE);
         txn.setAmount(20_000);
-        when(currentUser.requireUserId()).thenReturn("u1");
-        when(transactionRepository.findByIdAndUserId("t1", "u1")).thenReturn(Optional.of(txn));
-
-        transactionService.delete("t1");
-
-        verify(transactionRepository).delete(txn);
+        return txn;
     }
 
     // --- list filtering: account, type, date range, and combinations (F-1.9) ---
@@ -253,7 +315,8 @@ class TransactionServiceTest {
 
     private void stubLister(User u, Transaction... rows) {
         when(currentUser.requireUser()).thenReturn(u);
-        when(transactionRepository.findByUserId("u1")).thenReturn(java.util.List.of(rows));
+        when(transactionRepository.findByUserIdAndStatus("u1", TransactionStatus.ACTIVE))
+                .thenReturn(java.util.List.of(rows));
     }
 
     @Test
@@ -381,7 +444,7 @@ class TransactionServiceTest {
     @Test
     void get_notOwned_throwsNotFound() {
         when(currentUser.requireUserId()).thenReturn("u1");
-        when(transactionRepository.findByIdAndUserId("x", "u1")).thenReturn(Optional.empty());
+        when(transactionRepository.findByIdAndUserIdAndStatus("x", "u1", TransactionStatus.ACTIVE)).thenReturn(Optional.empty());
 
         assertThrows(NotFoundException.class, () -> transactionService.get("x"));
     }
@@ -457,7 +520,7 @@ class TransactionServiceTest {
         existing.setPaymentMethod(PaymentMethod.CARD);
         when(currentUser.requireUser()).thenReturn(u);
         when(accountService.requireAccountId(u)).thenReturn("a1");
-        when(transactionRepository.findByIdAndUserId("t1", "u1")).thenReturn(Optional.of(existing));
+        when(transactionRepository.findByIdAndUserIdAndStatus("t1", "u1", TransactionStatus.ACTIVE)).thenReturn(Optional.of(existing));
         when(categoryRepository.findByIdAndUserIdAndStatus("c1", "u1", CategoryStatus.ACTIVE))
                 .thenReturn(Optional.of(category("c1", CategoryKind.EXPENSE)));
         when(transactionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));

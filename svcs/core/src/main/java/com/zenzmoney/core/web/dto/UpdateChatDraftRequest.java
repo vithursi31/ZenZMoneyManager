@@ -1,5 +1,6 @@
 package com.zenzmoney.core.web.dto;
 
+import com.zenzmoney.common.domain.RecurringCadence;
 import com.zenzmoney.common.domain.TransactionType;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Positive;
@@ -8,14 +9,14 @@ import lombok.Getter;
 import lombok.Setter;
 
 /**
- * Answers a suggestion chip, or edits a draft in the preview, before it is
- * confirmed (F-1.11). Every field is optional and only the ones sent are applied,
- * so one tap on "Food & Drinks" and a full edit of four fields use the same call.
+ * Edits a draft in the preview, before it is written (F-1.11). Every field is
+ * optional and only the ones sent are applied, so a one-field correction and a full
+ * edit of five fields use the same call.
  *
- * <p>This path never reaches the model: an answer the user picked is already
- * structured, so re-reading it as language would only add latency and a chance to
- * get it wrong. Neither currency nor account is accepted — the currency is the
- * user's active one and the account is resolved server-side on confirm (§0.3/§1.4).
+ * <p>This path never reaches the model: a value the user typed into the form is
+ * already structured, so re-reading it as language would only add latency and a
+ * chance to get it wrong. Neither currency nor account is accepted — the currency is
+ * the user's active one and the account is resolved server-side (§0.3/§1.4).
  */
 @Getter
 @Setter
@@ -42,4 +43,7 @@ public class UpdateChatDraftRequest {
 
     @Size(max = 300)
     private String payeeName;
+
+    /** How often it repeats. Only meaningful on a recurring draft. */
+    private RecurringCadence cadence;
 }

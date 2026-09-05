@@ -7,6 +7,11 @@
 #
 # To stop future generation while keeping the history readable, PUT active=false
 # instead (api-recurring-update.sh). Pass the id as arg 1 or set RECURRING_ID.
+#
+# NOTE: chat cannot reach this. "Cancel my Netflix subscription" is declined on
+# purpose — removing a template changes every future month, and picking the right
+# one out of language is too risky. Undoing a chat-created template only
+# DEACTIVATES it (active=false), which stops generation without destroying it.
 source define-envars.sh;
 
 RECURRING_ID="${1:-${RECURRING_ID:-}}"

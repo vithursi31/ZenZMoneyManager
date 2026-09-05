@@ -101,13 +101,46 @@ label input, label select { display: block; width: 100%; margin-top: 0.2rem; }
     color: #fff;
 }
 
-/* --- suggestion chips --- */
+/* --- a recorded entry, and the way back from it --- */
 
-.chips {
+.turn.card {
     display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-    margin-bottom: 0.75rem;
+    flex-direction: column;
+    gap: 0.15rem;
+    align-self: flex-start;
+}
+
+.card-line {
+    margin: 0;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+.card-meta {
+    margin: 0;
+    font-size: 0.85rem;
+    color: var(--muted);
+}
+
+/* Understated on purpose: undo is always available, never the thing to press. */
+.undo {
+    align-self: flex-start;
+    margin-top: 0.35rem;
+    padding: 0.1rem 0.45rem;
+    font-size: 0.8rem;
+    background: none;
+    border: 1px solid var(--line);
+    border-radius: 0.5rem;
+    color: var(--muted);
+    cursor: pointer;
+}
+
+.undo:hover { color: inherit; }
+
+.turn.undone .card-line {
+    text-decoration: line-through;
+    color: var(--muted);
+    font-weight: 400;
 }
 
 /* --- answered question: the figures beside the prose --- */

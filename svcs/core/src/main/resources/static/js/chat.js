@@ -1,13 +1,15 @@
 /*
  * Chat capture screen (F-1.11).
  *
- * The rule the whole file is built around: the backend proposes, the user
- * commits. Nothing here calls /confirm except the Create button, and Create is
- * only enabled for a draft the backend marked PARSED.
+ * The rule the whole file is built around: a message the backend read completely
+ * and confidently is already recorded by the time the reply arrives, and each
+ * recorded entry gets a card with an Undo. Nothing is approved in advance.
  *
- * Two ways to answer a question, both ending in the same draft:
- *   - a chip is a structured answer      -> POST /api/v1/chat/draft (no model call)
- *   - anything typed is language         -> POST /api/v1/chat       (read, then merged)
+ * One reply can carry several entries -- "$28 on coffee, $350 on groceries" is two
+ * -- so the transcript is rendered from reply.results, one turn each.
+ *
+ * The preview is the exception, not the path: it appears only for a draft the model
+ * was too unsure to write, and ends at its own Create button (/chat/confirm).
  */
 (function () {
     'use strict';
@@ -26,10 +28,11 @@
     };
 
     var el = {};
-    ['signin', 'email', 'password', 'signin-error', 'conversation', 'transcript', 'chips',
+    ['signin', 'email', 'password', 'signin-error', 'conversation', 'transcript',
      'insight', 'insight-months',
-     'preview', 'p-type', 'p-amount', 'p-category', 'p-note', 'p-date', 'edit', 'e-type',
-     'e-amount', 'e-category', 'e-note', 'e-date', 'edit-cancel', 'preview-actions', 'create',
+     'preview', 'p-type', 'p-amount', 'p-category', 'p-note', 'p-date', 'p-cadence',
+     'p-cadence-label', 'edit', 'e-type', 'e-amount', 'e-category', 'e-note', 'e-date',
+     'e-cadence', 'e-cadence-row', 'edit-cancel', 'preview-actions', 'create',
      'edit-open', 'cancel', 'preview-error', 'composer', 'message', 'send', 'chat-error']
         .forEach(function (id) { el[id] = document.getElementById(id); });
 
@@ -140,50 +143,75 @@
 
     // --- transcript ---
 
+    var CADENCE_WORDS = {
+        DAILY: 'daily', WEEKLY: 'weekly', MONTHLY: 'monthly', YEARLY: 'yearly'
+    };
+
     function appendTurn(role, text) {
         var item = document.createElement('li');
         item.className = 'turn ' + role;
         item.textContent = text;
         el.transcript.appendChild(item);
         item.scrollIntoView({ block: 'nearest' });
+        return item;
     }
 
-    // --- chips ---
+    /*
+     * One entry the backend recorded. The money and the date are formatted here, from
+     * the draft's minor units and epoch millis -- the reply sentence never carries
+     * either, which is what keeps currency and locale formatting on the client.
+     */
+    function appendCard(result) {
+        var item = appendTurn('assistant', '');
+        item.classList.add('card');
 
-    function renderChips(prompt) {
-        el.chips.textContent = '';
-        if (!prompt || !prompt.options.length) {
-            el.chips.hidden = true;
-            return;
-        }
-        prompt.options.forEach(function (option) {
-            var button = document.createElement('button');
-            button.type = 'button';
-            button.textContent = option.freeform
-                ? option.label
-                : (option.label || formatMoney(option.amountMinor, state.draft && state.draft.currency));
-            button.addEventListener('click', function () {
-                if (option.freeform) {
-                    // No list covers everything; typing falls through to the normal read path.
-                    el.message.placeholder = 'Type the ' + prompt.field + '…';
-                    el.message.focus();
-                    return;
-                }
-                answer(prompt.field, option);
-            });
-            el.chips.appendChild(button);
+        var line = document.createElement('p');
+        line.className = 'card-line';
+        var draft = result.draft || {};
+        var title = draft.payeeName || draft.note || (draft.categoryName || 'Entry');
+        var amount = formatMoney(draft.amountMinor, draft.currency);
+        line.textContent = amount ? title + ' \u2013 ' + amount : title;
+        item.appendChild(line);
+
+        var meta = document.createElement('p');
+        meta.className = 'card-meta';
+        var parts = [];
+        if (draft.categoryName) { parts.push(draft.categoryName); }
+        if (draft.cadence) { parts.push('repeats ' + (CADENCE_WORDS[draft.cadence] || '')); }
+        else if (draft.txnDate) { parts.push(formatDate(draft.txnDate)); }
+        meta.textContent = parts.join(' \u00b7 ');
+        item.appendChild(meta);
+
+        var undo = document.createElement('button');
+        undo.type = 'button';
+        undo.className = 'undo';
+        undo.textContent = 'Undo';
+        undo.addEventListener('click', function () {
+            undo.disabled = true;
+            api('/chat/undo', { method: 'POST', body: { messageId: result.messageId } })
+                .then(function () {
+                    item.classList.add('undone');
+                    undo.remove();
+                    meta.textContent = 'Removed.';
+                })
+                .catch(function (error) {
+                    undo.disabled = false;
+                    showError(el['chat-error'], error);
+                });
         });
-        el.chips.hidden = false;
+        item.appendChild(undo);
+        item.scrollIntoView({ block: 'nearest' });
     }
 
-    function answer(field, option) {
-        var body = { messageId: state.messageId };
-        if (field === 'amount') { body.amountMinor = option.amountMinor; }
-        if (field === 'category') { body.categoryId = option.value; }
-        if (field === 'type') { body.txnType = option.value; }
-        appendTurn('user', option.label
-            || formatMoney(option.amountMinor, state.draft && state.draft.currency));
-        send('/chat/draft', body, el['chat-error']);
+    /* Every result is a turn; the ones that recorded something get a card. */
+    function renderResults(results) {
+        (results || []).forEach(function (result) {
+            if (result.transactionId || result.recurringId) {
+                appendCard(result);
+            } else {
+                appendTurn('assistant', result.reply);
+            }
+        });
     }
 
     // --- answered question ---
@@ -233,12 +261,21 @@
         node.classList.toggle('pending', value === null || value === undefined);
     }
 
+    function isCapture(draft) {
+        return draft && (draft.intent === 'CREATE_TRANSACTION' || draft.intent === 'CREATE_RECURRING');
+    }
+
+    /*
+     * Only ever shown for a draft the backend did NOT write -- a reading it doubted,
+     * or one still short of something. An entry that was recorded has a card instead.
+     */
     function renderPreview() {
         var draft = state.draft;
-        if (!draft || draft.intent !== 'CREATE_TRANSACTION') {
+        if (!isCapture(draft) || state.status === 'CREATED' || state.status === 'CONFIRMED') {
             el.preview.hidden = true;
             return;
         }
+        var recurring = draft.intent === 'CREATE_RECURRING';
         el.preview.hidden = false;
         text(el['p-type'], draft.txnType === 'INCOME' ? 'Income'
             : draft.txnType === 'EXPENSE' ? 'Expense' : null);
@@ -248,9 +285,16 @@
         text(el['p-note'], draft.note);
         text(el['p-date'], formatDate(draft.txnDate));
 
+        el['p-cadence-label'].hidden = !recurring;
+        el['p-cadence'].hidden = !recurring;
+        if (recurring) {
+            text(el['p-cadence'], draft.cadence ? CADENCE_WORDS[draft.cadence] : null);
+        }
+
         var ready = state.status === 'PARSED';
         el.create.disabled = !ready;
-        el.create.textContent = draft.txnType === 'INCOME' ? 'Create Income' : 'Create Expense';
+        el.create.textContent = recurring ? 'Create repeating entry'
+            : draft.txnType === 'INCOME' ? 'Create Income' : 'Create Expense';
         el.create.title = ready ? '' : 'Answer the question above first';
     }
 
@@ -263,6 +307,10 @@
             fractionDigits(draft.currency)) || '1';
         el['e-note'].value = draft.note || '';
         el['e-date'].value = dateInputValue(draft.txnDate);
+
+        var recurring = draft.intent === 'CREATE_RECURRING';
+        el['e-cadence-row'].hidden = !recurring;
+        el['e-cadence'].value = draft.cadence || '';
 
         el['e-category'].textContent = '';
         var kind = el['e-type'].value === 'INCOME' ? 'INCOME' : 'EXPENSE';
@@ -305,6 +353,9 @@
         if (el['e-amount'].value !== '') {
             body.amountMinor = toMinor(el['e-amount'].value, state.draft.currency);
         }
+        if (!el['e-cadence-row'].hidden && el['e-cadence'].value) {
+            body.cadence = el['e-cadence'].value;
+        }
         el.edit.hidden = true;
         el['preview-actions'].hidden = false;
         send('/chat/draft', body, el['preview-error']);
@@ -314,9 +365,10 @@
         showError(el['preview-error'], null);
         el.create.disabled = true;
         api('/chat/confirm', { method: 'POST', body: { messageId: state.messageId } })
-            .then(function (transaction) {
-                appendTurn('assistant', 'Added — ' +
-                    formatMoney(transaction.amount, transaction.currency) + '.');
+            .then(function (reply) {
+                // The same card shape as a message that was written without asking, so
+                // an entry looks the same however it got there -- Undo included.
+                renderResults(reply.results);
                 clearDraft();
             })
             .catch(function (error) {
@@ -342,7 +394,6 @@
         el.preview.hidden = true;
         el.edit.hidden = true;
         el['preview-actions'].hidden = false;
-        renderChips(null);
         el.message.placeholder = PLACEHOLDER;
         el.message.focus();
     }
@@ -358,8 +409,12 @@
                 state.messageId = reply.messageId;
                 state.draft = reply.draft;
                 state.status = reply.status;
-                appendTurn('assistant', reply.reply);
-                renderChips(reply.prompt);
+                if (reply.results && reply.results.length) {
+                    renderResults(reply.results);
+                } else {
+                    // An answered question carries no results, only prose.
+                    appendTurn('assistant', reply.reply);
+                }
                 renderPreview();
                 // An answer and a draft are alternatives, never both — the backend
                 // sends exactly one of them, so rendering both would show stale data.

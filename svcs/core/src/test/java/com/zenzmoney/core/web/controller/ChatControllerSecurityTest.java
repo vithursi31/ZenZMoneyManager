@@ -65,6 +65,37 @@ class ChatControllerSecurityTest {
                 .andExpect(status().isForbidden());
     }
 
+    /**
+     * Undo deletes a ledger row, so it is the most damaging chat endpoint to leave
+     * open — and the newest, which is exactly when the annotation gets forgotten.
+     */
+    @Test
+    void anonymousCannotUndoAWrite() throws Exception {
+        mockMvc.perform(post("/api/v1/chat/undo")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(ACTION_BODY))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void anUndoWithNoMessageIdIsRejectedByValidation() throws Exception {
+        mockMvc.perform(post("/api/v1/chat/undo")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void aRefreshTokenCannotBeUsedToUndoAWrite() throws Exception {
+        String refresh = jwtTokenService.generateRefreshToken("ghost@example.com");
+
+        mockMvc.perform(post("/api/v1/chat/undo")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + refresh)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(ACTION_BODY))
+                .andExpect(status().isUnauthorized());
+    }
+
     @Test
     void anonymousCannotRejectADraft() throws Exception {
         mockMvc.perform(post("/api/v1/chat/reject")

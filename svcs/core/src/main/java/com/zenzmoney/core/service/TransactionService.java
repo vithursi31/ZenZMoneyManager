@@ -4,6 +4,7 @@ import com.zenzmoney.common.domain.CategoryKind;
 import com.zenzmoney.common.domain.CategoryStatus;
 import com.zenzmoney.common.domain.PaymentMethod;
 import com.zenzmoney.common.domain.TimeUtils;
+import com.zenzmoney.common.domain.TransactionStatus;
 import com.zenzmoney.common.domain.TransactionType;
 import com.zenzmoney.common.exception.BadRequestException;
 import com.zenzmoney.common.exception.NotFoundException;
@@ -94,15 +95,75 @@ public class TransactionService {
         return TransactionResponse.of(saved);
     }
 
+    /**
+     * Removes a transaction from every list and every total.
+     *
+     * <p><b>Soft (§1.6).</b> The row stays and its status flips to
+     * {@link TransactionStatus#DELETED}, because other rows point at it — the chat turn
+     * that created it (§3.4) and any goal contribution it funded — and a hard delete
+     * would leave those referencing nothing. Every aggregate filters on status, so a
+     * deleted row is counted by no total.
+     */
     @Transactional
     public void delete(String id) {
         String userId = currentUser.requireUserId();
         Transaction txn = requireOwned(id, userId);
-        transactionRepository.delete(txn);
-        // A hard delete — the row is gone, so this line is the only remaining record that it existed.
+        retire(txn, userId);
+    }
+
+    /**
+     * Ensures a transaction is not live, whether or not it already was.
+     *
+     * <p>What undo needs: a row the user had already removed by hand must not make
+     * undoing the chat turn that created it fail halfway through — which is exactly what
+     * a strict delete did when a recurring turn carried both a template and an occurrence.
+     *
+     * @return true if this call is what retired it.
+     */
+    @Transactional
+    public boolean deleteIfLive(String id) {
+        String userId = currentUser.requireUserId();
+        Transaction txn = transactionRepository.findByIdAndUserIdAndStatus(
+                id, userId, TransactionStatus.ACTIVE).orElse(null);
+        if (txn == null) {
+            log.debug("Transaction {} is already gone or not live; nothing to retire (user {})", id, userId);
+            return false;
+        }
+        retire(txn, userId);
+        return true;
+    }
+
+    /**
+     * Puts a deleted transaction back. The payoff of deleting softly (§1.6): an
+     * accidental removal — including one chat performed on the user's word — is a status
+     * flip away from being undone, not a row that has to be re-entered from memory.
+     *
+     * @return true if this call is what restored it.
+     */
+    @Transactional
+    public boolean restoreIfDeleted(String id) {
+        String userId = currentUser.requireUserId();
+        Transaction txn = transactionRepository.findByIdAndUserIdAndStatus(
+                id, userId, TransactionStatus.DELETED).orElse(null);
+        if (txn == null) {
+            log.debug("Transaction {} is not deleted; nothing to restore (user {})", id, userId);
+            return false;
+        }
+        txn.setStatus(TransactionStatus.ACTIVE);
+        transactionRepository.save(txn);
+        log.info("Transaction restored: {} {} {} dated {} (txn {}, user {})",
+                txn.getType(), txn.getAmount(), txn.getCurrency(), txn.getTxnDate(), id, userId);
+        return true;
+    }
+
+    private void retire(Transaction txn, String userId) {
+        txn.setStatus(TransactionStatus.DELETED);
+        transactionRepository.save(txn);
+        // The row survives, but nothing counts it any more — so this is still the line that
+        // explains a month's position changing.
         log.info("Transaction deleted: {} {} {} dated {} (txn {}, user {})",
                 txn.getType(), txn.getAmount(), txn.getCurrency(),
-                txn.getTxnDate(), id, userId);
+                txn.getTxnDate(), txn.getId(), userId);
     }
 
     @Transactional(readOnly = true)
@@ -128,7 +189,7 @@ public class TransactionService {
         Long from = range.from();
         Long to = range.to();
 
-        return transactionRepository.findByUserId(user.getId()).stream()
+        return transactionRepository.findByUserIdAndStatus(user.getId(), TransactionStatus.ACTIVE).stream()
                 .filter(t -> accountId == null || accountId.isBlank() || accountId.equals(t.getAccountId()))
                 .filter(t -> typeFilter == null || typeFilter == t.getType())
                 .filter(t -> from == null || t.getTxnDate() >= from)
@@ -207,8 +268,9 @@ public class TransactionService {
         txn.setPaymentMethod(paymentMethod);
     }
 
+    /** A live row. A deleted one answers 404 exactly as a missing one does. */
     private Transaction requireOwned(String id, String userId) {
-        return transactionRepository.findByIdAndUserId(id, userId)
+        return transactionRepository.findByIdAndUserIdAndStatus(id, userId, TransactionStatus.ACTIVE)
                 .orElseThrow(() -> new NotFoundException(Msg.TRANSACTION_NOT_FOUND));
     }
 

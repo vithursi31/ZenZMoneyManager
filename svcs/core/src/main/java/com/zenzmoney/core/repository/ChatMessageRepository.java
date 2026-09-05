@@ -14,6 +14,13 @@ public interface ChatMessageRepository extends JpaRepository<ChatMessage, String
     /** Ownership-scoped lookup — the only way a confirm/reject may reach a draft (§1.12). */
     Optional<ChatMessage> findByIdAndUserId(String id, String userId);
 
+    /**
+     * The last two exchanges of a conversation, newest first — the context the model is
+     * given so a follow-up reads as one. Four rows because an exchange is a user turn
+     * and an assistant turn; the caller reverses them into reading order.
+     */
+    List<ChatMessage> findTop4ByUserIdAndSessionIdOrderByCreatedTimeDesc(String userId, String sessionId);
+
     /** One conversation, oldest first, for replay. */
     List<ChatMessage> findByUserIdAndSessionIdOrderByCreatedTimeAsc(String userId, String sessionId);
 
